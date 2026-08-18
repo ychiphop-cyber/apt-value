@@ -239,6 +239,52 @@ details.acc .detail-body{padding:2px 0 14px}
 .delta .d-up{color:var(--up);font-weight:700} .delta .d-down{color:var(--down);font-weight:700}
 .deltatbl td,.deltatbl th{white-space:normal}
 
+/* ── 역 가치 지도 ── */
+#mapView .maphead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:4px 0 10px}
+#mapView .maphead h2{font-size:17px;margin:0;flex:1}
+.backbtn{border:1px solid var(--line);background:var(--surface);color:var(--ink2);border-radius:99px;
+  padding:6px 14px;font-size:12.5px;cursor:pointer}
+.linechips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 10px}
+.lchip{border:1px solid var(--line);background:var(--surface);color:var(--ink2);border-radius:99px;
+  padding:5px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-weight:500}
+.lchip i{width:9px;height:9px;border-radius:50%;display:inline-block}
+.lchip[aria-pressed="true"]{border-color:var(--ink);color:var(--ink);font-weight:700;background:var(--raised)}
+.mapbox{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:10px;position:relative;overflow:hidden}
+.mapbox svg{display:block;width:100%;height:auto}
+.stn{cursor:pointer;transition:opacity .15s}
+.stn circle{stroke:var(--surface);stroke-width:.8}
+.stn.dim{opacity:.1;pointer-events:none}
+.stn.sel circle{stroke:var(--ink);stroke-width:1.6}
+text.slabel{font-size:9px;fill:var(--ink2);font-family:inherit;pointer-events:none}
+text.slabel.hi{fill:var(--ink);font-weight:700}
+.lpath{fill:none;stroke-width:2;opacity:.25}
+.lpath.hi{opacity:.85;stroke-width:3}
+.maplegend{display:flex;gap:14px;align-items:center;font-size:11px;color:var(--muted);margin-top:8px;flex-wrap:wrap}
+#stnCard .stnhead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+#stnCard .stnhead b{font-size:16px}
+.rankrow{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:13px}
+.rankrow:last-child{border-bottom:0}
+.rankrow .rk{width:26px;text-align:right;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums}
+.rankrow .rk.top{color:var(--accent)}
+.rankrow .nm{flex:1}
+.rankrow .ln{font-size:11px;color:var(--muted)}
+.rankrow .sc{font-weight:700;font-variant-numeric:tabular-nums}
+.hopviz{display:flex;gap:6px;align-items:stretch;margin-top:8px}
+.hop{flex:1;border:1px solid var(--line);border-radius:10px;padding:9px 8px;text-align:center;background:var(--page)}
+.hop.cur{border-color:var(--accent);background:var(--accent-soft)}
+.hop .hn{font-size:12px;font-weight:700;letter-spacing:-.02em}
+.hop .hv{font-size:16px;font-weight:700;margin-top:2px}
+.hop .hs{font-size:10px;color:var(--muted)}
+
+/* ── 진단 문장 ── */
+.diag{border-left:3px solid var(--line);padding:2px 0 2px 14px;margin:12px 0}
+.diag .dt{font-size:11.5px;font-weight:700;letter-spacing:.02em;color:var(--ink2)}
+.diag.core{border-color:var(--accent)} .diag.core .dt{color:var(--accent)}
+.diag.supp{border-color:var(--ok)} .diag.supp .dt{color:var(--ok)}
+.diag.weak{border-color:var(--warn2)} .diag.weak .dt{color:var(--warn2)}
+.diag.watch{border-color:var(--s2)} .diag.watch .dt{color:var(--s2)}
+.diag p{font-size:13.5px;color:var(--ink);margin:4px 0 0;line-height:1.75}
+
 /* ── 로딩 ── */
 .loading{display:none;text-align:center;padding:48px 0;color:var(--ink2);font-size:13.5px}
 .spin{display:inline-block;width:18px;height:18px;border:2.5px solid var(--line);
@@ -268,11 +314,35 @@ footer#appFooter b{color:var(--ink2)}
       <h1>닥터마빈 아파트 가치진단</h1>
       <p class="sub">지금 이 집값, 숫자로 설명될까? — 실거래·금리·전세·수급·입지·학군·미래가치를 함께 분석합니다.</p>
     </div>
-    <button id="themeBtn">다크</button>
+    <div style="display:flex;gap:6px;flex-shrink:0">
+      <button id="mapBtn" style="background:none;border:1px solid var(--accent);color:var(--accent);border-radius:99px;padding:5px 12px;font-size:12px;cursor:pointer;white-space:nowrap;margin-top:2px">🚇 역 가치 지도</button>
+      <button id="themeBtn">다크</button>
+    </div>
   </div>
 </header>
 
 <div class="stepper" id="stepper"></div>
+
+<!-- ══════════ 역 가치 지도 (Station Intelligence) ══════════ -->
+<section id="mapView" hidden>
+  <div class="card">
+    <div class="maphead">
+      <button class="backbtn" id="mapBack">← 돌아가기</button>
+      <h2>서울·수도권 역 가치 지도</h2>
+      <div class="seg" style="flex:0 0 auto" id="mapMode">
+        <button data-v="sv" aria-pressed="true">역 가치</button>
+        <button data-v="wealth" aria-pressed="false">역세권 경제력</button>
+      </div>
+    </div>
+    <p class="hint" id="mapHint">모든 역의 가치는 그래프 이동시간과 공개 데이터 기반으로 자동 계산됩니다 — 사전에 정한 순위가 없습니다. 역을 눌러 상세를 확인하세요.</p>
+    <div class="linechips" id="lineChips"></div>
+    <div class="mapbox" id="mapBox"></div>
+    <div class="maplegend" id="mapLegend"></div>
+  </div>
+  <div class="card" id="stnCard" hidden></div>
+  <div class="card" id="lineCard" hidden></div>
+  <div class="card" id="rankCard"></div>
+</section>
 
 <!-- ══════════ STEP 1 · 아파트 선택 ══════════ -->
 <section class="step" id="step1">

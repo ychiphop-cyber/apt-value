@@ -6,6 +6,7 @@ const CFG = JSON.parse(fs.readFileSync(path.join(__dirname, '../config/valuation
 const HUBS = JSON.parse(fs.readFileSync(path.join(__dirname, '../config/education_hubs.json'), 'utf8'));
 const JOBS = JSON.parse(fs.readFileSync(path.join(__dirname, '../config/job_centers.json'), 'utf8'));
 const DATA = JSON.parse(fs.readFileSync(path.join(__dirname, '../data/apartments.json'), 'utf8'));
+const STN = JSON.parse(fs.readFileSync(path.join(__dirname, '../data/station_intelligence.json'), 'utf8'));
 
 let fail = 0, n = 0;
 const finite = x => typeof x === 'number' && isFinite(x);
@@ -16,7 +17,7 @@ for (const cx of DATA.complexes) {
     n++;
     const label = `${cx.name} ${area.key}㎡`;
     try {
-      const r = E.analyze({ complex: cx, areaKey: area.key, asOfYM: DATA.meta.asOf, overrides: {} }, CFG, HUBS, JOBS);
+      const r = E.analyze({ complex: cx, areaKey: area.key, asOfYM: DATA.meta.asOf, overrides: {} }, CFG, HUBS, JOBS, STN);
       const checks = [
         [finite(r.currentPrice) && r.currentPrice > 0, '현재가'],
         [finite(r.range.low) && r.range.low > 0 && r.range.low < r.range.high, '범위'],
@@ -34,7 +35,7 @@ for (const cx of DATA.complexes) {
       ];
       // 스트레스 프리셋 전체 각각 + 복합 1회
       for (const p of CFG.stress.presets) {
-        const sr = E.applyStress({ complex: cx, areaKey: area.key, asOfYM: DATA.meta.asOf, overrides: {} }, [p.id], CFG, HUBS, JOBS);
+        const sr = E.applyStress({ complex: cx, areaKey: area.key, asOfYM: DATA.meta.asOf, overrides: {} }, [p.id], CFG, HUBS, JOBS, STN);
         checks.push([finite(sr.combineOut.center) && sr.range.low > 0, `스트레스 ${p.id}`]);
       }
       const bad = checks.filter(c => !c[0]);

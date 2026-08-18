@@ -13,7 +13,11 @@ const consts = [
   `const HUBS=${JSON.stringify(JSON.parse(R('config/education_hubs.json')))};`,
   `const JOBS=${JSON.stringify(JSON.parse(R('config/job_centers.json')))};`,
   `const DATA=${JSON.stringify(JSON.parse(R('data/apartments.json')))};`,
-  `const REGIONS=${JSON.stringify(JSON.parse(R('pipeline/regions.json')))};`
+  `const REGIONS=${JSON.stringify(JSON.parse(R('pipeline/regions.json')))};`,
+  `const STN=${JSON.stringify(JSON.parse(R('data/station_intelligence.json')))};`,
+  `const LINEI=${JSON.stringify(JSON.parse(R('data/line_intelligence.json')))};`,
+  `const DONG=${JSON.stringify(JSON.parse(R('data/dong_stations.json')))};`,
+  `const RAIL_LINES=${JSON.stringify(JSON.parse(R('data/rail_network.json')).lines)};`
 ].join('\n');
 
 const app = head +

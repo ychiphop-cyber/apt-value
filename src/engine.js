@@ -137,34 +137,118 @@ const AptEngine = (() => {
     return { score, gradeIdx: gIdx, label: J.gradeLabels[gIdx], factors };
   }
 
+  /* ═══════════ Station Intelligence · 아파트 교통가치 ═══════════
+     기존 단순 역거리 점수를 "얼마나 강력한 역을 얼마나 가까이 이용할 수 있는가"로 교체.
+     역 캐시(STN)가 없거나 역 연결이 없으면 null 반환 → 기존 로직 폴백. */
+  function engineTransit(cx, input, CFG, JOBS, STN, gaps) {
+    const S = CFG.station;
+    if (!S || !STN || !STN.stations) return null;
+    const link = cx.stationLink;
+    if (!link || !link.primary || !STN.stations[link.primary.st]) {
+      if (link && link.primary) gaps.push(`역 데이터 없음(${link.primary.st}) — 기존 방식으로 계산`);
+      return null;
+    }
+    const decayPts = S.distanceDecay.map(p => [p.min, p.f]);
+    const gCurve = S.gangnamCurve.map(p => [p.min, p.score]);
+    const decay = m => interp(m, decayPts);
+    const blend = st => S.transportBlend.svT * st.svT + S.transportBlend.gangnam * interp(st.gangnamMin, gCurve);
+    const p = STN.stations[link.primary.st];
+    const pd = decay(link.primary.min);
+    const base = blend(p) * pd;
+
+    // 추가 역 보너스: "새로 열리는 업무지"가 있을 때만 (노선 개수 아님 — §22·23)
+    const totImp = JOBS.centers.reduce((a, c) => a + c.importance, 0);
+    const reach = S.multiStation.newDestReachMin;
+    const covered = new Set(JOBS.centers.filter(c => (p.jobMinutes[c.id] ?? 999) <= reach).map(c => c.id));
+    let bonus = 0;
+    const bonusNotes = [];
+    const extras = [[link.secondary, S.multiStation.secondMax], [link.tertiary, S.multiStation.thirdMax]];
+    for (const [sec, cap] of extras) {
+      if (!sec || !STN.stations[sec.st]) continue;
+      const s2 = STN.stations[sec.st];
+      const newCenters = JOBS.centers.filter(c => (s2.jobMinutes[c.id] ?? 999) <= reach && !covered.has(c.id));
+      const frac = newCenters.reduce((a, c) => a + c.importance, 0) / totImp;
+      const quality = Math.min(1, (blend(s2) * decay(sec.min)) / Math.max(1, base));
+      const b = cap * Math.min(1, frac / 0.3) * quality;
+      if (b > 0.01) {
+        bonus += b;
+        bonusNotes.push(`${sec.st}(${s2.lines.join('·')})이 ${newCenters.map(c => c.name).join('·')} 접근을 새로 열어 +${Math.round(b * 100)}%`);
+      } else if (frac < 0.02) {
+        bonusNotes.push(`${sec.st}은 주력역과 같은 방향 — 추가 프리미엄 미미`);
+      }
+      newCenters.forEach(c => covered.add(c.id));
+    }
+    bonus = Math.min(bonus, S.multiStation.totalBonusCap);
+    let score = clamp(base * (1 + bonus), 0, 100);
+    let ft = null;
+    if (cx.location && cx.location.futureTransit) {
+      const conf = /확정|공사/.test(cx.location.futureTransit);
+      score = clamp(score + (conf ? S.futureTransitBonus.confirmed : S.futureTransitBonus.planned), 0, 100);
+      ft = `${cx.location.futureTransit}${conf ? '' : ' — 미확정은 제한 반영'}`;
+    }
+    // 직주근접: 역 기반 업무지 접근성 (도보거리 소폭 반영)
+    const jobScore = clamp(p.comps.job * (0.9 + 0.1 * pd), 0, 100);
+    const gangnamScore = Math.round(interp(p.gangnamMin, gCurve));
+    return {
+      score: clamp(score, 0, 100), jobScore, bonus, bonusNotes, futureNote: ft,
+      primary: { st: link.primary.st, min: link.primary.min, status: link.primary.status || 'ESTIMATED', sv: p.sv, rank: p.rank, rankPct: p.rankPct, lines: p.lines, comps: p.comps, wealth: p.wealth, express: p.express },
+      secondary: link.secondary && STN.stations[link.secondary.st] ? { st: link.secondary.st, min: link.secondary.min, sv: STN.stations[link.secondary.st].sv, lines: STN.stations[link.secondary.st].lines } : null,
+      gangnamMin: p.gangnamMin, gangnamScore,
+      jobMinutes: p.jobMinutes
+    };
+  }
+
   /* ═══════════ Engine C · 주거·입지·상품가치 ═══════════ */
-  function engineHedonic(cx, area, input, CFG, HUBS, JOBS, gaps) {
+  function engineHedonic(cx, area, input, CFG, HUBS, JOBS, gaps, transit) {
     const H = CFG.hedonic, E = CFG.education;
     const loc = cx.location, edu = cx.education, life = cx.life, nat = cx.nature;
     const notes = {};
 
-    // 교통
-    let transport = interp(loc.subwayMin, [[2, 96], [5, 88], [8, 78], [12, 64], [15, 55], [20, 42], [30, 30]]);
-    const tN = [`지하철 도보 ${loc.subwayMin}분`];
-    if (loc.transfer) { transport += 5; tN.push('환승 접근'); }
-    if (loc.express) { transport += 5; tN.push('급행·광역'); }
-    if ((loc.lines || []).length >= 2) { transport += 3; tN.push('복수 노선'); }
-    if (loc.futureTransit) {
-      const confirmed = /확정|공사/.test(loc.futureTransit);
-      transport += confirmed ? 4 : 1;
-      tN.push(`${loc.futureTransit}${confirmed ? '' : ' — 미확정은 제한 반영'}`);
-    }
-    transport = clamp(transport, 0, 100); notes.transport = tN;
+    // 교통 · 직주근접 — Station Intelligence가 있으면 그것으로 "교체"(가산 아님), 없으면 기존 방식
+    let transport, job;
+    if (transit) {
+      transport = transit.score;
+      notes.transport = [
+        `주력역 ${transit.primary.st} (Station Value ${transit.primary.sv} · ${transit.primary.lines.join('·')}) 도보 ${transit.primary.min}분`,
+        ...(transit.bonus > 0.005 ? [`추가 네트워크 보너스 +${Math.round(transit.bonus * 100)}%`] : []),
+        ...transit.bonusNotes,
+        ...(transit.futureNote ? [transit.futureNote] : [])
+      ];
+      job = transit.jobScore;
+      const near = JOBS.centers.filter(c => (transit.jobMinutes[c.id] ?? 999) <= 30).map(c => `${c.name} ${transit.jobMinutes[c.id]}분`);
+      notes.job = near.length ? [`${transit.primary.st} 기준 30분 내 업무지: ${near.join(' · ')}`] : ['30분 내 주요 업무지 없음'];
+    } else if (loc.unknownTransport) {
+      transport = CFG.station ? CFG.station.unknownTransportScore : 55;
+      notes.transport = ['역거리 미확인 — 중립 처리(신뢰도 하락)'];
+      gaps.push('역거리 미확인 — 교통 중립 처리');
+      let ja0 = 0;
+      for (const c of JOBS.centers) ja0 += c.jobsIndex * Math.exp(-((loc.jobMinutes || {})[c.id] ?? 75) / H.jobDecayTau);
+      job = clamp(100 * ja0 / H.jobRefAccess, 0, 100);
+      notes.job = ['지역 평균 접근성 기준(간이)'];
+    } else {
+      transport = interp(loc.subwayMin, [[2, 96], [5, 88], [8, 78], [12, 64], [15, 55], [20, 42], [30, 30]]);
+      const tN = [`지하철 도보 ${loc.subwayMin}분`];
+      if (loc.transfer) { transport += 5; tN.push('환승 접근'); }
+      if (loc.express) { transport += 5; tN.push('급행·광역'); }
+      if ((loc.lines || []).length >= 2) { transport += 3; tN.push('복수 노선'); }
+      if (loc.futureTransit) {
+        const confirmed = /확정|공사/.test(loc.futureTransit);
+        transport += confirmed ? 4 : 1;
+        tN.push(`${loc.futureTransit}${confirmed ? '' : ' — 미확정은 제한 반영'}`);
+      }
+      transport = clamp(transport, 0, 100); notes.transport = tN;
 
-    // 직주근접 (Job Accessibility = Σ 규모 × e^(−t/τ))
-    let ja = 0; const jN = [];
-    for (const c of JOBS.centers) {
-      const t = (loc.jobMinutes || {})[c.id] ?? 75;
-      ja += c.jobsIndex * Math.exp(-t / H.jobDecayTau);
-      if (t <= 30) jN.push(`${c.name} ${t}분`);
+      let ja = 0; const jN = [];
+      for (const c of JOBS.centers) {
+        const t = (loc.jobMinutes || {})[c.id] ?? 75;
+        ja += c.jobsIndex * Math.exp(-t / H.jobDecayTau);
+        if (t <= 30) jN.push(`${c.name} ${t}분`);
+      }
+      job = clamp(100 * ja / H.jobRefAccess, 0, 100);
+      notes.job = jN.length ? [`30분 내 업무지: ${jN.join(' · ')}`] : ['30분 내 주요 업무지 없음'];
     }
-    const job = clamp(100 * ja / H.jobRefAccess, 0, 100);
-    notes.job = jN.length ? [`30분 내 업무지: ${jN.join(' · ')}`] : ['30분 내 주요 업무지 없음'];
+    transport = clamp(transport, 0, 100);
+    job = clamp(job, 0, 100);
 
     // 교육 (4개 하위 모듈)
     const elemBase = edu.elemM <= 300 ? 95 : edu.elemM <= 500 ? 85 : edu.elemM <= 800 ? 72 : 55;
@@ -453,11 +537,55 @@ const AptEngine = (() => {
     if (scores.attract.score >= 70)
       interp2.push(`지표 대비 상대적으로 낮은 가격 구간입니다. 동·층·향, 내부 상태 등 개별 물건 요인을 함께 확인하세요.`);
 
-    return { up, down, contrib, interpretation: interp2 };
+    /* 진단형 문장 4종 — 계산 결과(JSON)만으로 template 생성, AI 불필요 */
+    const catNames = { transport: '교통', job: '직주근접', education: '교육', life: '생활편의', nature: '자연환경', product: '상품성' };
+    const ranked = Object.entries(sub).sort((a, b) => b[1] - a[1]);
+    const top2 = ranked.slice(0, 2).filter(([, v]) => v >= 65);
+    const coreBits = [];
+    for (const [k] of top2) {
+      if (k === 'transport' && res.transit) coreBits.push(`${res.transit.primary.st}(Station Value ${res.transit.primary.sv}) 이용과 강남 접근성(${res.transit.gangnamMin}분)`);
+      else if (k === 'job') coreBits.push('주요 업무지까지의 짧은 이동시간');
+      else if (k === 'education') coreBits.push(hed.eduDetail.hubName ? `${hed.eduDetail.hubName} 교육 생활권` : '교육환경');
+      else if (k === 'product') coreBits.push('신축급 상품성과 단지 규모');
+      else if (k === 'nature') coreBits.push('공원·수변 자연환경');
+      else if (k === 'life') coreBits.push('생활 인프라');
+    }
+    const core = top2.length
+      ? `이 단지의 가장 큰 경쟁력은 ${top2.map(([k]) => catNames[k]).join('과 ')}입니다. ${coreBits.join(', ')}이 높은 평가를 받았습니다.`
+      : `단일 항목의 두드러진 경쟁력보다는 요소들이 고르게 평균 수준인 단지입니다.`;
+
+    const supBits = [];
+    if (support.gradeIdx <= 1) supBits.push(`${support.label} 전세지지력`);
+    if (sup.gradeIdx <= 1) supBits.push(`공급 ${sup.gradeLabel} 환경`);
+    if (sub.job >= 70) supBits.push('직주근접 수요');
+    if (sub.education >= 78) supBits.push('학군 수요');
+    if (sub.product >= 78) supBits.push('신축·대단지 희소성');
+    if (opt.gradeIdx <= 1) supBits.push(`정비사업 기대(${opt.label})`);
+    const supportSentence = supBits.length
+      ? `${supBits.join(', ')}가 현재 가격을 지지하고 있습니다.`
+      : `현재 가격을 강하게 지지하는 구조적 요인은 뚜렷하지 않아, 시장 전반의 흐름에 더 민감할 수 있습니다.`;
+
+    const weakBits = [];
+    if (res.combineOut.disagreement > 0.35) weakBits.push(`임대(사용)가치가 시장가격보다 크게 낮아(괴리 ${(res.combineOut.disagreement * 100).toFixed(0)}%) 현재 가격에는 향후 기대가 상당 부분 포함되어 있습니다`);
+    else if (fin.impliedG != null && fin.impliedG > CFG.financial.impliedGrowthConcernOver) weakBits.push(`현재가 유지에 연 ${(fin.impliedG * 100).toFixed(1)}%의 임대가치 성장이 필요해 기대 선반영 폭이 큽니다`);
+    if (support.gradeIdx >= 3) weakBits.push(`전세지지력이 ${support.label} 수준입니다`);
+    if (sup.gradeIdx >= 3) weakBits.push(`향후 공급이 ${sup.gradeLabel} 구간입니다`);
+    if (sub.product < 58) weakBits.push('구축 연식·상품성이 열위입니다');
+    if ((cx.parkingRatio ?? 1) < 0.7 && cx.fieldStatus?.parkingRatio !== 'UNKNOWN') weakBits.push('주차 경쟁력이 부족합니다');
+    const weakness = weakBits.length ? weakBits.join('. ') + '.' : '지표상 두드러진 취약점은 확인되지 않았습니다.';
+
+    const watchBits = [];
+    if (sup.gradeIdx >= 2) watchBits.push('인접 생활권 공급 물량');
+    watchBits.push('전세가격 흐름');
+    if (opt.prob >= 0.2) watchBits.push('정비사업 진행 속도와 분담금');
+    if (fin.impliedG != null && fin.impliedG > fin.g) watchBits.push('금리 방향');
+    const watch = `앞으로는 ${watchBits.join(', ')}이 이 단지의 가격·투자매력도에 가장 큰 영향을 줄 가능성이 높습니다.`;
+
+    return { up, down, contrib, interpretation: interp2, diagnosis: { core, support: supportSentence, weakness, watch } };
   }
 
   /* ═══════════ 메인 파이프라인 ═══════════ */
-  function analyze(rawInput, CFG, HUBS, JOBS) {
+  function analyze(rawInput, CFG, HUBS, JOBS, STN) {
     const input = {
       asOfYM: rawInput.asOfYM, asOfYear: Number(rawInput.asOfYM.split('-')[0]),
       overrides: rawInput.overrides || {}, useRent: !!rawInput.useRent,
@@ -482,8 +610,10 @@ const AptEngine = (() => {
     // Engine D (전세지지력이 공급부담을 참조하므로 먼저)
     const supplyE = engineSupply(cx, input, CFG);
     const support = jeonseSupport(fin, cx.supply, supplyE.combined, CFG);
+    // Station Intelligence (있으면 교통·직주를 교체)
+    const transit = engineTransit(cx, input, CFG, JOBS, STN, gaps);
     // Engine C
-    const hedonic = engineHedonic(cx, area, input, CFG, HUBS, JOBS, gaps);
+    const hedonic = engineHedonic(cx, area, input, CFG, HUBS, JOBS, gaps, transit);
     // Engine E
     const option = engineOption(cx, input, CFG, gaps);
 
@@ -504,9 +634,16 @@ const AptEngine = (() => {
     const manualCount = (input.overrides.price != null ? 1 : 0) + (input.overrides.jeonse != null ? 1 : 0) + (input.manualComplex ? 2 : 0);
     const conf = confidence(market, combineOut.disagreement, fillRate, manualCount, CFG);
 
+    // 데이터 상태 집계 (VERIFIED / ESTIMATED / MANUAL / UNKNOWN — §39)
+    let dataStatus = null;
+    if (cx.fieldStatus) {
+      dataStatus = { VERIFIED: 0, ESTIMATED: 0, MANUAL: 0, UNKNOWN: 0 };
+      for (const v of Object.values(cx.fieldStatus)) if (dataStatus[v] != null) dataStatus[v]++;
+    }
+
     const res = {
       cx, area, input, currentPrice, market, financial: fin, support, hedonic, supplyE, option,
-      combineOut, range, gaps, fillRate,
+      transit, combineOut, range, gaps, fillRate, dataStatus,
       scores: { living, invest, attract },
       confidence: conf
     };
@@ -515,7 +652,7 @@ const AptEngine = (() => {
   }
 
   /* 스트레스 테스트: 프리셋 id 배열 → 오버라이드 병합 후 재계산 */
-  function applyStress(rawInput, presetIds, CFG, HUBS, JOBS) {
+  function applyStress(rawInput, presetIds, CFG, HUBS, JOBS, STN) {
     const ov = Object.assign({}, rawInput.overrides);
     for (const id of presetIds) {
       const p = CFG.stress.presets.find(x => x.id === id);
@@ -525,7 +662,7 @@ const AptEngine = (() => {
         else ov[k] = v;
       }
     }
-    return analyze(Object.assign({}, rawInput, { overrides: ov }), CFG, HUBS, JOBS);
+    return analyze(Object.assign({}, rawInput, { overrides: ov }), CFG, HUBS, JOBS, STN);
   }
 
   return { analyze, applyStress, interp, weightedMedian, weightedPercentile, monthsBetween, clamp, round1 };

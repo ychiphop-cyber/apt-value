@@ -1,13 +1,16 @@
 {
-  "version": "1.0.0",
-  "note": "업무지역 DB — jobsIndex는 상대적 일자리 규모 가중치(강남=1.0 기준). 향후 실제 일자리 수 데이터로 보정.",
+  "version": "2.0.0",
+  "note": "업무지역 DB — importance는 상대적 일자리·업무 규모 가중치(강남=1.0). stations는 해당 업무지 도착역(그래프 노드명). 향후 실제 일자리 수 데이터로 보정.",
   "centers": [
-    { "id": "GBD", "name": "강남", "jobsIndex": 1.0 },
-    { "id": "CBD", "name": "광화문·시청", "jobsIndex": 0.85 },
-    { "id": "YBD", "name": "여의도", "jobsIndex": 0.6 },
-    { "id": "JAMSIL", "name": "잠실", "jobsIndex": 0.4 },
-    { "id": "PANGYO", "name": "판교", "jobsIndex": 0.45 },
-    { "id": "GASAN", "name": "가산·구로", "jobsIndex": 0.4 },
-    { "id": "MAGOK", "name": "마곡", "jobsIndex": 0.3 }
+    { "id": "GBD", "name": "강남", "jobsIndex": 1.0, "importance": 1.0, "stations": ["강남", "역삼", "선릉"], "gangnamCore": true },
+    { "id": "SAMSUNG", "name": "삼성·코엑스", "jobsIndex": 0.55, "importance": 0.55, "stations": ["삼성", "봉은사"], "gangnamCore": true },
+    { "id": "CBD", "name": "광화문·시청", "jobsIndex": 0.85, "importance": 0.85, "stations": ["광화문", "시청", "종각"] },
+    { "id": "YBD", "name": "여의도", "jobsIndex": 0.6, "importance": 0.6, "stations": ["여의도"] },
+    { "id": "JAMSIL", "name": "잠실", "jobsIndex": 0.4, "importance": 0.4, "stations": ["잠실"] },
+    { "id": "PANGYO", "name": "판교", "jobsIndex": 0.45, "importance": 0.45, "stations": ["판교"] },
+    { "id": "SEONGSU", "name": "성수", "jobsIndex": 0.3, "importance": 0.3, "stations": ["성수", "서울숲"] },
+    { "id": "GASAN", "name": "가산·구로", "jobsIndex": 0.4, "importance": 0.4, "stations": ["가산디지털단지", "구로디지털단지"] },
+    { "id": "MAGOK", "name": "마곡", "jobsIndex": 0.3, "importance": 0.3, "stations": ["마곡나루", "마곡"] },
+    { "id": "YONGSAN", "name": "용산·서울역", "jobsIndex": 0.35, "importance": 0.35, "stations": ["서울역", "용산"] }
   ]
 }

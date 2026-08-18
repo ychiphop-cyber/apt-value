@@ -85,10 +85,11 @@ function parseItems(xml) {
   return items;
 }
 function checkResult(xml) {
-  const code = tag(xml, 'resultCode');
-  const msg = tag(xml, 'resultMsg');
+  // 표준 응답: <resultCode> / 인증·한도 오류 봉투: <returnReasonCode>+<errMsg>
+  const code = tag(xml, 'resultCode') || tag(xml, 'returnReasonCode');
+  const msg = tag(xml, 'resultMsg') || [tag(xml, 'errMsg'), tag(xml, 'returnAuthMsg')].filter(Boolean).join(' ');
   if (code && !/^0+$/.test(code)) {
-    const fatal = /SERVICE|KEY|REQUESTS|USE/i.test(msg + code);
+    const fatal = /SERVICE|KEY|REQUESTS|REGISTERED|USE/i.test(msg + code) || ['22', '30', '31', '32', '33'].includes(code);
     return { ok: false, fatal, msg: `${code} ${msg}` };
   }
   return { ok: true };
@@ -267,6 +268,9 @@ async function main() {
   const regions = REGIONS.regions.filter(r => r.enabled && (!wanted || wanted.includes(r.code)));
   log(`수집 시작: ${regions.length}개 지역 × ${months.length}개월 (기준 ${nowYM})`);
 
+  // --apis=trade,rent 로 수집 대상 제한 가능 (예: 전월세 활용신청 후 rent만 백필)
+  const apis = String(a.apis || 'trade,rent').split(',');
+  let useTrade = apis.includes('trade'), useRent = apis.includes('rent');
   let base = BASES[0], totalCalls = 0;
   const shards = [];
   for (const region of regions) {
@@ -274,13 +278,15 @@ async function main() {
     let shard = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : emptyShard(region);
     if (shard.meta.kind === 'fixture') shard = emptyShard(region);   // 픽스처는 실데이터로 교체
     for (const ymd of months) {
-      let tr, rn;
-      try {
-        tr = await fetchAll(base, EP_TRADE, key, region.code, ymd, log);
-        rn = await fetchAll(base, EP_RENT, key, region.code, ymd, log);
-      } catch (e) {
-        if (base === BASES[0] && /API 오류/.test(e.message) === false) { base = BASES[1]; tr = await fetchAll(base, EP_TRADE, key, region.code, ymd, log); rn = await fetchAll(base, EP_RENT, key, region.code, ymd, log); }
-        else throw e;
+      let tr = { items: [], calls: 0 }, rn = { items: [], calls: 0 };
+      if (useTrade) tr = await fetchAll(base, EP_TRADE, key, region.code, ymd, log);
+      if (useRent) {
+        try { rn = await fetchAll(base, EP_RENT, key, region.code, ymd, log); }
+        catch (e) {
+          useRent = false; rn = { items: [], calls: 1 };
+          log(`  ! 전월세 API 사용 불가 — 이후 매매만 수집합니다. (${e.message})`);
+          log(`    → data.go.kr에서 "아파트 전월세 자료" 활용신청 후 다시 실행하면 전세가 채워집니다.`);
+        }
       }
       totalCalls += tr.calls + rn.calls;
       mergeMonth(shard, ymd, tr.items, rn.items);

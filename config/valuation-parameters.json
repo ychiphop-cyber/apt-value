@@ -41,7 +41,31 @@
     "categoryCaps": { "transport": 0.05, "job": 0.05, "education": 0.06, "life": 0.03, "nature": 0.04, "product": 0.05 },
     "totalCap": 0.12,
     "jobDecayTau": 42,
-    "jobRefAccess": 1.55
+    "jobRefAccess": 1.75
+  },
+
+  "station": {
+    "note": "Station Intelligence Engine — 역별 점수 하드코딩 금지, 전 계수는 여기서만 관리",
+    "svWeights": { "jobAccess": 0.30, "destination": 0.25, "network": 0.25, "economy": 0.20 },
+    "svForTransportReweight": { "jobAccess": 0.35, "destination": 0.15, "network": 0.40, "economy": 0.10 },
+    "transportBlend": { "svT": 0.6, "gangnam": 0.4 },
+    "futureTransitBonus": { "confirmed": 4, "planned": 1 },
+    "transferPenaltyMin": 4,
+    "jobDecayTauMin": 28,
+    "gangnamCurve": [ { "min": 8, "score": 99 }, { "min": 15, "score": 92 }, { "min": 25, "score": 82 }, { "min": 35, "score": 70 }, { "min": 45, "score": 58 }, { "min": 60, "score": 42 }, { "min": 90, "score": 22 } ],
+    "destWeights": { "emp": 0.38, "comm": 0.28, "cult": 0.14, "med": 0.12, "tour": 0.08 },
+    "network": {
+      "directReachMin": 36, "reachMin": 50,
+      "weights": { "directJobCoverage": 0.45, "hubProximity": 0.30, "lineCount": 0.15, "express": 0.10 },
+      "lineCountScore": { "1": 55, "2": 78, "3": 90, "4": 96 },
+      "hubProximityTau": 22
+    },
+    "distanceDecay": [ { "min": 3, "f": 1.0 }, { "min": 6, "f": 0.95 }, { "min": 10, "f": 0.85 }, { "min": 15, "f": 0.68 }, { "min": 22, "f": 0.5 }, { "min": 30, "f": 0.32 } ],
+    "multiStation": { "secondMax": 0.25, "thirdMax": 0.10, "totalBonusCap": 0.30, "newDestReachMin": 36 },
+    "lineScore": { "avgAll": 0.60, "top20": 0.25, "networkUtility": 0.15 },
+    "wealthNote": "Station Wealth는 콘텐츠·참고용 — 아파트 적정가치 계산에 사용하지 않는다",
+    "unknownTransportScore": 55,
+    "maxTravelMin": 120
   },
 
   "education": {
