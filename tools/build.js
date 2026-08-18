@@ -12,7 +12,8 @@ const consts = [
   `const CFG=${JSON.stringify(JSON.parse(R('config/valuation-parameters.json')))};`,
   `const HUBS=${JSON.stringify(JSON.parse(R('config/education_hubs.json')))};`,
   `const JOBS=${JSON.stringify(JSON.parse(R('config/job_centers.json')))};`,
-  `const DATA=${JSON.stringify(JSON.parse(R('data/apartments.json')))};`
+  `const DATA=${JSON.stringify(JSON.parse(R('data/apartments.json')))};`,
+  `const REGIONS=${JSON.stringify(JSON.parse(R('pipeline/regions.json')))};`
 ].join('\n');
 
 const app = head +

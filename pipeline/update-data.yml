@@ -1,0 +1,64 @@
+name: 실거래 데이터 자동 갱신
+
+on:
+  schedule:
+    - cron: '10 21 * * *'   # 매일 06:10 KST — 최근 2개월 증분 수집
+  workflow_dispatch:
+    inputs:
+      months:
+        description: '수집 개월 수 (백필 시 크게)'
+        default: '2'
+      regions:
+        description: '시군구 코드 목록 (쉼표, 비우면 전체)'
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 키 확인
+        id: haskey
+        run: |
+          if [ -z "${{ secrets.DATA_GO_KR_KEY }}" ]; then
+            echo "missing=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::DATA_GO_KR_KEY 시크릿이 없어 수집을 건너뜁니다. 저장소 Settings → Secrets → Actions에 등록하세요."
+          fi
+
+      - name: 실거래 수집
+        if: steps.haskey.outputs.missing != 'true'
+        env:
+          DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+        run: |
+          ARGS="--months=${{ github.event.inputs.months || '2' }}"
+          if [ -n "${{ github.event.inputs.regions }}" ]; then ARGS="$ARGS --regions=${{ github.event.inputs.regions }}"; fi
+          node pipeline/collect.js $ARGS
+
+      - name: 파이프라인 테스트
+        if: steps.haskey.outputs.missing != 'true'
+        run: node test/pipeline.js
+
+      - name: 커밋·푸시
+        if: steps.haskey.outputs.missing != 'true'
+        run: |
+          git config user.name "apt-value-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/live
+          if git diff --cached --quiet; then
+            echo "변경 없음"
+          else
+            git commit -m "data: 실거래 자동 갱신 $(date -u +%Y-%m-%d)"
+            git push
+          fi

@@ -1,8 +1,11 @@
 'use strict';
 /* ═══════════════════════════════════════════════════════════════════
-   닥터마빈 아파트 가치진단 — UI (빌드 시 CFG/HUBS/JOBS/DATA/AptEngine 주입됨)
+   닥터마빈 아파트 가치진단 — UI
+   (빌드 시 CFG/HUBS/JOBS/DATA/REGIONS/AptEngine 주입)
+   단지 소스 3종: ① 상세 프로필 샘플(DATA) ② 실거래 자동수집(data/live/*)
+                 ③ 직접 입력
    ═══════════════════════════════════════════════════════════════════ */
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtEok = x => `${(Math.round(x * 10) / 10).toFixed(1)}억`;
@@ -26,10 +29,34 @@ $('themeBtn').onclick = () => {
 
 /* ── 상태 ── */
 const state = {
-  step: 1, cxId: null, manual: false, manualVals: {}, areaKey: null,
+  step: 1, cxId: null, manual: false, manualVals: {},
+  liveSel: null,            // {id, code, key, entry, region}
+  autoEdits: {},            // 자동수집 단지 보완 입력
+  areaKey: null,
   ovPrice: null, ovJeonse: null, ovConv: null,
   result: null, baseInput: null, stress: new Set()
 };
+
+/* ── 자동수집(live) 데이터 ── */
+const LIVE = { index: null, shards: {}, status: 'loading' };
+async function loadLive() {
+  try {
+    const r = await fetch('data/live/index.json', { cache: 'no-cache' });
+    if (!r.ok) throw new Error('none');
+    LIVE.index = await r.json();
+    LIVE.status = 'ready';
+  } catch (e) { LIVE.status = 'none'; }
+  renderVerLine(); renderAptList($('q').value.trim());
+}
+async function getShard(code) {
+  if (LIVE.shards[code]) return LIVE.shards[code];
+  const r = await fetch(`data/live/${code}.json`, { cache: 'no-cache' });
+  if (!r.ok) throw new Error('지역 데이터를 불러오지 못했습니다.');
+  const j = await r.json();
+  LIVE.shards[code] = j;
+  return j;
+}
+const regionOf = code => REGIONS.regions.find(r => r.code === code);
 
 const STEPS = ['아파트 선택', '정보 확인', '진단 결과'];
 
@@ -43,14 +70,30 @@ function renderStepper() {
   $('stepper').querySelectorAll('.st.done').forEach(b => b.onclick = () => go(Number(b.dataset.go)));
 }
 
+function step2Valid() {
+  const cx = getComplex();
+  if (!cx) return { ok: false, msg: '' };
+  const area = cx.areas.find(a => a.key === state.areaKey) || cx.areas[0];
+  const latest = (area.trades || [])[0];
+  const price = state.ovPrice != null ? state.ovPrice : (latest ? latest.price : null);
+  const jeonse = state.ovJeonse != null ? state.ovJeonse : area.jeonse;
+  if (!(price > 0)) return { ok: false, msg: '이 평형의 실거래가 없어 현재 시세를 직접 입력해야 합니다.' };
+  if (!(jeonse > 0)) return { ok: false, msg: '전세 실거래가 없어 전세 시세를 직접 입력해야 합니다.' };
+  return { ok: true, msg: '' };
+}
+
 function nav() {
-  const prev = $('btnPrev'), next = $('btnNext');
+  const prev = $('btnPrev'), next = $('btnNext'), msg = $('navMsg');
   prev.style.visibility = state.step === 1 ? 'hidden' : 'visible';
+  msg.style.display = 'none';
   if (state.step === 1) {
     next.textContent = '다음';
     next.disabled = !selectionValid();
   } else if (state.step === 2) {
-    next.textContent = '분석하기'; next.disabled = false;
+    next.textContent = '분석하기';
+    const v = step2Valid();
+    next.disabled = !v.ok;
+    if (!v.ok && v.msg) { msg.textContent = v.msg; msg.style.display = 'block'; }
   } else {
     next.textContent = '다른 아파트 진단하기'; next.disabled = false;
   }
@@ -59,20 +102,23 @@ function nav() {
 function go(n) {
   state.step = n;
   $('step1').hidden = n !== 1; $('step2').hidden = n !== 2; $('step3').hidden = n !== 3;
-  renderStepper(); nav();
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  renderStepper();
   if (n === 2) renderStep2();
+  nav();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 $('btnPrev').onclick = () => { if (state.step > 1) go(state.step - 1); };
 $('btnNext').onclick = () => {
   if (state.step === 1 && selectionValid()) go(2);
-  else if (state.step === 2) runAnalysis();
+  else if (state.step === 2 && step2Valid().ok) runAnalysis();
   else if (state.step === 3) resetAll();
 };
 
 function resetAll() {
-  state.cxId = null; state.manual = false; state.manualVals = {}; state.areaKey = null;
+  state.cxId = null; state.manual = false; state.manualVals = {};
+  state.liveSel = null; state.autoEdits = {};
+  state.areaKey = null;
   state.ovPrice = null; state.ovJeonse = null; state.ovConv = null;
   state.result = null; state.baseInput = null; state.stress = new Set();
   $('q').value = ''; $('manualCard').hidden = true; $('report').innerHTML = '';
@@ -84,36 +130,78 @@ function selectionValid() {
     const v = state.manualVals;
     return !!(v.name && v.price > 0 && v.jeonse > 0 && v.m2 > 0 && v.builtYear > 1960 && v.households > 0);
   }
-  return !!state.cxId;
+  return !!state.cxId || !!state.liveSel;
 }
 
-/* ── STEP 1 · 단지 목록 ── */
+/* ── STEP 1 · 검색 + 단지 목록 (샘플 + 자동수집) ── */
+function matchTokens(q, hay) { return q.split(/\s+/).every(t => hay.includes(t)); }
+
+function liveStatusHtml() {
+  if (LIVE.status === 'loading') return `<div class="notebox">실거래 자동수집 데이터 확인 중…</div>`;
+  if (LIVE.status === 'ready') {
+    const m = LIVE.index.meta;
+    return `<div class="notebox">🔄 <b>실거래 자동수집 연결됨</b> — ${m.regions}개 시군구 · ${LIVE.index.complexes.length.toLocaleString()}개 단지 (국토교통부 실거래가, ${esc(m.updatedAt)} 기준). 검색하면 자동수집 단지가 함께 검색됩니다.</div>`;
+  }
+  return `<div class="notebox"><b>실거래 자동수집 대기 중</b> — 공공데이터포털(국토교통부 실거래가 API) 키를 연결하면
+    수도권 40개 시군구의 <b>모든 아파트 단지</b>가 자동 등재되고 매일 갱신됩니다.
+    <details style="margin-top:6px"><summary style="cursor:pointer">연결 방법 (5분, 1회)</summary>
+    <ol style="margin:6px 0 0;padding-left:18px;line-height:1.7">
+      <li>data.go.kr 로그인 → <b>"아파트 매매 실거래자료"</b>와 <b>"아파트 전월세 자료"</b> 각각 활용신청 (즉시 승인)</li>
+      <li>마이페이지의 일반 인증키를 GitHub 저장소 apt-value → Settings → Secrets → Actions에 <b>DATA_GO_KR_KEY</b>로 등록</li>
+      <li>Actions 탭 → "실거래 데이터 자동 갱신" → Run workflow (months=24로 1회 백필) — 이후 매일 자동</li>
+    </ol></details></div>`;
+}
+
 function renderAptList(q) {
-  const list = DATA.complexes.filter(c => {
+  const sample = DATA.complexes.filter(c => {
     if (!q) return true;
-    const hay = [c.name, c.city, c.district, c.dong, ...(c.aliases || []), ...(c.tags || [])].join(' ');
-    return q.split(/\s+/).every(t => hay.includes(t));
+    return matchTokens(q, [c.name, c.city, c.district, c.dong, ...(c.aliases || []), ...(c.tags || [])].join(' '));
   });
-  const cards = list.map(c => `
-    <button class="apt ${state.cxId === c.id && !state.manual ? 'sel' : ''}" data-id="${c.id}">
+  let liveMatches = [];
+  if (q && LIVE.status === 'ready') {
+    const sampleNames = new Set(sample.map(c => c.name));
+    liveMatches = LIVE.index.complexes
+      .filter(e => matchTokens(q, `${e.n} ${e.gn} ${e.d}`))
+      .filter(e => !sampleNames.has(e.n))
+      .slice(0, 30);
+  }
+  const sampleCards = sample.map(c => `
+    <button class="apt ${state.cxId === c.id && !state.manual && !state.liveSel ? 'sel' : ''}" data-id="${c.id}">
       <b>${esc(c.name)}</b>
       <span class="l1">${esc(c.city)} ${esc(c.district)} ${esc(c.dong)} · ${c.builtYear}년 · ${c.households.toLocaleString()}세대</span>
-      <span class="tagrow">${(c.tags || []).map(t => `<span class="tg">${esc(t)}</span>`).join('')}</span>
+      <span class="tagrow"><span class="tg" style="color:var(--accent);border-color:var(--accent)">상세 프로필</span>${(c.tags || []).map(t => `<span class="tg">${esc(t)}</span>`).join('')}</span>
     </button>`).join('');
-  $('aptList').innerHTML = cards + `
+  const liveCards = liveMatches.map(e => `
+    <button class="apt" data-live="${esc(e.id)}">
+      <b>${esc(e.n)}</b>
+      <span class="l1">${esc(e.gn)} ${esc(e.d)} · ${e.y ? e.y + '년' : '연식 미상'} · 최근 2년 매매 ${e.t}건</span>
+      <span class="tagrow"><span class="tg">실거래 자동</span><span class="tg">${e.a.map(a => a + '㎡').join(' · ')}</span></span>
+    </button>`).join('');
+  $('aptList').innerHTML = liveStatusHtml() + sampleCards + liveCards + `
     <button class="apt dashed full" data-id="__manual__">
       <b>＋ 직접 입력</b>
-      <span class="l1">목록에 없는 아파트를 핵심 정보만으로 진단합니다 (신뢰도는 낮게 표시됩니다)</span>
-    </button>`;
-  $('aptList').querySelectorAll('.apt').forEach(b => b.onclick = () => {
+      <span class="l1">검색에 없는 아파트를 핵심 정보만으로 진단합니다 (신뢰도는 낮게 표시됩니다)</span>
+    </button>` +
+    (q && !sample.length && !liveMatches.length ? `<div class="notebox">검색 결과가 없습니다. ${LIVE.status !== 'ready' ? '자동수집을 연결하면 수도권 전 단지가 검색됩니다. ' : ''}직접 입력으로 진단할 수 있습니다.</div>` : '');
+
+  $('aptList').querySelectorAll('.apt').forEach(b => b.onclick = async () => {
+    if (b.dataset.live) {
+      try {
+        b.querySelector('b').textContent = '불러오는 중…';
+        await selectLive(b.dataset.live);
+      } catch (e) {
+        b.querySelector('b').textContent = '불러오기 실패 — 다시 시도';
+      }
+      return;
+    }
     if (b.dataset.id === '__manual__') {
-      state.manual = true; state.cxId = null;
+      state.manual = true; state.cxId = null; state.liveSel = null;
       $('manualCard').hidden = false;
       renderManualForm();
       $('manualCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
       renderAptList($('q').value.trim()); nav();
     } else {
-      state.manual = false; state.cxId = b.dataset.id; state.areaKey = null;
+      state.manual = false; state.liveSel = null; state.cxId = b.dataset.id; state.areaKey = null;
       state.ovPrice = null; state.ovJeonse = null; state.ovConv = null;
       $('manualCard').hidden = true;
       go(2);
@@ -121,6 +209,82 @@ function renderAptList(q) {
   });
 }
 $('q').addEventListener('input', () => renderAptList($('q').value.trim()));
+
+async function selectLive(id) {
+  const e = LIVE.index.complexes.find(x => x.id === id);
+  if (!e) throw new Error('단지 없음');
+  const shard = await getShard(e.g);
+  const key = id.split('|').slice(1).join('|');
+  const entry = shard.complexes[key];
+  if (!entry) throw new Error('단지 데이터 없음');
+  state.liveSel = { id, code: e.g, key, entry, region: regionOf(e.g) };
+  state.manual = false; state.cxId = null; state.areaKey = null; state.autoEdits = {};
+  state.ovPrice = null; state.ovJeonse = null; state.ovConv = null;
+  $('manualCard').hidden = true;
+  go(2);
+}
+
+/* ── 자동수집 단지 → 엔진 스키마 ── */
+function matchHub(dong, district) {
+  const norm = s => String(s || '').replace(/\s/g, '');
+  for (const h of HUBS.hubs) {
+    const d1 = norm(district), d2 = norm(h.district);
+    if (!d1.includes(d2) && !d2.includes(d1)) continue;
+    if (norm(h.neighborhood).includes(norm(dong))) return h;
+  }
+  return null;
+}
+
+function buildAutoComplex() {
+  const { entry, region } = state.liveSel;
+  const e = state.autoEdits;
+  const gaps = [];
+  const hub = matchHub(entry.dong, region.district);
+  if (!(e.households > 0)) gaps.push('세대수 미확인 (기본값 700)');
+  if (!(e.subwayMin > 0)) gaps.push('역거리 미확인 (기본값 10분)');
+  if (!e.redevStage) gaps.push('정비사업 단계 미확인');
+  if (!entry.builtYear) gaps.push('준공연도 미확인');
+  gaps.push('주차·브랜드·생활·자연환경 기본값 사용');
+  if (!hub) gaps.push('교육 상세 미확인 (중립 가정)');
+
+  const areas = Object.entries(entry.areas).map(([k, a]) => ({
+    key: k, label: `전용 ${k}㎡형`, m2: a.m2,
+    trades: (a.trades || []).map(t => ({ ym: t.ym, price: t.price, floor: t.floor })),
+    jeonse: a.jeonse ? a.jeonse.v : null, jeonseMeta: a.jeonse || null
+  })).sort((x, y) => Number(x.key) - Number(y.key));
+
+  // 이 단지에 매매 실거래가 전혀 없으면, 사용자가 입력한 시세를 앵커로 사용
+  const totTrades = areas.reduce((s, a) => s + a.trades.length, 0);
+  if (!totTrades && state.ovPrice > 0) {
+    const sel = areas.find(a => a.key === state.areaKey) || areas[0];
+    sel.trades = [{ ym: liveAsOf(), price: state.ovPrice, floor: 0 }];
+    gaps.push('매매 실거래 없음 — 입력 시세 기준');
+  }
+
+  return {
+    id: 'live|' + state.liveSel.id, name: entry.name,
+    city: region.sido, district: region.name, dong: entry.dong,
+    regionTier: region.tier, builtYear: entry.builtYear || 2000,
+    households: e.households > 0 ? e.households : 700, brandTier: 2,
+    parkingRatio: 0.9, far: 250, rentalShare: 0,
+    redev: { stage: e.redevStage || 'none' },
+    conversionRate: state.ovConv != null ? state.ovConv : region.conv,
+    tags: ['실거래 자동'], dataGaps: gaps,
+    areas,
+    location: { subwayMin: e.subwayMin > 0 ? e.subwayMin : 10, lines: [], transfer: false, express: false, futureTransit: null, jobMinutes: region.jobMinutes },
+    education: hub
+      ? { elemM: 400, chopuma: false, middlePref: hub.hub_type === 'school_zone' ? 4 : 3, hubId: hub.id, inHub: true, hubAccess: [], age3049: 0.31, studentTrend: 'stable' }
+      : { elemM: 500, chopuma: false, middlePref: 3, hubId: null, inHub: false, localAcademyLevel: 3, hubAccess: [], age3049: 0.30, studentTrend: 'stable' },
+    life: { martMin: 10, deptMin: 20, hospitalMin: 15, streetLevel: 3 },
+    nature: { parkMin: 10, bigPark: false, riverMin: 30, hanRiver: false, hanRiverView: null, forest: false },
+    supply: {
+      pop: region.pop, next3yAvg: e.supplyNext3yAvg > 0 ? e.supplyNext3yAvg : region.supplyNext3yAvg,
+      adjacentRatio: region.adjacentRatio, metroRatio: region.metroRatio,
+      unsoldLevel: 2, txVolumeLevel: 3, jeonseListingsLevel: 3, jeonseTrend: 'stable', regulated: region.regulated
+    }
+  };
+}
+function liveAsOf() { return (LIVE.index && LIVE.index.meta.updatedAt) || DATA.meta.asOf; }
 
 /* ── 직접 입력 ── */
 const REDEV_OPTS = Object.entries(CFG.option.stageLabels);
@@ -150,11 +314,13 @@ function renderManualForm() {
     </div>
     <p class="subtle">그 밖의 항목(주차·브랜드·공원·규제 등)은 중립 가정값으로 계산되며, 결과의 신뢰도 표시에 반영됩니다.</p>`;
   const bind = (id, key, num) => { $(id).addEventListener('input', () => { state.manualVals[key] = num ? Number($(id).value) : $(id).value.trim(); nav(); }); };
-  bind('mName', 'name'); bind('mTier', 'tier'); bind('mYear', 'builtYear', 1); bind('mHH', 'households', 1);
+  bind('mName', 'name'); bind('mYear', 'builtYear', 1); bind('mHH', 'households', 1);
   bind('mM2', 'm2', 1); bind('mPrice', 'price', 1); bind('mJeonse', 'jeonse', 1); bind('mSubway', 'subwayMin', 1);
-  bind('mGBD', 'gbd', 1); bind('mMid', 'middlePref', 1); bind('mAcad', 'acadLevel', 1);
-  bind('mSupply', 'supply', 1); bind('mPop', 'popMan', 1); bind('mRedev', 'redev');
-  ['mTier', 'mMid', 'mAcad', 'mRedev'].forEach(id => $(id).addEventListener('change', () => { state.manualVals[{ mTier: 'tier', mMid: 'middlePref', mAcad: 'acadLevel', mRedev: 'redev' }[id]] = (id === 'mTier' || id === 'mRedev') ? $(id).value : Number($(id).value); nav(); }));
+  bind('mGBD', 'gbd', 1); bind('mSupply', 'supply', 1); bind('mPop', 'popMan', 1);
+  ['mTier', 'mMid', 'mAcad', 'mRedev'].forEach(id => $(id).addEventListener('change', () => {
+    const map = { mTier: 'tier', mMid: 'middlePref', mAcad: 'acadLevel', mRedev: 'redev' };
+    state.manualVals[map[id]] = (id === 'mTier' || id === 'mRedev') ? $(id).value : Number($(id).value); nav();
+  }));
   if (!v.tier) { v.tier = '서울'; v.builtYear = v.builtYear || 2010; v.households = v.households || 1000; v.m2 = v.m2 || 84; }
 }
 
@@ -165,7 +331,7 @@ function buildManualComplex() {
     id: '__manual__', name: v.name || '직접 입력 단지', city: '', district: '', dong: '',
     regionTier: v.tier || '서울', builtYear: v.builtYear || 2010, households: v.households || 1000,
     brandTier: 2, parkingRatio: 1.0, far: 250, rentalShare: 0,
-    redev: { stage: v.redev || 'none' }, conversionRate: conv,
+    redev: { stage: v.redev || 'none' }, conversionRate: state.ovConv != null ? state.ovConv : conv,
     tags: ['직접 입력'],
     areas: [{ key: 'M', label: `전용 ${v.m2 || 84}㎡`, m2: v.m2 || 84, jeonse: v.jeonse, trades: [{ ym: DATA.meta.asOf, price: v.price }] }],
     location: { subwayMin: v.subwayMin || 10, lines: [], transfer: false, express: false, futureTransit: null, jobMinutes: { GBD: v.gbd || 45, CBD: 50, YBD: 55, PANGYO: 45 } },
@@ -177,57 +343,84 @@ function buildManualComplex() {
 }
 
 /* ── STEP 2 · 정보 확인 ── */
-function getComplex() { return state.manual ? buildManualComplex() : DATA.complexes.find(c => c.id === state.cxId); }
+function getComplex() {
+  if (state.manual) return buildManualComplex();
+  if (state.liveSel) return buildAutoComplex();
+  return DATA.complexes.find(c => c.id === state.cxId);
+}
 
 function renderStep2() {
   const cx = getComplex();
+  if (!cx) return;
   if (!state.areaKey || !cx.areas.some(a => a.key === state.areaKey)) state.areaKey = cx.areas[0].key;
+  const isLive = !!state.liveSel;
   const S = DATA.defaultSources;
+
   $('cxSummary').innerHTML = `
     <div class="stepnum">STEP 2 / 3</div>
-    <h2>${esc(cx.name)}</h2>
-    <p class="hint">${esc(cx.city)} ${esc(cx.district)} ${esc(cx.dong)} · ${cx.builtYear}년 준공 · ${cx.households.toLocaleString()}세대${cx.householdsNote ? ` (${esc(cx.householdsNote)})` : ''}</p>
-    <div class="kv"><span>주차</span><span>${cx.parkingRatio ?? '—'}대/세대</span></div>
+    <h2>${esc(cx.name)} ${isLive ? '<span class="stat info">실거래 자동</span>' : ''}</h2>
+    <p class="hint">${esc(cx.city)} ${esc(cx.district)} ${esc(cx.dong)} · ${cx.builtYear}년 준공${cx.households ? ` · ${cx.households.toLocaleString()}세대${cx.householdsNote ? ` (${esc(cx.householdsNote)})` : ''}` : ''}</p>
+    ${isLive ? '' : `<div class="kv"><span>주차</span><span>${cx.parkingRatio ?? '—'}대/세대</span></div>
     <div class="kv"><span>용적률</span><span>${cx.far ?? '—'}%${cx.allowedFar ? ` (허용 ${cx.allowedFar}%)` : ''}</span></div>
     <div class="kv"><span>교통</span><span>${esc((cx.location.lines || []).join(' · ') || '—')} 도보 ${cx.location.subwayMin}분</span></div>
-    <div class="kv"><span>정비사업</span><span>${CFG.option.stageLabels[(cx.redev && cx.redev.stage) || 'none']}</span></div>
-    ${state.manual ? '<p class="subtle">직접 입력 단지 — 미입력 항목은 중립 가정값입니다.</p>' : `<p class="subtle">${esc(DATA.meta.notice)}</p>`}`;
+    <div class="kv"><span>정비사업</span><span>${CFG.option.stageLabels[(cx.redev && cx.redev.stage) || 'none']}</span></div>`}
+    ${state.manual ? '<p class="subtle">직접 입력 단지 — 미입력 항목은 중립 가정값입니다.</p>'
+      : isLive ? `<p class="subtle">국토교통부 실거래가 자동수집 단지 (${esc(liveAsOf())} 기준). 실거래·전세는 자동, 입지·상품 상세는 아래 보완 입력 또는 기본값을 사용합니다.</p>`
+      : `<p class="subtle">${esc(DATA.meta.notice)}</p>`}`;
 
   const area = cx.areas.find(a => a.key === state.areaKey);
   const latest = (area.trades || []).slice().sort((a, b) => b.ym.localeCompare(a.ym))[0];
   const priceVal = state.ovPrice != null ? state.ovPrice : (latest ? latest.price : '');
-  const jeonseVal = state.ovJeonse != null ? state.ovJeonse : area.jeonse;
+  const jeonseVal = state.ovJeonse != null ? state.ovJeonse : (area.jeonse ?? '');
+  const jm = area.jeonseMeta;
   $('areaCard').innerHTML = `
     <h2>평형과 가격을 확인해 주세요</h2>
     <p class="hint">자동입력 값은 수정할 수 있습니다. 수정하면 결과 신뢰도 계산에 반영됩니다.</p>
-    <div class="seg" id="areaSeg">${cx.areas.map(a => `<button data-k="${a.key}" aria-pressed="${a.key === state.areaKey}">${esc(a.label)}</button>`).join('')}</div>
+    <div class="seg" id="areaSeg">${cx.areas.map(a => `<button data-k="${a.key}" aria-pressed="${a.key === state.areaKey}">${esc(a.label)}${isLive ? ` · ${a.trades.length}건` : ''}</button>`).join('')}</div>
     <div class="grid2" style="margin-top:16px">
       <div>
-        <label class="mini">현재 시장가격 ${state.ovPrice != null ? '<span class="stat est">수정됨</span>' : '<span class="stat ok">자동입력</span>'}
+        <label class="mini">현재 시장가격 ${state.ovPrice != null ? '<span class="stat est">수정됨</span>' : (latest ? '<span class="stat ok">자동입력</span>' : '<span class="stat chk" style="color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent)">입력 필요</span>')}
           <span class="inline-num"><input type="number" id="inPrice" step="0.1" min="0" value="${priceVal}"><em>억원</em></span></label>
-        ${latest ? `<div class="srcline">최근 실거래 ${latest.ym} · ${fmtEok(latest.price)} (${latest.floor}층) — ${esc(S.trades.src)}, ${esc(S.trades.asOf)} 기준</div>` : '<div class="srcline">실거래 없음 — 직접 입력값 사용</div>'}
+        ${latest ? `<div class="srcline">최근 실거래 ${latest.ym} · ${fmtEok(latest.price)}${latest.floor ? ` (${latest.floor}층)` : ''} — ${isLive ? '국토교통부 실거래가 API' : esc(S.trades.src)}, ${isLive ? esc(liveAsOf()) : esc(S.trades.asOf)} 기준</div>` : '<div class="srcline">이 평형은 최근 매매 실거래가 없습니다 — 시세를 직접 입력하세요.</div>'}
       </div>
       <div>
-        <label class="mini">전세 시세 ${state.ovJeonse != null ? '<span class="stat est">수정됨</span>' : '<span class="stat ok">자동입력</span>'}
+        <label class="mini">전세 시세 ${state.ovJeonse != null ? '<span class="stat est">수정됨</span>' : (area.jeonse ? '<span class="stat ok">자동입력</span>' : '<span class="stat chk" style="color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent)">입력 필요</span>')}
           <span class="inline-num"><input type="number" id="inJeonse" step="0.1" min="0" value="${jeonseVal}"><em>억원</em></span></label>
-        <div class="srcline">${esc(S.jeonse.src)}, ${esc(S.jeonse.asOf)} 기준</div>
+        <div class="srcline">${isLive ? (jm ? `전월세 실거래 ${jm.n}건 중앙값 (최근 ${jm.windowMo}개월, 신규계약)` : '전세 실거래 없음 — 직접 입력') : `${esc(S.jeonse.src)}, ${esc(S.jeonse.asOf)} 기준`}</div>
       </div>
     </div>`;
   $('areaSeg').querySelectorAll('button').forEach(b => b.onclick = () => {
-    state.areaKey = b.dataset.k; state.ovPrice = null; state.ovJeonse = null; renderStep2();
+    state.areaKey = b.dataset.k; state.ovPrice = null; state.ovJeonse = null; renderStep2(); nav();
   });
   $('inPrice').addEventListener('input', () => {
     const n = Number($('inPrice').value);
     state.ovPrice = (latest && Math.abs(n - latest.price) < 1e-9) ? null : (n > 0 ? n : null);
+    nav();
   });
   $('inJeonse').addEventListener('input', () => {
     const n = Number($('inJeonse').value);
-    state.ovJeonse = (Math.abs(n - area.jeonse) < 1e-9) ? null : (n > 0 ? n : null);
+    state.ovJeonse = (area.jeonse && Math.abs(n - area.jeonse) < 1e-9) ? null : (n > 0 ? n : null);
+    nav();
   });
 
+  /* 자동수집 단지 보완 입력 + 계산 가정 */
   const F = CFG.financial;
   const conv = state.ovConv != null ? state.ovConv : (cx.conversionRate || F.defaultConversionRate);
   const r = F.altReturn + F.liquidityPremium + F.assetRiskPremium + (F.regionRiskPremium[cx.regionTier] ?? 0.013);
+  const e = state.autoEdits;
+  const liveExtra = isLive ? `
+    <h3 class="mini-h">보완 정보 (선택) — 입력하면 정확도·신뢰도가 올라갑니다</h3>
+    <div class="grid2">
+      <div><label class="mini">세대수 ${e.households > 0 ? '<span class="stat ok">입력됨</span>' : '<span class="stat est">기본값 700</span>'}
+        <span class="inline-num"><input type="number" id="edHH" min="50" step="50" value="${e.households || ''}" placeholder="700"><em>세대</em></span></label></div>
+      <div><label class="mini">지하철 도보 ${e.subwayMin > 0 ? '<span class="stat ok">입력됨</span>' : '<span class="stat est">기본값 10분</span>'}
+        <span class="inline-num"><input type="number" id="edSubway" min="1" max="40" value="${e.subwayMin || ''}" placeholder="10"><em>분</em></span></label></div>
+      <div><label class="mini">정비사업 단계 ${e.redevStage ? '<span class="stat ok">입력됨</span>' : '<span class="stat est">해당 없음 가정</span>'}
+        <select id="edRedev"><option value="">모름 / 해당 없음</option>${REDEV_OPTS.filter(([k]) => k !== 'none').map(([k, l]) => `<option value="${k}" ${e.redevStage === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label></div>
+      <div><label class="mini">향후 3년 연평균 입주(시군구) ${e.supplyNext3yAvg > 0 ? '<span class="stat ok">입력됨</span>' : `<span class="stat est">기본값 ${(state.liveSel.region.supplyNext3yAvg).toLocaleString()}호</span>`}
+        <span class="inline-num"><input type="number" id="edSupply" min="0" step="100" value="${e.supplyNext3yAvg || ''}" placeholder="${state.liveSel.region.supplyNext3yAvg}"><em>호</em></span></label></div>
+    </div>` : '';
+
   $('assumeCard').innerHTML = `
     <h2>계산 가정</h2>
     <p class="hint">기본값 그대로 두어도 됩니다. 모든 가정은 결과 화면에 표시됩니다.</p>
@@ -239,22 +432,32 @@ function renderStep2() {
       <label class="mini">시장 전월세전환율 ${state.ovConv != null ? '<span class="stat est">수정됨</span>' : '<span class="stat ok">자동입력</span>'}
         <span class="inline-num"><input type="number" id="inConv" step="0.1" min="1" max="12" value="${(conv * 100).toFixed(1)}"><em>%</em></span></label>
       <div class="srcline">법정 전환율이 아닌 지역 시장 전환율 기준</div>
-    </div></div>`;
+    </div></div>
+    ${liveExtra}`;
   $('inConv').addEventListener('input', () => {
     const n = Number($('inConv').value) / 100;
-    const base = cx.conversionRate || F.defaultConversionRate;
+    const base = state.liveSel ? state.liveSel.region.conv : (state.manual ? F.defaultConversionRate : (cx.conversionRate || F.defaultConversionRate));
     state.ovConv = (n > 0.01 && Math.abs(n - base) > 1e-6) ? n : null;
   });
+  if (isLive) {
+    const bindE = (id, key) => { const el = $(id); if (!el) return; el.addEventListener('input', () => { state.autoEdits[key] = Number(el.value) || 0; nav(); }); };
+    bindE('edHH', 'households'); bindE('edSubway', 'subwayMin'); bindE('edSupply', 'supplyNext3yAvg');
+    $('edRedev').addEventListener('change', () => { state.autoEdits.redevStage = $('edRedev').value || null; nav(); });
+  }
 }
 
 /* ── 분석 실행 ── */
 function buildInput() {
   const cx = getComplex();
-  if (state.ovConv != null) { cx.conversionRate = state.ovConv; }
   const overrides = {};
   if (state.ovPrice != null) overrides.price = state.ovPrice;
   if (state.ovJeonse != null) overrides.jeonse = state.ovJeonse;
-  return { complex: cx, areaKey: state.manual ? 'M' : state.areaKey, asOfYM: DATA.meta.asOf, overrides, manualComplex: state.manual };
+  return {
+    complex: cx,
+    areaKey: state.manual ? 'M' : state.areaKey,
+    asOfYM: state.liveSel ? liveAsOf() : DATA.meta.asOf,
+    overrides, manualComplex: state.manual, autoComplex: !!state.liveSel
+  };
 }
 
 function runAnalysis() {
@@ -287,11 +490,11 @@ function verdictBadge(pos) {
 /* ── 결과 렌더 ── */
 function renderReport(r) {
   const cx = r.cx, area = r.area;
+  const isLive = !!state.liveSel;
   const [vbCls, vbText] = verdictBadge(r.scores.attract.positionLabel);
   const conf = r.confidence;
   const S = DATA.defaultSources;
 
-  /* 범위 시각화 좌표 */
   const lo0 = Math.min(r.range.low, r.currentPrice), hi0 = Math.max(r.range.high, r.currentPrice);
   const span = hi0 - lo0 || 1;
   const dLo = lo0 - span * 0.18, dHi = hi0 + span * 0.18;
@@ -317,10 +520,15 @@ function renderReport(r) {
 
   const fin = r.financial, sup = r.supplyE, opt = r.option, hd = r.hedonic, ed = hd.eduDetail;
 
+  const srcRows = isLive
+    ? `<div class="kv"><span>국토교통부 실거래가 공개 API (매매·전월세 자동수집)</span><span>${esc(liveAsOf())} 기준</span></div>
+       <div class="kv"><span>입지·수급 간이 기본값 (pipeline/regions.json)</span><span>${esc(REGIONS.asOf)} 기준</span></div>`
+    : Object.values(S).map(s => `<div class="kv"><span>${esc(s.src)}</span><span>${esc(s.asOf)} 기준</span></div>`).join('');
+
   $('report').innerHTML = `
   <div class="hero">
     <div class="aptname">${esc(cx.name)} <span style="font-weight:500;color:var(--muted);font-size:13px">${esc(area.label)}</span></div>
-    <div class="aptsub">${esc(cx.city)} ${esc(cx.district)} ${esc(cx.dong)} · ${cx.builtYear}년 · ${cx.households.toLocaleString()}세대</div>
+    <div class="aptsub">${esc(cx.city)} ${esc(cx.district)} ${esc(cx.dong)} · ${cx.builtYear}년 · ${cx.households.toLocaleString()}세대${isLive ? ' · 실거래 자동수집' : ''}</div>
     <div class="duo">
       <div><div class="k">현재 시장가격</div><div class="big">${fmtEokW(r.currentPrice)}</div></div>
       <div><div class="k">모델 적정가치</div><div class="big accent">${fmtEok(r.range.low)} ~ ${fmtEokW(r.range.high)}</div></div>
@@ -350,6 +558,7 @@ function renderReport(r) {
         <div class="k">${t.k}</div><div class="v g${g}">${t.v}<em> / 100</em></div>
         <div class="bar"><i class="bg${g}" style="width:${t.v}%"></i></div><div class="s">${t.s}</div></button>`; }).join('')}
     </div>
+    ${isLive ? '<p class="subtle" style="margin-top:10px">실거래 자동수집 단지는 가격·전세는 실데이터, 입지·상품 상세는 기본값 기반입니다. 주거가치·투자가치는 참고 수준으로 보고, 보완 정보를 입력할수록 정확해집니다.</p>' : ''}
   </div>
 
   <div class="card">
@@ -420,7 +629,7 @@ function renderReport(r) {
       ${sup.notes.map(x => `<div class="kv"><span style="flex:1">${esc(x)}</span><span></span></div>`).join('')}
       <div class="kv"><span>종합 공급부담 판정</span><span class="strong">${sup.gradeLabel}</span></div>
       <div class="kv"><span>가격 반영(제한적)</span><span>${signPct(sup.adj)}</span></div>
-      <p class="subtle">간이 수요추정치(인구×${fmtPct(CFG.supply.demandRate, 1)})는 절대수요가 아닌 관행적 근사값입니다. 행정구역만이 아니라 인접 생활권·광역시장을 ${Math.round(CFG.supply.zoneWeights.local * 100)}:${Math.round(CFG.supply.zoneWeights.adjacent * 100)}:${Math.round(CFG.supply.zoneWeights.metro * 100)}으로 가중합니다.</p>
+      <p class="subtle">간이 수요추정치(인구×${fmtPct(CFG.supply.demandRate, 1)})는 절대수요가 아닌 관행적 근사값입니다. 행정구역만이 아니라 인접 생활권·광역시장을 ${Math.round(CFG.supply.zoneWeights.local * 100)}:${Math.round(CFG.supply.zoneWeights.adjacent * 100)}:${Math.round(CFG.supply.zoneWeights.metro * 100)}으로 가중합니다.${isLive ? ' 자동수집 단지의 공급·인구는 시군구 간이 기본값입니다(STEP 2에서 수정 가능).' : ''}</p>
       <h3 class="mini-h">규제 효과 (양면)</h3>
       <div class="kv"><span>매수수요 압력</span><span style="text-align:left;flex:1.2">${esc(sup.regulation.demandSide)}</span></div>
       <div class="kv"><span>매물잠김 압력</span><span style="text-align:left;flex:1.2">${esc(sup.regulation.lockinSide)}</span></div>
@@ -450,15 +659,15 @@ function renderReport(r) {
       ${conf.penalties.length ? `<ul style="margin:0;padding-left:18px;font-size:12.5px;color:var(--ink2);line-height:1.7">${conf.penalties.map(p => `<li>${esc(p)}</li>`).join('')}</ul>` : '<p class="subtle">감점 요인이 없습니다.</p>'}
       ${r.gaps.length ? `<p class="subtle">데이터 공백: ${r.gaps.map(esc).join(' · ')}</p>` : ''}
       <h3 class="mini-h">데이터 출처·기준일</h3>
-      ${Object.values(S).map(s => `<div class="kv"><span>${esc(s.src)}</span><span>${esc(s.asOf)} 기준</span></div>`).join('')}
+      ${srcRows}
       <div class="kv"><span>금리·계수 설정</span><span>${esc(CFG.asOf)} 기준 (config)</span></div>
-      <p class="subtle">${esc(DATA.meta.notice)}</p>
+      ${isLive ? '' : `<p class="subtle">${esc(DATA.meta.notice)}</p>`}
     </div></details>
   </div>
 
   <div class="card" id="cmpCard">
     <h2>다른 단지와 비교</h2>
-    <p class="hint">같은 돈으로 무엇을 사는 것인지 — 두 단지의 진단을 나란히 봅니다.</p>
+    <p class="hint">같은 돈으로 무엇을 사는 것인지 — 상세 프로필 단지와 나란히 봅니다.</p>
     <div class="grid2">
       <div><label class="mini">비교 단지<select id="cmpSel"><option value="">선택하세요</option>${DATA.complexes.filter(c => c.id !== cx.id).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label></div>
       <div><label class="mini">평형<select id="cmpArea" disabled></select></label></div>
@@ -468,13 +677,11 @@ function renderReport(r) {
 
   <div class="warnbox"><b>이 결과를 읽는 법</b> — 본 진단은 미래 집값 예측이 아니라, 현재 가격이 어떤 요인으로 설명되며 어떤 조건이 무너지면 취약해지는지 이해를 돕는 도구입니다. 적정가치는 범위로만 제시하며, 개별 동·층·향·내부상태는 반영되지 않습니다. 투자 권유가 아닙니다.</div>`;
 
-  /* 점수 타일 → 상세 이동 */
   $('report').querySelectorAll('.t3').forEach(b => b.onclick = () => {
     const acc = $(b.dataset.acc); if (!acc) return;
     acc.open = true; acc.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
-  /* 스트레스 테스트 */
   $('stressBtns').querySelectorAll('.sbtn').forEach(b => b.onclick = () => {
     const id = b.dataset.sid;
     const preset = CFG.stress.presets.find(p => p.id === id);
@@ -492,7 +699,6 @@ function renderReport(r) {
     renderStress();
   };
 
-  /* 비교 */
   $('cmpSel').onchange = () => {
     const c2 = DATA.complexes.find(c => c.id === $('cmpSel').value);
     const sel = $('cmpArea');
@@ -512,12 +718,11 @@ function renderStress() {
   try { sr = AptEngine.applyStress(state.baseInput, ids, CFG, HUBS, JOBS); }
   catch (e) { out.innerHTML = `<div class="warnbox">${esc(e.message)}</div>`; return; }
   const b = state.result;
-  const dArrow = (a, c, invert) => {
+  const dArrow = (a, c) => {
     const d = c - a;
     if (Math.abs(d) < 0.05) return '<span style="color:var(--muted)">변화 없음</span>';
     const up = d > 0;
-    const cls = (invert ? !up : up) ? 'd-up' : 'd-down';
-    return `<span class="${cls}">${up ? '▲' : '▼'} ${Math.abs(d) < 1 ? Math.abs(d).toFixed(1) : Math.round(Math.abs(d))}</span>`;
+    return `<span class="${up ? 'd-up' : 'd-down'}">${up ? '▲' : '▼'} ${Math.abs(d) < 1 ? Math.abs(d).toFixed(1) : Math.round(Math.abs(d))}</span>`;
   };
   const labels = ids.map(id => CFG.stress.presets.find(p => p.id === id).label).join(' + ');
   out.innerHTML = `
@@ -549,7 +754,6 @@ function renderCompare() {
   let sentence;
   const dl = Math.round(b.scores.living.total - a.scores.living.total);
   const di = Math.round(b.scores.invest.total - a.scores.invest.total);
-  const dp = b.scores.attract.score - a.scores.attract.score;
   const nm = x => `<b>${esc(x.cx.name)}</b>`;
   if (Math.abs(diff) < 0.05) sentence = `두 단지의 현재 가격이 비슷합니다. 주거가치 ${dl >= 0 ? '+' : ''}${dl} · 투자가치 ${di >= 0 ? '+' : ''}${di} 차이로 판단해 보세요.`;
   else {
@@ -582,6 +786,13 @@ function renderCompare() {
 }
 
 /* ── 부팅 ── */
-$('verLine').textContent = `v${APP_VERSION} · 데이터 기준 ${DATA.meta.asOf} · 계수 ${CFG.asOf} · 데모 샘플`;
+function renderVerLine() {
+  const live = LIVE.status === 'ready'
+    ? `실거래 자동 ${LIVE.index.meta.regions}개 지역 · ${LIVE.index.complexes.length.toLocaleString()}개 단지 (${LIVE.index.meta.updatedAt})`
+    : '실거래 자동수집 연결 대기';
+  $('verLine').textContent = `v${APP_VERSION} · ${live} · 상세 프로필 ${DATA.complexes.length}개 (${DATA.meta.asOf}) · 계수 ${CFG.asOf}`;
+}
+renderVerLine();
 renderAptList('');
 renderStepper(); nav();
+loadLive();

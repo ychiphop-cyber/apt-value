@@ -466,6 +466,7 @@ const AptEngine = (() => {
     const cx = rawInput.complex;
     const area = cx.areas.find(a => a.key === rawInput.areaKey) || cx.areas[0];
     const gaps = [];
+    if (Array.isArray(cx.dataGaps)) gaps.push(...cx.dataGaps);   // 자동 수집 단지의 결측 항목
 
     // Engine A
     const market = engineMarket(cx, area, input, CFG);

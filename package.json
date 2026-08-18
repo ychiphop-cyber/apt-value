@@ -4,6 +4,6 @@
   "private": true,
   "description": "닥터마빈 아파트 가치진단 — 아파트 가격이 무엇으로 설명되는지 진단하는 도구",
   "scripts": {
-    "test": "node test/units.js && node test/cases.js"
+    "test": "node test/units.js && node test/cases.js && node test/pipeline.js"
   }
 }
