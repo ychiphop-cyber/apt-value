@@ -1,0 +1,13 @@
+{
+  "version": "1.0.0",
+  "note": "업무지역 DB — jobsIndex는 상대적 일자리 규모 가중치(강남=1.0 기준). 향후 실제 일자리 수 데이터로 보정.",
+  "centers": [
+    { "id": "GBD", "name": "강남", "jobsIndex": 1.0 },
+    { "id": "CBD", "name": "광화문·시청", "jobsIndex": 0.85 },
+    { "id": "YBD", "name": "여의도", "jobsIndex": 0.6 },
+    { "id": "JAMSIL", "name": "잠실", "jobsIndex": 0.4 },
+    { "id": "PANGYO", "name": "판교", "jobsIndex": 0.45 },
+    { "id": "GASAN", "name": "가산·구로", "jobsIndex": 0.4 },
+    { "id": "MAGOK", "name": "마곡", "jobsIndex": 0.3 }
+  ]
+}

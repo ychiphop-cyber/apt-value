@@ -1,0 +1,21 @@
+{
+  "version": "1.0.0",
+  "note": "교육 허브 DB — 사람이 등록·수정한다. 향후 학원 밀도 데이터로 자동 탐지·보정(Phase 2). tier는 교육 프리미엄 계수(education.coefficientByTier) 키.",
+  "hubs": [
+    { "id": "daechi", "hub_name": "대치·도곡", "city": "서울", "district": "강남구", "neighborhood": "대치동·도곡동", "latitude": 37.494, "longitude": 127.062, "radius_km": 1.6, "hub_type": "academy_hub", "tier": 1, "initial_strength": 100, "notes": "전국 최대 입시학원 허브" },
+    { "id": "mokdong", "hub_name": "목동·신정", "city": "서울", "district": "양천구", "neighborhood": "목동·신정동", "latitude": 37.526, "longitude": 126.864, "radius_km": 1.8, "hub_type": "mixed", "tier": 1, "initial_strength": 93, "notes": "학교 선호 + 대형 학원가 결합" },
+    { "id": "junggye", "hub_name": "중계 은행사거리", "city": "서울", "district": "노원구", "neighborhood": "중계동", "latitude": 37.649, "longitude": 127.064, "radius_km": 1.2, "hub_type": "academy_hub", "tier": 2, "initial_strength": 86, "notes": "서울 동북권 대표 학원가" },
+    { "id": "banpo", "hub_name": "반포·서초·잠원", "city": "서울", "district": "서초구", "neighborhood": "반포동·잠원동·서초동", "latitude": 37.503, "longitude": 127.004, "radius_km": 1.8, "hub_type": "school_zone", "tier": 1, "initial_strength": 90, "notes": "학교 선호 + 대치 접근성 + 자체 교육수요" },
+    { "id": "jamsil", "hub_name": "잠실", "city": "서울", "district": "송파구", "neighborhood": "잠실동·신천동", "latitude": 37.508, "longitude": 127.082, "radius_km": 1.6, "hub_type": "mixed", "tier": 1, "initial_strength": 87, "notes": "학교 + 학원가 + 강남 접근성" },
+    { "id": "gwangjang", "hub_name": "광장동", "city": "서울", "district": "광진구", "neighborhood": "광장동", "latitude": 37.545, "longitude": 127.103, "radius_km": 1.0, "hub_type": "school_zone", "tier": 2, "initial_strength": 82, "notes": "광남·양진 학군 — 학교 자체 선호가 강한 학군형" },
+    { "id": "godeok-myeongil", "hub_name": "고덕·명일", "city": "서울", "district": "강동구", "neighborhood": "고덕동·명일동", "latitude": 37.555, "longitude": 127.144, "radius_km": 1.3, "hub_type": "mixed", "tier": 2, "initial_strength": 78, "notes": "전통적 학교 선호 + 최근 학원 인프라 확대" },
+    { "id": "bundang-sunae", "hub_name": "분당 수내·서현", "city": "경기 성남", "district": "분당구", "neighborhood": "수내동·서현동", "latitude": 37.381, "longitude": 127.119, "radius_km": 1.4, "hub_type": "mixed", "tier": 1, "initial_strength": 89, "notes": "분당 핵심 교육축 (수내·서현)" },
+    { "id": "bundang-jeongja", "hub_name": "분당 정자", "city": "경기 성남", "district": "분당구", "neighborhood": "정자동", "latitude": 37.367, "longitude": 127.108, "radius_km": 1.0, "hub_type": "mixed", "tier": 2, "initial_strength": 82, "notes": "분당 교육축 남측 — 수내·서현과 연담" },
+    { "id": "pyeongchon", "hub_name": "평촌", "city": "경기 안양", "district": "동안구", "neighborhood": "귀인동·평촌동·호계동", "latitude": 37.383, "longitude": 126.960, "radius_km": 1.3, "hub_type": "mixed", "tier": 1, "initial_strength": 88, "notes": "학교 + 대형 학원가 결합 (귀인 중심)" },
+    { "id": "gwacheon", "hub_name": "과천 중앙·별양", "city": "경기 과천", "district": "과천시", "neighborhood": "중앙동·별양동", "latitude": 37.428, "longitude": 126.994, "radius_km": 1.0, "hub_type": "school_zone", "tier": 2, "initial_strength": 79, "notes": "학교 접근성과 교육 인프라를 별도 평가" },
+    { "id": "ilsan-hugok", "hub_name": "일산 후곡", "city": "경기 고양", "district": "일산서구", "neighborhood": "일산동(후곡마을)", "latitude": 37.677, "longitude": 126.769, "radius_km": 0.9, "hub_type": "academy_hub", "tier": 2, "initial_strength": 80, "notes": "일산 서측 대표 학원가" },
+    { "id": "ilsan-baekma", "hub_name": "일산 백마", "city": "경기 고양", "district": "일산동구", "neighborhood": "마두동(백마마을)", "latitude": 37.658, "longitude": 126.790, "radius_km": 0.9, "hub_type": "academy_hub", "tier": 2, "initial_strength": 78, "notes": "일산 동측 대표 학원가" },
+    { "id": "suji", "hub_name": "용인 수지", "city": "경기 용인", "district": "수지구", "neighborhood": "풍덕천동·수지구청역 일대", "latitude": 37.322, "longitude": 127.095, "radius_km": 1.2, "hub_type": "mixed", "tier": 2, "initial_strength": 81, "notes": "수지 주요 교육생활권" }
+  ],
+  "phase2_candidates": ["판교", "광교", "영통", "망포", "동탄", "위례", "미사"]
+}

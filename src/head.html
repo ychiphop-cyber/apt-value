@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>닥터마빈 아파트 가치진단</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  color-scheme: light;
+  --surface:#ffffff; --page:#faf9f7; --raised:#f4f2ee;
+  --ink:#12100f; --ink2:#56534e; --muted:#8a867e;
+  --grid:#eae7e0; --axis:#d6d2c9; --line:rgba(18,16,15,.10);
+  --s1:#A8252C; --s2:#3d7ab8; --s3:#c98500; --s4:#4a3aa7;
+  --up:#A8252C; --down:#006300; --ok:#006300; --warn2:#c98500;
+  --accent:#A8252C; --accent-soft:#fbf1f1;
+  --ok-soft:#eef6ee; --warn-soft:#fdf6e9; --info-soft:#eff4fa;
+  --r:14px;
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --surface:#161615; --page:#0d0d0d; --raised:#1e1e1c;
+  --ink:#ffffff; --ink2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --line:rgba(255,255,255,.10);
+  --s1:#e66767; --s2:#5b9be0; --s3:#d99a2b; --s4:#9085e9;
+  --up:#e66767; --down:#3fb950; --ok:#3fb950; --warn2:#d99a2b;
+  --accent:#e66767; --accent-soft:#2a1c1c;
+  --ok-soft:#16211a; --warn-soft:#25200f; --info-soft:#141d27;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--page); color:var(--ink);
+  font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',system-ui,-apple-system,sans-serif;
+  font-size:15px; line-height:1.65; -webkit-text-size-adjust:100%;
+}
+.wrap{max-width:760px;margin:0 auto;padding:0 16px 120px}
+button{font-family:inherit}
+
+/* ── 헤더 ── */
+header{padding:22px 0 6px}
+.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;
+  color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent);
+  border-radius:99px;padding:3px 10px;letter-spacing:-.01em}
+.badge.gray{color:var(--ink2);background:var(--raised);border-color:var(--line)}
+.badge.green{color:var(--ok);background:var(--ok-soft);border-color:var(--ok)}
+.badge.amber{color:var(--warn2);background:var(--warn-soft);border-color:var(--warn2)}
+.badge.blue{color:var(--s2);background:var(--info-soft);border-color:var(--s2)}
+h1{font-size:23px;line-height:1.35;margin:10px 0 4px;letter-spacing:-.02em;font-weight:700}
+.sub{color:var(--ink2);font-size:13px;margin:0}
+#themeBtn{background:none;border:1px solid var(--line);color:var(--ink2);border-radius:99px;
+  padding:5px 12px;font-size:12px;cursor:pointer;white-space:nowrap;margin-top:2px}
+
+/* ── 스테퍼 ── */
+.stepper{display:flex;gap:2px;margin:18px 0 6px;position:sticky;top:0;z-index:20;
+  background:var(--page);padding:10px 0 8px}
+.stepper .st{flex:1;text-align:center;font-size:10.5px;color:var(--muted);cursor:default;
+  border:0;background:none;padding:0;line-height:1.3}
+.stepper .st i{display:block;height:4px;border-radius:2px;background:var(--grid);margin-bottom:5px}
+.stepper .st.done i{background:var(--accent);opacity:.35}
+.stepper .st.cur{color:var(--accent);font-weight:700}
+.stepper .st.cur i{background:var(--accent);opacity:1}
+.stepper .st.done{color:var(--ink2);cursor:pointer}
+
+/* ── 카드 공통 ── */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+  padding:18px 16px;margin:14px 0}
+.card > h2{font-size:16px;margin:0 0 4px;letter-spacing:-.01em;font-weight:700}
+.card > .hint{font-size:12.5px;color:var(--muted);margin:0 0 14px;line-height:1.55}
+.card h3.mini-h{font-size:12.5px;color:var(--muted);font-weight:700;margin:16px 0 8px;letter-spacing:-.01em}
+.stepnum{font-size:11.5px;color:var(--accent);font-weight:700;letter-spacing:.02em}
+
+/* ── 검색·단지 선택 ── */
+.searchbox{position:relative;margin:6px 0 10px}
+.searchbox input{width:100%;background:var(--surface);color:var(--ink);border:1.5px solid var(--line);
+  border-radius:12px;padding:13px 14px;font-size:15px;font-family:inherit}
+.searchbox input:focus{outline:none;border-color:var(--accent)}
+.aptlist{display:grid;grid-template-columns:1fr;gap:8px;margin-top:10px}
+@media(min-width:560px){.aptlist{grid-template-columns:1fr 1fr}.aptlist .full{grid-column:1/-1}}
+.apt{display:block;text-align:left;background:var(--surface);border:1.5px solid var(--line);
+  border-radius:12px;padding:13px 14px;cursor:pointer;color:var(--ink)}
+.apt b{display:block;font-size:14.5px;letter-spacing:-.01em}
+.apt .l1{display:block;font-size:12px;color:var(--muted);margin-top:2px;line-height:1.5}
+.apt .tagrow{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
+.apt .tg{font-size:10.5px;color:var(--ink2);background:var(--raised);border:1px solid var(--line);
+  border-radius:6px;padding:1px 7px}
+.apt.sel{border-color:var(--accent);background:var(--accent-soft)}
+.apt.sel b{color:var(--accent)}
+.apt.dashed{border-style:dashed;color:var(--ink2)}
+
+/* ── 세그먼트·칩 ── */
+.seg{display:flex;gap:4px;background:var(--page);border:1px solid var(--line);
+  border-radius:10px;padding:3px;flex-wrap:wrap}
+.seg button{flex:1;border:0;background:none;color:var(--ink2);min-width:72px;
+  font-size:12.5px;font-weight:500;padding:7px 6px;border-radius:7px;cursor:pointer;letter-spacing:-.01em}
+.seg button[aria-pressed="true"]{background:var(--accent);color:#fff;font-weight:700}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.chip{position:relative}
+.chip input{position:absolute;opacity:0;width:0;height:0}
+.chip span{display:inline-block;border:1px solid var(--line);border-radius:99px;padding:5px 12px;
+  font-size:12.5px;color:var(--ink2);cursor:pointer;user-select:none}
+.chip input:checked + span{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:700}
+.chip input:focus-visible + span{outline:2px solid var(--accent);outline-offset:1px}
+
+/* ── 폼 ── */
+label.mini{display:block;font-size:12px;color:var(--muted);font-weight:500}
+.inline-num{display:inline-flex;align-items:baseline;gap:5px;margin-top:3px}
+.inline-num input{width:92px;font-size:16px;font-weight:700;font-family:inherit;color:var(--ink);
+  background:none;border:0;border-bottom:2px solid var(--line);padding:2px 0;text-align:right}
+.inline-num input:focus{outline:none;border-bottom-color:var(--accent)}
+.inline-num em{font-style:normal;font-size:12px;color:var(--muted)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px 12px}
+.grid2 .full{grid-column:1/-1}
+select,input[type=number],input[type=text]{font-family:inherit}
+select,input[type=text].box{width:100%;margin-top:4px;background:var(--surface);color:var(--ink);
+  border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px}
+.subtle{font-size:11.5px;color:var(--muted);margin-top:4px;line-height:1.5}
+.stat{display:inline-block;font-size:11px;font-weight:700;border-radius:6px;padding:2px 8px;margin-right:6px;white-space:nowrap}
+.stat.ok{color:var(--ok);background:var(--ok-soft);border:1px solid var(--ok)}
+.stat.est{color:var(--warn2);background:var(--warn-soft);border:1px solid var(--warn2)}
+.stat.info{color:var(--s2);background:var(--info-soft);border:1px solid var(--s2)}
+.srcline{font-size:11px;color:var(--muted);margin-top:3px}
+
+/* ── 하단 내비게이션 ── */
+.bottnav{position:fixed;left:0;right:0;bottom:0;z-index:30;
+  background:var(--surface);border-top:1px solid var(--line);
+  padding:10px 16px calc(10px + env(safe-area-inset-bottom))}
+.bottnav .in{max-width:760px;margin:0 auto;display:flex;gap:10px}
+.btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);
+  border-radius:11px;padding:13px 18px;font-size:14.5px;font-weight:700;cursor:pointer;letter-spacing:-.01em}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;flex:1}
+.btn.primary[disabled]{opacity:.4;cursor:default}
+.btn.ghost{background:none}
+.navmsg{max-width:760px;margin:0 auto 8px;font-size:12px;color:var(--accent);display:none}
+
+/* ── HERO ── */
+.hero{background:var(--surface);border:1.5px solid var(--accent);border-radius:var(--r);padding:20px 16px;margin:14px 0}
+.hero .k{font-size:12px;color:var(--muted)}
+.hero .aptname{font-size:17px;font-weight:700;letter-spacing:-.01em;margin:0 0 2px}
+.hero .aptsub{font-size:12px;color:var(--muted);margin-bottom:12px}
+.hero .duo{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px}
+.hero .big{font-size:21px;font-weight:700;letter-spacing:-.02em;line-height:1.3;margin:2px 0 0;color:var(--ink)}
+.hero .big.accent{color:var(--accent)}
+.hero .chiprow{display:flex;gap:6px;flex-wrap:wrap;margin-top:14px;align-items:center}
+.hero .conf{font-size:11.5px;color:var(--muted);margin-top:8px}
+
+/* ── 범위 시각화 ── */
+.rangeviz{margin:16px 0 4px}
+.rv-band{position:relative;height:34px}
+.rv-rail{position:absolute;left:0;right:0;top:14px;height:6px;border-radius:3px;background:var(--grid)}
+.rv-fill{position:absolute;top:14px;height:6px;border-radius:3px;background:var(--accent);opacity:.28}
+.rv-center{position:absolute;top:9px;width:2px;height:16px;background:var(--accent)}
+.rv-price{position:absolute;top:6px;width:14px;height:14px;border-radius:50%;background:var(--ink);
+  border:2.5px solid var(--surface);box-shadow:0 0 0 1.5px var(--ink);transform:translateX(-7px)}
+.rv-labels{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
+.rv-cap{font-size:11px;color:var(--muted);text-align:center;margin-top:2px}
+
+/* ── 점수 타일 ── */
+.tiles3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:6px}
+@media(max-width:420px){.tiles3{grid-template-columns:1fr 1fr}.tiles3 .t3:last-child{grid-column:1/-1}}
+.t3{background:var(--page);border:1px solid var(--line);border-radius:10px;padding:12px 10px;
+  cursor:pointer;text-align:left;color:var(--ink)}
+.t3 .k{font-size:11.5px;color:var(--muted)}
+.t3 .v{font-size:22px;font-weight:700;letter-spacing:-.02em;margin-top:1px}
+.t3 .v em{font-style:normal;font-size:12px;color:var(--muted);font-weight:500}
+.t3 .bar{height:5px;border-radius:3px;background:var(--grid);margin-top:7px;overflow:hidden}
+.t3 .bar i{display:block;height:100%;border-radius:3px}
+.t3 .s{font-size:10.5px;color:var(--muted);margin-top:5px}
+.gA{color:var(--ok)} .gB{color:var(--warn2)} .gC{color:var(--accent)}
+.bgA{background:var(--ok)} .bgB{background:var(--warn2)} .bgC{background:var(--accent)}
+
+/* ── 요인 리스트 ── */
+.factors{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}
+@media(max-width:480px){.factors{grid-template-columns:1fr}}
+.fbox{border:1px solid var(--line);border-radius:10px;padding:12px 13px;background:var(--page)}
+.fbox .fh{font-size:12px;font-weight:700;margin-bottom:6px}
+.fbox.up .fh{color:var(--up)} .fbox.down .fh{color:var(--s2)}
+.fbox ul{margin:0;padding-left:16px;font-size:12.5px;color:var(--ink2);line-height:1.7}
+
+/* ── 기여도 차트 ── */
+.contrib{margin-top:8px}
+.cr{display:grid;grid-template-columns:118px 1fr 34px;gap:8px;align-items:center;margin:7px 0;font-size:12px}
+.cr .ck{color:var(--ink2);text-align:right;line-height:1.3}
+.cr .cv{font-variant-numeric:tabular-nums;color:var(--muted);font-size:11px}
+.cbar{position:relative;height:12px;background:var(--grid);border-radius:6px;overflow:hidden}
+.cbar .mid{position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--axis)}
+.cbar i{position:absolute;top:2px;bottom:2px;border-radius:4px}
+.cbar i.pos{background:var(--accent);left:50%}
+.cbar i.neg{background:var(--s2);right:50%}
+
+/* ── 검토의견·해석 ── */
+.op{border-left:3px solid var(--accent);padding:2px 0 2px 14px;margin:14px 0}
+.op .ot{font-size:11.5px;font-weight:700;color:var(--accent);letter-spacing:.02em}
+.op p{font-size:13.5px;color:var(--ink);margin:6px 0 0;line-height:1.75}
+
+/* ── 표·kv ── */
+.tblwrap{overflow-x:auto;margin-top:12px}
+table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+th,td{padding:8px 6px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:500;font-size:11.5px}
+td.strong{font-weight:700}
+tr.hi td{background:var(--accent-soft)}
+.kv{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px}
+.kv:last-of-type{border-bottom:0}
+.kv span:first-child{color:var(--ink2)}
+.kv span:last-child{font-weight:500;font-variant-numeric:tabular-nums;text-align:right}
+.warnbox{background:var(--accent-soft);border:1px solid var(--accent);border-radius:10px;
+  padding:12px 14px;font-size:12.5px;color:var(--ink2);line-height:1.65;margin-top:14px}
+.warnbox b{color:var(--accent)}
+.notebox{background:var(--raised);border:1px solid var(--line);border-radius:10px;
+  padding:12px 14px;font-size:12.5px;color:var(--ink2);line-height:1.65;margin-top:12px}
+details.acc{margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:0 14px;background:var(--surface)}
+details.acc summary{cursor:pointer;font-size:13px;color:var(--ink);font-weight:700;padding:12px 0;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:8px}
+details.acc summary::-webkit-details-marker{display:none}
+details.acc summary .sumleft::before{content:'＋ ';color:var(--accent)}
+details.acc[open] summary .sumleft::before{content:'− '}
+details.acc summary .sumr{font-size:11.5px;color:var(--muted);font-weight:500;white-space:nowrap}
+details.acc .detail-body{padding:2px 0 14px}
+
+/* ── 점수 상세 바 ── */
+.sb{display:grid;grid-template-columns:96px 1fr 36px;gap:8px;align-items:center;margin:6px 0;font-size:12px}
+.sb .k{color:var(--ink2);text-align:right}
+.sb .v{font-variant-numeric:tabular-nums;color:var(--ink);font-weight:700;font-size:12px}
+.sbar{height:8px;background:var(--grid);border-radius:4px;overflow:hidden}
+.sbar i{display:block;height:100%;background:var(--accent);border-radius:4px;opacity:.85}
+
+/* ── 스트레스 테스트 ── */
+.stressgrid{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.sbtn{border:1px solid var(--line);background:var(--surface);color:var(--ink2);border-radius:99px;
+  padding:7px 13px;font-size:12.5px;cursor:pointer;font-weight:500}
+.sbtn[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
+.sreset{border:0;background:none;color:var(--muted);font-size:12px;cursor:pointer;text-decoration:underline;padding:7px 4px}
+.delta{font-size:12px}
+.delta .d-up{color:var(--up);font-weight:700} .delta .d-down{color:var(--down);font-weight:700}
+.deltatbl td,.deltatbl th{white-space:normal}
+
+/* ── 로딩 ── */
+.loading{display:none;text-align:center;padding:48px 0;color:var(--ink2);font-size:13.5px}
+.spin{display:inline-block;width:18px;height:18px;border:2.5px solid var(--line);
+  border-top-color:var(--accent);border-radius:50%;animation:rot .7s linear infinite;vertical-align:-4px;margin-right:8px}
+@keyframes rot{to{transform:rotate(360deg)}}
+
+footer#appFooter{margin-top:26px;padding:14px 0 8px;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted);line-height:1.7}
+footer#appFooter b{color:var(--ink2)}
+.visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+@media(min-width:620px){
+  .wrap{padding:0 24px 120px}
+  h1{font-size:26px}
+  .hero .big{font-size:24px}
+  .stepper .st{font-size:11.5px}
+}
+@media print{ .stepper,.bottnav,#themeBtn{display:none !important} body{background:#fff} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="topbar">
+    <div>
+      <span class="badge">비공개 · 초대 열람</span>
+      <h1>닥터마빈 아파트 가치진단</h1>
+      <p class="sub">지금 이 집값, 숫자로 설명될까? — 실거래·금리·전세·수급·입지·학군·미래가치를 함께 분석합니다.</p>
+    </div>
+    <button id="themeBtn">다크</button>
+  </div>
+</header>
+
+<div class="stepper" id="stepper"></div>
+
+<!-- ══════════ STEP 1 · 아파트 선택 ══════════ -->
+<section class="step" id="step1">
+  <div class="card">
+    <div class="stepnum">STEP 1 / 3</div>
+    <h2>진단할 아파트를 선택해 주세요</h2>
+    <p class="hint">아파트 이름이나 지역을 입력해 검색하세요. 목록은 <b>데모 샘플 단지</b>이며, 목록에 없는 아파트는 ‘직접 입력’으로 진단할 수 있습니다.</p>
+    <div class="searchbox"><input type="text" id="q" placeholder="아파트 이름 또는 주소를 입력하세요 (예: 고덕, 은마, 분당)" autocomplete="off"></div>
+    <div class="aptlist" id="aptList"></div>
+  </div>
+  <div class="card" id="manualCard" hidden>
+    <h2>직접 입력</h2>
+    <p class="hint">핵심 항목만 입력해도 진단됩니다. 입력하지 않은 항목은 중립 가정값을 사용하며, 그만큼 <b>신뢰도가 낮게</b> 표시됩니다.</p>
+    <div id="manualForm"></div>
+  </div>
+</section>
+
+<!-- ══════════ STEP 2 · 정보 확인 ══════════ -->
+<section class="step" id="step2" hidden>
+  <div class="card" id="cxSummary"></div>
+  <div class="card" id="areaCard"></div>
+  <div class="card" id="assumeCard"></div>
+</section>
+
+<!-- ══════════ STEP 3 · 진단 결과 ══════════ -->
+<section class="step" id="step3" hidden>
+  <div class="loading" id="loading"><span class="spin"></span>실거래·금리·전세·수급·입지·미래가치를 분석하는 중…</div>
+  <div id="report"></div>
+</section>
+
+<footer id="appFooter">
+  <b>닥터마빈 아파트 가치진단</b> · <span id="verLine"></span>
+  <div style="margin-top:6px">본 결과는 공개된 데이터와 자체 분석모델을 이용한 참고용 추정치입니다. 실제 거래가격은 시장상황, 개별 동·층·향·내부상태 및 거래조건에 따라 달라질 수 있습니다. 본 서비스는 투자 권유가 아닙니다.</div>
+</footer>
+
+</div><!-- /wrap -->
+
+<div class="bottnav" id="bottnav">
+  <div class="navmsg" id="navMsg"></div>
+  <div class="in">
+    <button class="btn ghost" id="btnPrev">이전</button>
+    <button class="btn primary" id="btnNext" disabled>다음</button>
+  </div>
+</div>
+

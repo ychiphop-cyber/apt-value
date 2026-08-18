@@ -1,0 +1,132 @@
+{
+  "version": "1.0.0",
+  "asOf": "2026-08-18",
+  "note": "모든 계수는 이 파일에서만 관리한다. 코드 하드코딩 금지. 실거래 백테스트로 보정 예정(Phase 2).",
+
+  "market": {
+    "compHalfLifeMonths": 9,
+    "maxCompAgeMonths": 24,
+    "areaElasticity": 0.88,
+    "tierSimilarity": { "sameComplexSameArea": 1.0, "sameComplexOtherArea": 0.72, "nearbyComplex": 0.5 },
+    "featureAdjCapPerFactor": 0.06,
+    "featureAdjCapTotal": 0.15,
+    "minCompsForAnchor": 2
+  },
+
+  "financial": {
+    "baseRate": { "value": 0.025, "label": "한국은행 기준금리", "asOf": "2026-07" },
+    "mortgageRate": { "value": 0.039, "label": "주담대 평균금리", "asOf": "2026-07" },
+    "altReturn": 0.031,
+    "liquidityPremium": 0.010,
+    "assetRiskPremium": 0.007,
+    "regionRiskPremium": { "서울핵심": 0.0, "서울": 0.002, "수도권핵심": 0.003, "수도권": 0.006, "지방광역": 0.009, "기타": 0.013 },
+    "longTermRentGrowth": { "서울핵심": 0.018, "서울": 0.016, "수도권핵심": 0.015, "수도권": 0.012, "지방광역": 0.009, "기타": 0.006 },
+    "defaultConversionRate": 0.047,
+    "minSpread": 0.008,
+    "dcfYears": 40,
+    "impliedGrowthConcernOver": 0.022
+  },
+
+  "jeonseSupport": {
+    "ratioBands": [0.62, 0.54, 0.46, 0.38],
+    "gradeLabels": ["강함", "양호", "중립", "약함", "매우 약함"],
+    "trendAdj": { "up": 1, "stable": 0, "down": -1 },
+    "listingsAdj": { "1": 1, "2": 1, "3": 0, "4": -1, "5": -1 },
+    "supplyBurdenAdjOver": 1.3
+  },
+
+  "hedonic": {
+    "baselineScore": 60,
+    "scoreToAdjDivisor": 40,
+    "categoryCaps": { "transport": 0.05, "job": 0.05, "education": 0.06, "life": 0.03, "nature": 0.04, "product": 0.05 },
+    "totalCap": 0.12,
+    "jobDecayTau": 42,
+    "jobRefAccess": 1.55
+  },
+
+  "education": {
+    "subWeights": { "school": 0.30, "academy": 0.30, "access": 0.20, "demand": 0.20 },
+    "coefficientByTier": { "1": 1.2, "2": 1.0, "3": 0.8, "4": 0.55 },
+    "accessDecay": [ { "maxMin": 15, "factor": 1.0 }, { "maxMin": 30, "factor": 0.75 }, { "maxMin": 45, "factor": 0.5 }, { "maxMin": 999, "factor": 0.25 } ],
+    "localAcademyScore": { "1": 35, "2": 50, "3": 62, "4": 74, "5": 85 }
+  },
+
+  "supply": {
+    "demandRate": 0.005,
+    "demandRateLabel": "간이 수요추정치 = 지역 인구 × 0.5% (관행적 근사치, 절대수요 아님)",
+    "burdenBands": [0.7, 1.0, 1.3, 1.7],
+    "burdenLabels": ["공급 부족", "양호", "균형", "공급 부담", "공급 과다 가능성"],
+    "zoneWeights": { "local": 0.5, "adjacent": 0.3, "metro": 0.2 },
+    "priceAdjByGrade": [0.02, 0.01, 0.0, -0.015, -0.03],
+    "unsoldExtraAdj": { "4": -0.005, "5": -0.01 },
+    "priceAdjCap": 0.03,
+    "regulationAdjCap": 0.015
+  },
+
+  "option": {
+    "stageProbabilities": {
+      "none": 0, "potential": 0.05, "remodel_review": 0.15, "recon_review": 0.10,
+      "safety_check": 0.25, "zone_designated": 0.35, "committee": 0.45, "union": 0.58,
+      "biz_approval": 0.72, "mgmt_approval": 0.85, "moving": 0.92, "construction": 0.97
+    },
+    "stageLabels": {
+      "none": "해당 없음", "potential": "잠재 후보(연식·용적률상 가능성)", "remodel_review": "리모델링 추진",
+      "recon_review": "재건축 초기검토", "safety_check": "안전진단", "zone_designated": "정비구역 지정",
+      "committee": "추진위원회", "union": "조합설립", "biz_approval": "사업시행인가",
+      "mgmt_approval": "관리처분인가", "moving": "이주", "construction": "착공"
+    },
+    "maxOptionPremium": 0.18,
+    "headroomRef": 1.2,
+    "gradeBands": [0.55, 0.3, 0.08],
+    "gradeLabels": ["높음", "중상", "중립", "낮음"]
+  },
+
+  "final": {
+    "weightsDisplay": { "market": 0.60, "financial": 0.20, "hedonic": 0.15, "supplyRisk": 0.05 },
+    "corePair": { "market": 0.75, "financial": 0.25 },
+    "fundWeightFloor": 0.35,
+    "anchorClamp": 0.12
+  },
+
+  "range": {
+    "minSpread": 0.045,
+    "maxSpread": 0.12,
+    "dispersionWeight": 0.5,
+    "disagreementWeight": 0.12,
+    "dataGapWeight": 0.04
+  },
+
+  "scores": {
+    "living": { "transport": 0.22, "job": 0.20, "education": 0.22, "life": 0.12, "nature": 0.10, "product": 0.14 },
+    "invest": { "jeonseSupport": 0.22, "supplyDemand": 0.20, "scarcity": 0.13, "future": 0.15, "location": 0.20, "liquidity": 0.10 },
+    "priceAttractCurve": [
+      { "premium": -0.18, "score": 93 }, { "premium": -0.10, "score": 84 }, { "premium": -0.05, "score": 74 },
+      { "premium": 0.0, "score": 62 }, { "premium": 0.05, "score": 50 }, { "premium": 0.10, "score": 38 },
+      { "premium": 0.18, "score": 24 }
+    ],
+    "priceAttractClamp": [15, 95],
+    "gradeBands": { "high": 75, "mid": 55 }
+  },
+
+  "confidence": {
+    "penalties": {
+      "compsUnder3": 22, "compsUnder6": 10, "latestOver6mo": 10, "latestOver12mo": 20,
+      "tier3Only": 15, "perManualOverride": 5, "manualOverrideMax": 15,
+      "disagreementOver": 0.35, "disagreementPenalty": 12, "dataGapFactor": 30
+    },
+    "bands": { "high": 80, "mid": 58 },
+    "labels": ["높음", "보통", "낮음"]
+  },
+
+  "stress": {
+    "presets": [
+      { "id": "rate_up", "label": "금리 +1%p", "apply": { "rateDelta": 0.01 } },
+      { "id": "jeonse_down", "label": "전세 -10%", "apply": { "jeonseMul": 0.9 }, "excludes": ["jeonse_up"] },
+      { "id": "jeonse_up", "label": "전세 +10%", "apply": { "jeonseMul": 1.1 }, "excludes": ["jeonse_down"] },
+      { "id": "supply_x2", "label": "향후 공급 2배", "apply": { "supplyMul": 2.0 }, "excludes": ["supply_half"] },
+      { "id": "supply_half", "label": "공급 50% 감소", "apply": { "supplyMul": 0.5 }, "excludes": ["supply_x2"] },
+      { "id": "price_down", "label": "가격 -10%", "apply": { "priceMul": 0.9 }, "excludes": ["price_up"] },
+      { "id": "price_up", "label": "가격 +10%", "apply": { "priceMul": 1.1 }, "excludes": ["price_down"] }
+    ]
+  }
+}

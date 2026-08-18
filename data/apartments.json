@@ -1,0 +1,317 @@
+{
+  "meta": {
+    "kind": "sample",
+    "asOf": "2026-08",
+    "notice": "데모 샘플 데이터 — 실제 API 연동 전 참고용이며, 가격·전세는 화면에서 직접 수정할 수 있습니다."
+  },
+  "defaultSources": {
+    "trades": { "src": "국토교통부 실거래가 공개시스템 (샘플)", "asOf": "2026-08-12" },
+    "jeonse": { "src": "국토교통부 전월세 실거래 (샘플)", "asOf": "2026-08-05" },
+    "supply": { "src": "한국부동산원·지자체 입주예정물량 (샘플)", "asOf": "2026-07" },
+    "population": { "src": "행정안전부 주민등록 인구통계 (샘플)", "asOf": "2026-07" },
+    "education": { "src": "NEIS·교육 인프라 조사 (샘플)", "asOf": "2026-06" }
+  },
+  "complexes": [
+    {
+      "id": "godeok-gracium", "name": "고덕그라시움", "aliases": ["고덕 그라시움", "강동 고덕"],
+      "city": "서울", "district": "강동구", "dong": "고덕동", "regionTier": "서울",
+      "builtYear": 2019, "households": 4932, "brandTier": 1, "parkingRatio": 1.34, "far": 249, "rentalShare": 0.05,
+      "redev": { "stage": "none" }, "conversionRate": 0.046,
+      "tags": ["신축급 대단지", "고덕 대장주"],
+      "areas": [
+        { "key": "59", "label": "전용 59㎡ (24~25평형)", "m2": 59.9, "jeonse": 7.1,
+          "trades": [ { "ym": "2026-06", "price": 14.2, "floor": 12 }, { "ym": "2026-02", "price": 13.6, "floor": 7 }, { "ym": "2025-11", "price": 13.1, "floor": 20 } ] },
+        { "key": "84", "label": "전용 84㎡ (33~34평형)", "m2": 84.9, "jeonse": 9.3,
+          "trades": [ { "ym": "2026-07", "price": 18.3, "floor": 15 }, { "ym": "2026-05", "price": 17.9, "floor": 21 }, { "ym": "2026-03", "price": 17.2, "floor": 9 }, { "ym": "2025-12", "price": 16.8, "floor": 14 }, { "ym": "2025-10", "price": 16.2, "floor": 5 } ] }
+      ],
+      "location": { "subwayMin": 7, "lines": ["5호선(상일동)"], "transfer": false, "express": false,
+        "futureTransit": "9호선 4단계 연장 (공사 중·확정)",
+        "jobMinutes": { "GBD": 45, "CBD": 60, "YBD": 70, "JAMSIL": 28, "PANGYO": 70 } },
+      "education": { "elemM": 250, "chopuma": true, "middlePref": 4, "hubId": "godeok-myeongil", "inHub": true,
+        "hubAccess": [ { "hubId": "daechi", "min": 40 }, { "hubId": "jamsil", "min": 30 } ],
+        "age3049": 0.335, "studentTrend": "stable" },
+      "life": { "martMin": 8, "deptMin": 25, "hospitalMin": 12, "streetLevel": 3 },
+      "nature": { "parkMin": 5, "bigPark": true, "riverMin": 25, "hanRiver": false, "hanRiverView": null, "forest": true },
+      "supply": { "pop": 462000, "next3yAvg": 2800, "adjacentRatio": 1.5, "adjacentNote": "하남 교산·감일 등 인접 생활권 입주 예정",
+        "metroRatio": 0.9, "unsoldLevel": 1, "txVolumeLevel": 3, "jeonseListingsLevel": 2, "jeonseTrend": "up", "regulated": true }
+    },
+    {
+      "id": "eunma", "name": "은마", "aliases": ["은마아파트", "대치 은마"],
+      "city": "서울", "district": "강남구", "dong": "대치동", "regionTier": "서울핵심",
+      "builtYear": 1979, "households": 4424, "brandTier": 3, "brandNote": "시공 브랜드 미확정(재건축 예정)",
+      "parkingRatio": 0.5, "far": 204, "allowedFar": 300, "rentalShare": 0,
+      "redev": { "stage": "union", "note": "조합설립 인가 — 정비계획상 최고 층수 상향 추진" },
+      "conversionRate": 0.041,
+      "tags": ["재건축 추진", "대치 학원가"],
+      "areas": [
+        { "key": "76", "label": "전용 76㎡ (31평형)", "m2": 76.8, "jeonse": 7.6,
+          "trades": [ { "ym": "2026-05", "price": 31.2, "floor": 8 }, { "ym": "2026-01", "price": 29.8, "floor": 3 }, { "ym": "2025-10", "price": 28.5, "floor": 11 } ] },
+        { "key": "84", "label": "전용 84㎡ (34평형)", "m2": 84.4, "jeonse": 8.4,
+          "trades": [ { "ym": "2026-06", "price": 33.9, "floor": 10 }, { "ym": "2026-04", "price": 33.0, "floor": 6 }, { "ym": "2026-01", "price": 31.8, "floor": 13 }, { "ym": "2025-11", "price": 30.4, "floor": 4 } ] }
+      ],
+      "location": { "subwayMin": 5, "lines": ["3호선(대치)", "수인분당선(한티)"], "transfer": false, "express": false,
+        "futureTransit": null,
+        "jobMinutes": { "GBD": 12, "CBD": 40, "YBD": 45, "JAMSIL": 15, "PANGYO": 30 } },
+      "education": { "elemM": 350, "chopuma": true, "middlePref": 5, "hubId": "daechi", "inHub": true,
+        "hubAccess": [], "age3049": 0.31, "studentTrend": "stable" },
+      "life": { "martMin": 10, "deptMin": 15, "hospitalMin": 15, "streetLevel": 4 },
+      "nature": { "parkMin": 15, "bigPark": false, "riverMin": 25, "hanRiver": false, "hanRiverView": null, "forest": false },
+      "supply": { "pop": 561000, "next3yAvg": 3200, "adjacentRatio": 0.8, "adjacentNote": "서초·송파 정비사업 이주수요 겹침",
+        "metroRatio": 0.9, "unsoldLevel": 1, "txVolumeLevel": 2, "txNote": "토지거래허가구역 — 거래 빈도 낮음",
+        "jeonseListingsLevel": 3, "jeonseTrend": "stable", "regulated": true }
+    },
+    {
+      "id": "jamsil-els", "name": "잠실엘스", "aliases": ["잠실 엘스", "송파 엘스"],
+      "city": "서울", "district": "송파구", "dong": "잠실동", "regionTier": "서울핵심",
+      "builtYear": 2008, "households": 5678, "brandTier": 1, "parkingRatio": 1.05, "far": 275, "rentalShare": 0.04,
+      "redev": { "stage": "none" }, "conversionRate": 0.042,
+      "tags": ["한강 인접", "잠실 대단지"],
+      "areas": [
+        { "key": "59", "label": "전용 59㎡ (25평형)", "m2": 59.9, "jeonse": 10.2,
+          "trades": [ { "ym": "2026-06", "price": 23.4, "floor": 16 }, { "ym": "2026-02", "price": 22.3, "floor": 8 }, { "ym": "2025-11", "price": 21.5, "floor": 22 } ] },
+        { "key": "84", "label": "전용 84㎡ (33평형)", "m2": 84.8, "jeonse": 13.0,
+          "trades": [ { "ym": "2026-07", "price": 29.5, "floor": 18 }, { "ym": "2026-05", "price": 28.8, "floor": 11 }, { "ym": "2026-02", "price": 27.9, "floor": 24 }, { "ym": "2025-12", "price": 27.0, "floor": 7 }, { "ym": "2025-09", "price": 25.8, "floor": 15 } ] }
+      ],
+      "location": { "subwayMin": 3, "lines": ["2호선(잠실새내)"], "transfer": false, "express": false,
+        "futureTransit": null,
+        "jobMinutes": { "GBD": 15, "CBD": 40, "YBD": 45, "JAMSIL": 5, "PANGYO": 40 } },
+      "education": { "elemM": 200, "chopuma": true, "middlePref": 4, "hubId": "jamsil", "inHub": true,
+        "hubAccess": [ { "hubId": "daechi", "min": 20 } ], "age3049": 0.32, "studentTrend": "stable" },
+      "life": { "martMin": 10, "deptMin": 12, "hospitalMin": 15, "streetLevel": 5 },
+      "nature": { "parkMin": 8, "bigPark": true, "riverMin": 10, "hanRiver": true, "hanRiverView": null, "forest": false },
+      "supply": { "pop": 654000, "next3yAvg": 3500, "adjacentRatio": 1.2, "adjacentNote": "강동·하남 입주 영향권",
+        "metroRatio": 0.9, "unsoldLevel": 1, "txVolumeLevel": 2, "txNote": "토지거래허가구역 — 거래 빈도 낮음",
+        "jeonseListingsLevel": 2, "jeonseTrend": "up", "regulated": true }
+    },
+    {
+      "id": "mapo-raemian", "name": "마포래미안푸르지오", "aliases": ["마래푸", "아현 래미안"],
+      "city": "서울", "district": "마포구", "dong": "아현동", "regionTier": "서울",
+      "builtYear": 2014, "households": 3885, "brandTier": 1, "parkingRatio": 1.18, "far": 259, "rentalShare": 0.07,
+      "redev": { "stage": "none" }, "conversionRate": 0.045,
+      "tags": ["도심 직주근접", "마포 대장주"],
+      "areas": [
+        { "key": "59", "label": "전용 59㎡ (24평형)", "m2": 59.9, "jeonse": 8.6,
+          "trades": [ { "ym": "2026-05", "price": 16.4, "floor": 10 }, { "ym": "2026-01", "price": 15.7, "floor": 17 }, { "ym": "2025-10", "price": 15.0, "floor": 6 } ] },
+        { "key": "84", "label": "전용 84㎡ (33~34평형)", "m2": 84.9, "jeonse": 10.8,
+          "trades": [ { "ym": "2026-07", "price": 20.1, "floor": 12 }, { "ym": "2026-04", "price": 19.4, "floor": 19 }, { "ym": "2026-01", "price": 18.8, "floor": 8 }, { "ym": "2025-11", "price": 18.1, "floor": 14 } ] }
+      ],
+      "location": { "subwayMin": 4, "lines": ["2호선(아현)", "5호선(애오개)"], "transfer": false, "express": false,
+        "futureTransit": null,
+        "jobMinutes": { "GBD": 40, "CBD": 18, "YBD": 22, "JAMSIL": 50, "MAGOK": 30, "GASAN": 40 } },
+      "education": { "elemM": 300, "chopuma": true, "middlePref": 3, "hubId": null, "inHub": false, "localAcademyLevel": 3,
+        "hubAccess": [ { "hubId": "mokdong", "min": 35 } ], "age3049": 0.34, "studentTrend": "stable" },
+      "life": { "martMin": 8, "deptMin": 15, "hospitalMin": 10, "streetLevel": 4 },
+      "nature": { "parkMin": 12, "bigPark": false, "riverMin": 20, "hanRiver": false, "hanRiverView": null, "forest": false },
+      "supply": { "pop": 372000, "next3yAvg": 1600, "adjacentRatio": 1.1, "adjacentNote": "서대문·용산 정비사업 물량",
+        "metroRatio": 0.9, "unsoldLevel": 1, "txVolumeLevel": 3, "jeonseListingsLevel": 2, "jeonseTrend": "up", "regulated": true }
+    },
+    {
+      "id": "helio-city", "name": "헬리오시티", "aliases": ["송파 헬리오시티", "가락 헬리오"],
+      "city": "서울", "district": "송파구", "dong": "가락동", "regionTier": "서울핵심",
+      "builtYear": 2018, "households": 9510, "brandTier": 1, "parkingRatio": 1.32, "far": 285, "rentalShare": 0.15,
+      "redev": { "stage": "none" }, "conversionRate": 0.043,
+      "tags": ["초대형 신축 대단지"],
+      "areas": [
+        { "key": "59", "label": "전용 59㎡ (24~25평형)", "m2": 59.9, "jeonse": 9.4,
+          "trades": [ { "ym": "2026-06", "price": 19.0, "floor": 21 }, { "ym": "2026-03", "price": 18.2, "floor": 9 }, { "ym": "2025-12", "price": 17.6, "floor": 13 } ] },
+        { "key": "84", "label": "전용 84㎡ (33~34평형)", "m2": 84.9, "jeonse": 12.0,
+          "trades": [ { "ym": "2026-07", "price": 24.2, "floor": 17 }, { "ym": "2026-05", "price": 23.6, "floor": 25 }, { "ym": "2026-02", "price": 22.8, "floor": 11 }, { "ym": "2025-11", "price": 22.0, "floor": 19 }, { "ym": "2025-09", "price": 21.2, "floor": 6 } ] }
+      ],
+      "location": { "subwayMin": 2, "lines": ["8호선(송파)"], "transfer": false, "express": false,
+        "futureTransit": null,
+        "jobMinutes": { "GBD": 20, "CBD": 45, "YBD": 50, "JAMSIL": 10, "PANGYO": 35 } },
+      "education": { "elemM": 200, "chopuma": true, "middlePref": 3, "hubId": null, "inHub": false, "localAcademyLevel": 4,
+        "hubAccess": [ { "hubId": "jamsil", "min": 15 }, { "hubId": "daechi", "min": 25 } ], "age3049": 0.33, "studentTrend": "stable" },
+      "life": { "martMin": 5, "deptMin": 15, "hospitalMin": 10, "streetLevel": 4 },
+      "nature": { "parkMin": 10, "bigPark": false, "riverMin": 30, "hanRiver": false, "hanRiverView": null, "forest": false },
+      "supply": { "pop": 654000, "next3yAvg": 3500, "adjacentRatio": 1.2, "adjacentNote": "강동·하남 입주 영향권",
+        "metroRatio": 0.9, "unsoldLevel": 1, "txVolumeLevel": 3, "jeonseListingsLevel": 3, "jeonseTrend": "up", "regulated": true,
+        "rentalShareNote": "임대비중이 있으나 전세거래가 활발해 임대수요 강도는 높음" }
+    },
+    {
+      "id": "banpo-xi", "name": "반포자이", "aliases": ["반포 자이", "서초 반포자이"],
+      "city": "서울", "district": "서초구", "dong": "반포동", "regionTier": "서울핵심",
+      "builtYear": 2009, "households": 3410, "brandTier": 1, "parkingRatio": 1.7, "far": 270, "rentalShare": 0.03,
+      "redev": { "stage": "none" }, "conversionRate": 0.04,
+      "tags": ["학군·강남 핵심", "고가 사례"],
+      "areas": [
+        { "key": "84", "label": "전용 84㎡ (34평형)", "m2": 84.9, "jeonse": 17.0,
+          "trades": [ { "ym": "2026-06", "price": 43.0, "floor": 14 }, { "ym": "2026-03", "price": 41.5, "floor": 22 }, { "ym": "2025-12", "price": 40.0, "floor": 9 }, { "ym": "2025-10", "price": 38.5, "floor": 18 } ] },
+        { "key": "116", "label": "전용 116㎡ (45평형)", "m2": 116.4, "jeonse": 21.0,
+          "trades": [ { "ym": "2026-05", "price": 52.0, "floor": 12 }, { "ym": "2025-12", "price": 49.5, "floor": 26 } ] }
+      ],
+      "location": { "subwayMin": 3, "lines": ["3호선·7호선·9호선(고속터미널)"], "transfer": true, "express": true,
+        "futureTransit": null,
+        "jobMinutes": { "GBD": 15, "CBD": 30, "YBD": 20, "JAMSIL": 30, "PANGYO": 35 } },
+      "education": { "elemM": 250, "chopuma": true, "middlePref": 5, "hubId": "banpo", "inHub": true,
+        "hubAccess": [ { "hubId": "daechi", "min": 15 } ], "age3049": 0.30, "studentTrend": "stable" },
+      "life": { "martMin": 8, "deptMin": 5, "hospitalMin": 8, "streetLevel": 5 },
+      "nature": { "parkMin": 10, "bigPark": true, "riverMin": 12, "hanRiver": true, "hanRiverView": null, "forest": false },
+      "supply": { "pop": 405000, "next3yAvg": 2600, "adjacentRatio": 0.9, "adjacentNote": "반포·잠원 정비사업 순차 입주",
+        "metroRatio": 0.9, "unsoldLevel": 1, "txVolumeLevel": 2, "jeonseListingsLevel": 2, "jeonseTrend": "up", "regulated": true }
+    },
+    {
+      "id": "mokdong-7", "name": "목동신시가지7단지", "aliases": ["목동 7단지", "목동신시가지 7"],
+      "city": "서울", "district": "양천구", "dong": "목동", "regionTier": "서울",
+      "builtYear": 1986, "households": 2550, "brandTier": 3, "brandNote": "재건축 시공 브랜드 미정",
+      "parkingRatio": 0.45, "far": 125, "allowedFar": 300, "rentalShare": 0,
+      "redev": { "stage": "safety_check", "note": "안전진단 통과 — 신속통합기획 정비계획 수립 중" },
+      "conversionRate": 0.044,
+      "tags": ["구축 학군지", "재건축 기대"],
+      "areas": [
+        { "key": "66", "label": "전용 66㎡ (27평형)", "m2": 66.6, "jeonse": 5.9,
+          "trades": [ { "ym": "2026-06", "price": 19.2, "floor": 5 }, { "ym": "2026-02", "price": 18.3, "floor": 11 }, { "ym": "2025-11", "price": 17.5, "floor": 2 } ] },
+        { "key": "101", "label": "전용 101㎡ (35평형)", "m2": 101.2, "jeonse": 7.8,
+          "trades": [ { "ym": "2026-05", "price": 25.3, "floor": 9 }, { "ym": "2026-01", "price": 24.1, "floor": 13 }, { "ym": "2025-10", "price": 23.0, "floor": 4 } ] }
+      ],
+      "location": { "subwayMin": 8, "lines": ["5호선(목동)"], "transfer": false, "express": false,
+        "futureTransit": null,
+        "jobMinutes": { "GBD": 50, "CBD": 35, "YBD": 25, "MAGOK": 15, "GASAN": 25 } },
+      "education": { "elemM": 300, "chopuma": true, "middlePref": 5, "hubId": "mokdong", "inHub": true,
+        "hubAccess": [], "age3049": 0.30, "studentTrend": "stable" },
+      "life": { "martMin": 10, "deptMin": 8, "hospitalMin": 12, "streetLevel": 4 },
+      "nature": { "parkMin": 5, "bigPark": true, "riverMin": 20, "hanRiver": false, "hanRiverView": null, "forest": false },
+      "supply": { "pop": 434000, "next3yAvg": 1500, "adjacentRatio": 1.0, "adjacentNote": "영등포·강서 정비사업 물량",
+        "metroRatio": 0.9, "unsoldLevel": 1, "txVolumeLevel": 2, "txNote": "토지거래허가구역 — 거래 빈도 낮음",
+        "jeonseListingsLevel": 2, "jeonseTrend": "stable", "regulated": true }
+    },
+    {
+      "id": "gwangjang-hyundai10", "name": "광장현대파크빌10차", "aliases": ["광장동 현대파크빌", "광장 현대 10차"],
+      "city": "서울", "district": "광진구", "dong": "광장동", "regionTier": "서울",
+      "builtYear": 2000, "households": 1170, "brandTier": 2, "parkingRatio": 1.1, "far": 322, "rentalShare": 0,
+      "redev": { "stage": "none" }, "conversionRate": 0.045,
+      "tags": ["광남학군", "한강 인접 생활권"],
+      "areas": [
+        { "key": "84", "label": "전용 84㎡ (32평형)", "m2": 84.9, "jeonse": 9.0,
+          "trades": [ { "ym": "2026-06", "price": 15.8, "floor": 15 }, { "ym": "2026-03", "price": 15.2, "floor": 7 }, { "ym": "2025-12", "price": 14.7, "floor": 18 }, { "ym": "2025-09", "price": 14.0, "floor": 10 } ] }
+      ],
+      "location": { "subwayMin": 8, "lines": ["5호선(광나루)"], "transfer": false, "express": false,
+        "futureTransit": null,
+        "jobMinutes": { "GBD": 35, "CBD": 35, "YBD": 55, "JAMSIL": 20, "PANGYO": 55 } },
+      "education": { "elemM": 300, "chopuma": true, "middlePref": 5, "hubId": "gwangjang", "inHub": true,
+        "hubAccess": [ { "hubId": "daechi", "min": 35 }, { "hubId": "jamsil", "min": 25 } ], "age3049": 0.31, "studentTrend": "stable" },
+      "life": { "martMin": 12, "deptMin": 20, "hospitalMin": 15, "streetLevel": 3 },
+      "nature": { "parkMin": 10, "bigPark": true, "riverMin": 12, "hanRiver": true, "hanRiverView": null, "forest": true },
+      "supply": { "pop": 336000, "next3yAvg": 900, "adjacentRatio": 1.1, "adjacentNote": "성동·강동 정비 물량 영향권",
+        "metroRatio": 0.9, "unsoldLevel": 1, "txVolumeLevel": 3, "jeonseListingsLevel": 1, "jeonseTrend": "up", "regulated": true }
+    },
+    {
+      "id": "sunae-yangji", "name": "수내 양지마을", "aliases": ["분당 양지마을", "수내동 양지"],
+      "city": "경기 성남", "district": "분당구", "dong": "수내동", "regionTier": "수도권핵심",
+      "builtYear": 1992, "households": 4392, "householdsNote": "1~6단지 통합 생활권 기준",
+      "brandTier": 3, "parkingRatio": 0.7, "far": 194, "allowedFar": 315, "rentalShare": 0,
+      "redev": { "stage": "zone_designated", "note": "1기 신도시 특별법 선도지구 — 특별정비계획 수립 중" },
+      "conversionRate": 0.048,
+      "tags": ["분당 핵심 교육축", "리모델링→재건축 전환 기대"],
+      "areas": [
+        { "key": "84", "label": "전용 84㎡ (32~33평형)", "m2": 84.6, "jeonse": 7.3,
+          "trades": [ { "ym": "2026-06", "price": 16.4, "floor": 9 }, { "ym": "2026-03", "price": 15.7, "floor": 14 }, { "ym": "2025-12", "price": 15.0, "floor": 4 }, { "ym": "2025-10", "price": 14.4, "floor": 11 } ] },
+        { "key": "59", "label": "전용 59㎡ (24~25평형)", "m2": 59.8, "jeonse": 5.8,
+          "trades": [ { "ym": "2026-05", "price": 12.6, "floor": 7 }, { "ym": "2026-01", "price": 12.0, "floor": 12 } ] }
+      ],
+      "location": { "subwayMin": 6, "lines": ["수인분당선(수내)"], "transfer": false, "express": false,
+        "futureTransit": null,
+        "jobMinutes": { "GBD": 35, "CBD": 60, "YBD": 60, "JAMSIL": 40, "PANGYO": 15 } },
+      "education": { "elemM": 250, "chopuma": true, "middlePref": 5, "hubId": "bundang-sunae", "inHub": true,
+        "hubAccess": [ { "hubId": "bundang-jeongja", "min": 12 } ], "age3049": 0.29, "studentTrend": "down" },
+      "life": { "martMin": 8, "deptMin": 10, "hospitalMin": 10, "streetLevel": 4 },
+      "nature": { "parkMin": 5, "bigPark": true, "riverMin": 8, "hanRiver": false, "hanRiverView": null, "forest": true },
+      "supply": { "pop": 480000, "next3yAvg": 2600, "adjacentRatio": 1.3, "adjacentNote": "판교·위례·용인 물량 + 선도지구 이주수요 교차",
+        "metroRatio": 1.0, "unsoldLevel": 2, "txVolumeLevel": 3, "jeonseListingsLevel": 3, "jeonseTrend": "stable", "regulated": true }
+    },
+    {
+      "id": "pyeongchon-guiin", "name": "귀인마을현대홈타운", "aliases": ["평촌 귀인마을", "귀인 현대홈타운"],
+      "city": "경기 안양", "district": "동안구", "dong": "평촌동", "regionTier": "수도권핵심",
+      "builtYear": 2002, "households": 1131, "brandTier": 2, "parkingRatio": 1.0, "far": 284, "rentalShare": 0,
+      "redev": { "stage": "none" }, "conversionRate": 0.052,
+      "tags": ["평촌 학군 중심"],
+      "areas": [
+        { "key": "80", "label": "전용 80㎡ (31~32평형)", "m2": 80.0, "jeonse": 6.6,
+          "trades": [ { "ym": "2026-06", "price": 11.2, "floor": 10 }, { "ym": "2026-02", "price": 10.7, "floor": 16 }, { "ym": "2025-11", "price": 10.2, "floor": 6 }, { "ym": "2025-09", "price": 9.9, "floor": 13 } ] },
+        { "key": "59", "label": "전용 59㎡ (24평형)", "m2": 59.8, "jeonse": 5.2,
+          "trades": [ { "ym": "2026-04", "price": 8.6, "floor": 9 }, { "ym": "2025-12", "price": 8.2, "floor": 15 } ] }
+      ],
+      "location": { "subwayMin": 10, "lines": ["4호선(평촌)"], "transfer": false, "express": false,
+        "futureTransit": "GTX-C (계획 단계·미확정)",
+        "jobMinutes": { "GBD": 40, "CBD": 55, "YBD": 55, "PANGYO": 25, "GASAN": 25 } },
+      "education": { "elemM": 200, "chopuma": true, "middlePref": 5, "hubId": "pyeongchon", "inHub": true,
+        "hubAccess": [], "age3049": 0.32, "studentTrend": "stable" },
+      "life": { "martMin": 8, "deptMin": 12, "hospitalMin": 10, "streetLevel": 4 },
+      "nature": { "parkMin": 6, "bigPark": true, "riverMin": 15, "hanRiver": false, "hanRiverView": null, "forest": false },
+      "supply": { "pop": 542000, "next3yAvg": 3300, "adjacentRatio": 1.2, "adjacentNote": "의왕·군포·안양 재개발 물량",
+        "metroRatio": 1.0, "unsoldLevel": 2, "txVolumeLevel": 3, "jeonseListingsLevel": 2, "jeonseTrend": "up", "regulated": false,
+        "regulationNote": "비규제 — 매수수요 제약은 작지만 매물잠김 효과도 약함" }
+    },
+    {
+      "id": "gwacheon-raemian", "name": "래미안슈르", "aliases": ["과천 래미안슈르", "과천 슈르"],
+      "city": "경기 과천", "district": "과천시", "dong": "부림동", "regionTier": "수도권핵심",
+      "builtYear": 2008, "households": 3143, "brandTier": 1, "parkingRatio": 1.2, "far": 209, "rentalShare": 0.06,
+      "redev": { "stage": "none" }, "conversionRate": 0.046,
+      "tags": ["과천 대단지", "강남 접근성"],
+      "areas": [
+        { "key": "84", "label": "전용 84㎡ (33평형)", "m2": 84.9, "jeonse": 9.1,
+          "trades": [ { "ym": "2026-06", "price": 17.8, "floor": 12 }, { "ym": "2026-02", "price": 17.0, "floor": 20 }, { "ym": "2025-11", "price": 16.3, "floor": 8 } ] },
+        { "key": "59", "label": "전용 59㎡ (25평형)", "m2": 59.9, "jeonse": 7.2,
+          "trades": [ { "ym": "2026-05", "price": 14.0, "floor": 14 }, { "ym": "2025-12", "price": 13.3, "floor": 5 } ] }
+      ],
+      "location": { "subwayMin": 7, "lines": ["4호선(과천)"], "transfer": false, "express": false,
+        "futureTransit": "GTX-C (계획 단계·미확정)",
+        "jobMinutes": { "GBD": 25, "CBD": 45, "YBD": 45, "PANGYO": 25, "GASAN": 30 } },
+      "education": { "elemM": 300, "chopuma": true, "middlePref": 4, "hubId": "gwacheon", "inHub": true,
+        "hubAccess": [ { "hubId": "daechi", "min": 30 } ], "age3049": 0.30, "studentTrend": "stable" },
+      "life": { "martMin": 10, "deptMin": 25, "hospitalMin": 15, "streetLevel": 3 },
+      "nature": { "parkMin": 5, "bigPark": true, "riverMin": 10, "hanRiver": false, "hanRiverView": null, "forest": true },
+      "supply": { "pop": 81000, "next3yAvg": 900, "adjacentRatio": 0.9, "adjacentNote": "안양·의왕 물량 일부 영향",
+        "metroRatio": 1.0, "unsoldLevel": 1, "txVolumeLevel": 3, "jeonseListingsLevel": 4,
+        "jeonseTrend": "down", "jeonseNote": "지식정보타운·인근 신규 입주로 전세 매물 증가",
+        "regulated": true }
+    },
+    {
+      "id": "dongtan-hanwha", "name": "동탄역시범한화꿈에그린프레스티지", "aliases": ["동탄 시범한화", "동탄역 한화"],
+      "city": "경기 화성", "district": "화성시", "dong": "청계동", "regionTier": "수도권",
+      "builtYear": 2015, "households": 1817, "brandTier": 2, "parkingRatio": 1.25, "far": 180, "rentalShare": 0.04,
+      "redev": { "stage": "none" }, "conversionRate": 0.055,
+      "tags": ["GTX 역세권", "공급 많은 지역 사례"],
+      "areas": [
+        { "key": "84", "label": "전용 84㎡ (33~34평형)", "m2": 84.4, "jeonse": 6.6,
+          "trades": [ { "ym": "2026-06", "price": 14.1, "floor": 21 }, { "ym": "2026-03", "price": 13.6, "floor": 15 }, { "ym": "2025-12", "price": 13.0, "floor": 9 }, { "ym": "2025-10", "price": 12.6, "floor": 18 } ] },
+        { "key": "97", "label": "전용 97㎡ (38평형)", "m2": 97.3, "jeonse": 7.4,
+          "trades": [ { "ym": "2026-04", "price": 15.8, "floor": 25 }, { "ym": "2025-11", "price": 14.9, "floor": 12 } ] }
+      ],
+      "location": { "subwayMin": 8, "lines": ["GTX-A·SRT(동탄)"], "transfer": true, "express": true,
+        "futureTransit": "동탄 트램 (공사 중·확정)",
+        "jobMinutes": { "GBD": 35, "CBD": 55, "YBD": 60, "PANGYO": 30, "JAMSIL": 45 } },
+      "education": { "elemM": 350, "chopuma": true, "middlePref": 3, "hubId": null, "inHub": false, "localAcademyLevel": 4,
+        "hubAccess": [], "age3049": 0.38, "studentTrend": "up" },
+      "life": { "martMin": 10, "deptMin": 12, "hospitalMin": 15, "streetLevel": 4 },
+      "nature": { "parkMin": 8, "bigPark": true, "riverMin": 15, "hanRiver": false, "hanRiverView": null, "forest": false },
+      "supply": { "pop": 985000, "next3yAvg": 11000, "adjacentRatio": 1.6, "adjacentNote": "오산·수원 남부·용인 남부 공급 다수",
+        "metroRatio": 1.2, "unsoldLevel": 3, "txVolumeLevel": 3, "jeonseListingsLevel": 3, "jeonseTrend": "stable", "regulated": false,
+        "regulationNote": "비규제 — 매수 제약 작음, 매물잠김 효과 약함" }
+    },
+    {
+      "id": "junggye-chunggu3", "name": "중계 청구3차", "aliases": ["중계동 청구", "은행사거리 청구3차"],
+      "city": "서울", "district": "노원구", "dong": "중계동", "regionTier": "서울",
+      "builtYear": 1995, "households": 780, "brandTier": 3, "parkingRatio": 0.8, "far": 289, "rentalShare": 0,
+      "redev": { "stage": "none" }, "conversionRate": 0.05,
+      "tags": ["동북권 학군지", "은행사거리 학원가"],
+      "areas": [
+        { "key": "84", "label": "전용 84㎡ (32평형)", "m2": 84.8, "jeonse": 5.7,
+          "trades": [ { "ym": "2026-06", "price": 10.1, "floor": 11 }, { "ym": "2026-02", "price": 9.7, "floor": 6 }, { "ym": "2025-11", "price": 9.3, "floor": 14 }, { "ym": "2025-09", "price": 9.0, "floor": 3 } ] }
+      ],
+      "comparables": [
+        { "name": "중계 라이프·신동아 (인근 유사단지)", "m2": 84.9, "featureDelta": -0.02,
+          "trades": [ { "ym": "2026-05", "price": 9.6, "floor": 9 }, { "ym": "2026-01", "price": 9.2, "floor": 12 } ] }
+      ],
+      "location": { "subwayMin": 15, "lines": ["7호선(중계)"], "transfer": false, "express": false,
+        "futureTransit": "동북선 경전철 (공사 중·확정)",
+        "jobMinutes": { "GBD": 55, "CBD": 40, "YBD": 60, "JAMSIL": 45 } },
+      "education": { "elemM": 250, "chopuma": true, "middlePref": 4, "hubId": "junggye", "inHub": true,
+        "hubAccess": [], "age3049": 0.30, "studentTrend": "down" },
+      "life": { "martMin": 8, "deptMin": 20, "hospitalMin": 15, "streetLevel": 3 },
+      "nature": { "parkMin": 8, "bigPark": true, "riverMin": 15, "hanRiver": false, "hanRiverView": null, "forest": true },
+      "supply": { "pop": 496000, "next3yAvg": 2400, "adjacentRatio": 1.2, "adjacentNote": "노원·도봉·의정부 정비 물량",
+        "metroRatio": 0.9, "unsoldLevel": 1, "txVolumeLevel": 3, "jeonseListingsLevel": 2, "jeonseTrend": "stable", "regulated": true }
+    }
+  ]
+}
