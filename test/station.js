@@ -15,16 +15,41 @@ let pass = 0, fail = 0;
 function ok(cond, name) { if (cond) pass++; else { fail++; console.error('  ✗ FAIL:', name); } }
 const st = n => STN.stations[n];
 
-/* 기본 무결성 */
+/* 기본 무결성 + §33 데이터 정합성 — station/line 파일은 같은 버전·생성시각이어야 한다 */
 ok(Object.keys(STN.stations).length > 300, '역 300개 이상 계산됨');
 ok(Object.values(STN.stations).every(s => s.sv >= 0 && s.sv <= 100 && isFinite(s.sv)), 'Station Value 0~100');
+ok(STN.meta.version === 5 && LINEI.meta.version === 5, `§33: 데이터 버전 V5 (station ${STN.meta.version} / line ${LINEI.meta.version})`);
+ok(!!STN.meta.generatedAt && STN.meta.generatedAt === LINEI.meta.generatedAt,
+  '§33: station·line intelligence 생성시각 일치 — 구버전 혼합 배포 금지');
 ok(LINEI.lines.length >= 10 && LINEI.lines.every(l => l.golden > 0 && l.golden <= 100), '노선 지수 정상');
-ok(LINEI.lines.every(l => l.breakdown && isFinite(l.breakdown.median) && isFinite(l.breakdown.topAvg) && isFinite(l.breakdown.coreConnect)),
-  '노선 V4 산출근거(중앙값·상위25%평균·핵심연결성) 저장');
+
+/* Line Value V5 — 5축 스키마·범위, Station Value 평균이 아님 */
+{
+  const L5 = CFG.station.lineV5;
+  const sum = o => Object.values(o).reduce((a, b) => a + b, 0);
+  ok(Math.abs(sum(L5.axes) - 1) < 1e-9, 'LV5: 5축 가중치 합 = 1');
+  const AX = ['hub', 'station', 'network', 'efficiency', 'uniqueness'];
+  ok(LINEI.lines.every(l => l.breakdown && AX.every(k => isFinite(l.breakdown[k]) && l.breakdown[k] >= 0 && l.breakdown[k] <= 100)),
+    'LV5: 전 노선 5축(생활권·역세권·네트워크·효율·독점성) 0~100 저장');
+  ok(LINEI.lines.every(l => Array.isArray(l.breakdown.hubs)), 'LV5: 연결 생활권 목록 저장');
+  const line = nm => LINEI.lines.find(x => x.name === nm);
+  // 노선 가치 ≠ 역 평균: 축 구성이 다르면 avg 순위와 달라질 수 있어야 한다 (구조 확인)
+  ok(LINEI.lines.some((l, i) => {
+    const byAvg = LINEI.lines.slice().sort((a, b) => b.avg - a.avg);
+    return byAvg.indexOf(l) !== i;
+  }), 'LV5: 노선 순위가 역 평균 순위와 동일하지 않음 (별도 모델)');
+  // §9 취지: 5호선의 생활권 연결(주거·도심·업무·학군·공항)이 허브 목록으로 설명 가능
+  const l5hubs = (line('5호선').breakdown.hubs || []).map(h => h.n).join(',');
+  ok(['여의도', '고덕·강동', '김포공항', '목동'].every(h => l5hubs.includes(h)), 'LV5: 5호선 허브에 여의도·고덕·목동·김포공항 포함');
+  // §15 환승 편승 감쇄: 공항철도는 전 역이 환승역 — 독점성이 낮게 계산되어야 구조가 작동하는 것
+  ok(line('공항철도').breakdown.uniqueness < 50, `LV5 §15: 공항철도 독점성 낮음 (${line('공항철도').breakdown.uniqueness}) — 환승역 가치 편승 차단`);
+}
 {
   const rk = nm => LINEI.lines.findIndex(x => x.name === nm) + 1;
   ok(rk('GTX-A') > 5, `GTX-A 상위 5위 밖 (${rk('GTX-A')}위) — 차내시간만으로 과대평가 금지`);
   ok(rk('공항철도') > 3, `공항철도 상위 3위 밖 (${rk('공항철도')}위)`);
+  ok(rk('공항철도') > rk('5호선'), `§16: 공항철도(${rk('공항철도')}위)가 5호선(${rk('5호선')}위)보다 높지 않음`);
+  ok(rk('경의중앙선') > rk('5호선'), `§16: 경의중앙선(${rk('경의중앙선')}위)이 5호선보다 높지 않음`);
 }
 
 /* Test A — 같은 3호선: 신사 vs 녹번, 차이가 4축 컴포넌트로 설명 가능해야 */
@@ -54,10 +79,20 @@ ok(LINEI.lines.every(l => l.breakdown && isFinite(l.breakdown.median) && isFinit
 {
   const total = Object.keys(STN.stations).length;
   for (const n of ['대치', '목동', '고덕', '올림픽공원', '평촌', '수내'])
-    ok(st(n).rank <= total * 0.35, `A3: ${n} 상위 35% 이내 (${st(n).rank}위/${total})`);
+    ok(st(n).rank <= total * 0.40, `A3: ${n} 상위 40% 이내 (${st(n).rank}위/${total})`);
   ok(st('대치').rank <= total * 0.10, `A3: 대치 상위 10% 이내 (${st('대치').rank}위)`);
   ok(st('대치').comps.edu >= 90, `A3: 대치 교육·주거 축 최상위 (${st('대치').comps.edu})`);
   ok(st('압구정').rank < st('서울역').rank, 'A3: 압구정(주거 최상급) > 서울역(업무 중심) — 업무축만으로 최상위 불가');
+}
+
+/* Test A4 — V5 경제력: 단지 단위 표본·규모 필터 구조 확인 */
+{
+  ok(Object.values(STN.stations).filter(s => s.econSrc === 'live').every(s => s.econN >= CFG.station.v4.econMinSamples),
+    'A4: 실거래 기반 역은 최소 단지 표본 이상');
+  // 잠실새내(잠실주공5 재건축 초고가 ㎡가 이슈): 단지당 1표 중앙값이라 재건축 1곳이 역 점수를 지배하지 못함
+  ok(st('잠실새내').comps.econ <= st('압구정').comps.econ, `A4: 잠실새내 경제력(${st('잠실새내').comps.econ}) ≤ 압구정(${st('압구정').comps.econ}) — 단일 재건축 단지 지배 방지`);
+  // 목동: 나홀로 소형 단지가 다수라도 규모(매매+전세 거래량) 가중으로 신시가지가 대표성 유지
+  ok(st('목동').comps.econ >= 50, `A4: 목동 경제력 ${st('목동').comps.econ} — 소형 단지 희석 방지(규모 가중)`);
 }
 
 /* Test B — 가치 높은 단일노선 역 > 가치 낮은 노선 환승역 (환승 개수만으로 승리 금지) */

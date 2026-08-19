@@ -3,6 +3,9 @@
 # 테스트 통과 없이는 빌드하지 않는다. 평문 app.html은 저장소에 올리지 않는다(.gitignore).
 set -e
 cd "$(dirname "$0")"
+# §33 데이터 생성 순서 강제: Station·Line Value 생성 → 테스트 → 빌드
+# (station/line intelligence는 같은 meta로 함께 생성되며, 버전 불일치는 테스트가 잡는다)
+node pipeline/station_intel.js
 npm test
 
 node tools/build.js

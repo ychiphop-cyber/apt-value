@@ -247,6 +247,7 @@ details.acc .detail-body{padding:2px 0 14px}
 
 /* ── 점수 상세 바 ── */
 .sb{display:grid;grid-template-columns:96px 1fr 36px;gap:8px;align-items:center;margin:6px 0;font-size:12px}
+#lineCard .sb{grid-template-columns:158px 1fr 36px}
 .sb .k{color:var(--ink2);text-align:right}
 .sb .v{font-variant-numeric:tabular-nums;color:var(--ink);font-weight:700;font-size:12px}
 .sbar{height:8px;background:var(--grid);border-radius:4px;overflow:hidden}
@@ -359,11 +360,14 @@ footer#appFooter b{color:var(--ink2)}
       <button class="backbtn" id="mapBack">← 돌아가기</button>
       <h2>서울·수도권 역 가치 지도</h2>
       <div class="seg" style="flex:0 0 auto" id="mapMode">
-        <button data-v="sv" aria-pressed="true">역 가치</button>
-        <button data-v="wealth" aria-pressed="false">역세권 경제력</button>
+        <button data-v="sv" aria-pressed="true">종합</button>
+        <button data-v="transit" aria-pressed="false">교통</button>
+        <button data-v="econ" aria-pressed="false">경제력</button>
+        <button data-v="edu" aria-pressed="false">교육·주거</button>
+        <button data-v="biz" aria-pressed="false">업무</button>
       </div>
     </div>
-    <p class="hint" id="mapHint">역 가치 = 교통·네트워크 30% + 역세권 경제력 35% + 교육·주거 생활권 20% + 업무·도시 중심성 15% — 실거래·이동시간 기반 자동 계산이며 사전에 정한 순위가 없습니다. 원의 크기 = 역 가치, 원의 색 = 노선. 역을 눌러 산출 근거를 확인하세요.</p>
+    <p class="hint" id="mapHint">역 가치 = 교통·네트워크 30% + 역세권 경제력 35% + 교육·주거 생활권 20% + 업무·도시 중심성 15% — 실거래·이동시간 기반 자동 계산이며 사전에 정한 순위가 없습니다. 원의 크기 = 선택한 기준의 점수, 원의 색 = 노선. 역을 눌러 산출 근거를 확인하세요.</p>
     <div class="linechips" id="lineChips"></div>
     <div class="mapbox" id="mapBox"></div>
     <div class="maplegend" id="mapLegend"></div>

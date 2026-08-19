@@ -56,11 +56,39 @@
       "eduSub": { "hub": 0.55, "density": 0.45 },
       "hubDecayKm": 1.1,
       "hubTierCoef": { "1": 1.0, "2": 0.82, "3": 0.62, "4": 0.45 },
-      "econWinsorPct": [5, 95],
+      "econWinsorPct": [2, 98],
       "econMinSamples": 3,
+      "econNote": "V5: 거래→평형(최근 중앙값, 이상거래 필터)→단지 대표 ㎡가(평형 중앙값, 단지당 1표)→역세권 도보시간×규모(거래량 proxy) 가중 중앙값. econMinSamples = 최소 단지 수",
+      "econTradeBand": [0.6, 1.6],
+      "econTradeBandMinTrades": 3,
+      "econWalkCurve": [ { "min": 5, "w": 1.0 }, { "min": 9, "w": 0.8 }, { "min": 12, "w": 0.55 }, { "min": 15, "w": 0.35 }, { "min": 20, "w": 0.2 } ],
+      "econSizeCap": 40,
+      "econComplexMinObs": 2,
+      "econSizeNote": "단지 가중치 = min(매매+전세 거래건수, cap) — 세대수 데이터가 없어 거래량을 단지 규모 proxy로 사용(전세 포함: 매매가 거래허가제 등으로 억제된 대단지의 규모가 지워지지 않게). 나홀로 소형 단지 1곳이 대단지와 같은 발언권을 갖지 않게 하되, cap으로 초대형 단지의 역세권 독점도 막는다. 관측 2건 미만 단지는 대표성 부족으로 제외",
       "wealthFallbackScore": [null, 15, 35, 55, 78, 93],
-      "densityLogRef": 40,
-      "lineV4": { "median": 0.50, "topQuartileAvg": 0.30, "coreConnect": 0.20, "displayMin": 22, "displayMax": 98 }
+      "densityLogRef": 40
+    },
+    "lineV5": {
+      "note": "Line Value V5 — Station Value 평균이 아닌 별도 네트워크 모델. 5축: 핵심 생활권 연결력 30 / 노선 내 역세권 가치 25 / 도시 횡단·네트워크 20 / 실제 이동 효율 15 / 독점성·대체불가능성 10. 특정 노선 순위를 만들기 위한 조정 금지",
+      "axes": { "hub": 0.30, "station": 0.25, "network": 0.20, "efficiency": 0.15, "uniqueness": 0.10 },
+      "hubTierCoef": { "1": 1.0, "2": 0.75, "3": 0.5 },
+      "hubDepthPartial": 0.65,
+      "hubDepthNote": "같은 생활권은 1회만 인정하되, 생활권을 '취급'하는 기준(역 2개 이상, 단일역 생활권은 그 역)을 채우지 못하고 1개 역으로 스치는 노선은 0.65로 감쇄 — §11 짧은 스침 과대평가 방지. 연결 관계(diversity) 판정에도 같은 기준 적용",
+      "stationSub": { "median": 0.45, "topQuartile": 0.35, "share80": 0.20 },
+      "share80Threshold": 80,
+      "transferDecay": { "1": 1.0, "2": 0.85, "3": 0.72 },
+      "transferDecayNote": "환승역 편승 방지 — 역 가치를 노선 가치에 넣을 때 소속 노선 수에 따라 감쇄 (3 = 3개 이상)",
+      "networkSub": { "diversity": 0.40, "transfer": 0.35, "intercity": 0.25 },
+      "diversityNote": "생활권 유형 수가 아니라 연결 '관계' 4종의 충족 — ①주거권↔업무권 직결 ②주거권↔교육권 직결 ③서로 다른 업무권 2곳 이상 직결 ④광역 관문(KTX·공항) 연결. 각 0.25",
+      "transferLineRef": 12,
+      "intercityRef": 2,
+      "efficiencySub": { "headway": 0.35, "speed": 0.35, "express": 0.30 },
+      "headwayCurve": [ { "min": 4, "s": 100 }, { "min": 5, "s": 90 }, { "min": 6, "s": 80 }, { "min": 8, "s": 60 }, { "min": 10, "s": 45 }, { "min": 15, "s": 25 } ],
+      "speedCurve": [ { "kmh": 25, "s": 35 }, { "kmh": 30, "s": 50 }, { "kmh": 36, "s": 62 }, { "kmh": 45, "s": 78 }, { "kmh": 55, "s": 88 }, { "kmh": 70, "s": 96 }, { "kmh": 100, "s": 100 } ],
+      "expressScore": { "yes": 100, "no": 40 },
+      "uniquenessSub": { "soloShare": 0.60, "hubExclusive": 0.40 },
+      "hubExclusiveMaxLines": 2,
+      "displayMin": 22, "displayMax": 98
     },
     "transportBlend": { "svT": 0.6, "gangnam": 0.4 },
     "futureTransitBonus": { "confirmed": 4, "planned": 1 },
@@ -133,7 +161,13 @@
     "outlierWeight": 0.2,
     "lowFloorMax": 3,
     "lowFloorWeight": 0.85,
-    "minHalfSpread": 0.025
+    "minHalfSpread": 0.025,
+    "anomalyLow": {
+      "note": "최근 실거래 1건이 시세 대비 이상 저가(특수관계인 거래 등)면 최근 3개월 내 최고가로 표기·자동입력 (V3.2)",
+      "windowDays": 92,
+      "ratio": 0.85,
+      "minPeers": 2
+    }
   },
 
   "future": {

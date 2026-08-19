@@ -20,6 +20,41 @@ ok(E.monthsBetween('2026-08', '2026-05') === 3, 'monthsBetween 기본');
 ok(E.monthsBetween('2026-08', '2027-01') === 0, 'monthsBetween 미래 거래는 0');
 ok(E.interp(7, [[5, 88], [8, 78]]) > 78 && E.interp(7, [[5, 88], [8, 78]]) < 88, 'interp 중간값');
 
+/* ── 대표 최근가 (V3.2) — 이상 저가 1건이 현재가로 표기되는 문제 보정 ── */
+{
+  // 헬리오시티형: 직전 19.3억이 3개월 또래(25~26.9억) 대비 이상 저가 → 3개월 최고가 표기
+  const helio = { trades: [
+    { ym: '2026-07', d: 23, price: 19.3, floor: 19 },
+    { ym: '2026-07', d: 17, price: 26.47, floor: 18 },
+    { ym: '2026-05', d: 13, price: 26.8, floor: 12 },
+    { ym: '2026-05', d: 4, price: 25.5, floor: 15 },
+    { ym: '2026-05', d: 1, price: 25, floor: 12 }
+  ] };
+  const r1 = E.repRecentPrice(helio, '2026-08', CFG);
+  ok(r1.anomalous === true && Math.abs(r1.price - 26.8) < 1e-9, `대표최근가: 이상 저가 → 3개월 최고가 26.8 (got ${r1.price})`);
+  ok(Math.abs(r1.latest.price - 19.3) < 1e-9, '대표최근가: 원래 최근 거래는 사실대로 보존');
+  // 정상: 직전 거래가 또래 범위 안 → 그대로 사용 (최근 거래 우선 원칙)
+  const normal = { trades: [
+    { ym: '2026-07', d: 20, price: 25.8, floor: 10 },
+    { ym: '2026-06', d: 5, price: 26.2, floor: 8 },
+    { ym: '2026-05', d: 2, price: 25.1, floor: 14 }
+  ] };
+  const r2 = E.repRecentPrice(normal, '2026-08', CFG);
+  ok(r2.anomalous === false && Math.abs(r2.price - 25.8) < 1e-9, '대표최근가: 정상 거래는 최근가 그대로');
+  // 또래 표본 부족(1건) → 보정하지 않음 (억지 판단 금지)
+  const sparse = { trades: [{ ym: '2026-07', d: 20, price: 19, floor: 3 }, { ym: '2026-06', d: 5, price: 26, floor: 8 }] };
+  const r3 = E.repRecentPrice(sparse, '2026-08', CFG);
+  ok(r3.anomalous === false && Math.abs(r3.price - 19) < 1e-9, '대표최근가: 또래 2건 미만이면 판단 유보');
+  // 이상거래 플래그(o)가 있으면 또래가 충분할 때 보정
+  const flagged = { trades: [
+    { ym: '2026-07', d: 23, price: 20, floor: 2, o: 1 },
+    { ym: '2026-07', d: 10, price: 26, floor: 18 },
+    { ym: '2026-06', d: 13, price: 25.5, floor: 12 }
+  ] };
+  const r4 = E.repRecentPrice(flagged, '2026-08', CFG);
+  ok(r4.anomalous === true && Math.abs(r4.price - 26) < 1e-9, '대표최근가: o 플래그 거래도 보정 (플래그 거래는 최고가 후보에서 제외)');
+}
+
 /* ── 기본 분석 파이프라인 ── */
 const cx = DATA.complexes.find(c => c.id === 'godeok-gracium');
 const base = { complex: cx, areaKey: '84', asOfYM: '2026-08', overrides: {} };

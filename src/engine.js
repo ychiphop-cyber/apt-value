@@ -127,6 +127,30 @@ const AptEngine = (() => {
     };
   }
 
+  /* ═══════════ 대표 최근가 (V3.2) ═══════════
+     '최근 실거래 1건'이 특수관계인 거래 등 이상 저가면 그 값이 현재가로 표기되는
+     문제 보정: 직전 거래가 최근 3개월 또래 거래 중앙값보다 뚜렷이 낮으면(또는
+     이상거래 플래그) 최근 3개월 내 최고가로 표기한다. 최근 거래가 우선 원칙 유지. */
+  function repRecentPrice(area, asOfYM, CFG) {
+    const A = (CFG.marketRef && CFG.marketRef.anomalyLow) || { windowDays: 92, ratio: 0.85, minPeers: 2 };
+    const all = (area.trades || []).slice().sort((a, b) => dateOf(b) - dateOf(a));
+    if (!all.length) return null;
+    const latest = all[0];
+    const base = { price: latest.price, latest, anomalous: false };
+    const t0 = dateOf(latest);
+    const win = all.filter(t => (t0 - dateOf(t)) / 86400000 <= A.windowDays && !t.o);
+    const peers = win.filter(t => t !== latest);
+    if (peers.length < A.minPeers) return base;
+    const sortedP = peers.map(t => t.price).sort((a, b) => a - b);
+    const peerMed = sortedP.length % 2 ? sortedP[(sortedP.length - 1) / 2]
+      : (sortedP[sortedP.length / 2 - 1] + sortedP[sortedP.length / 2]) / 2;
+    if (latest.o || latest.price < A.ratio * peerMed) {
+      const top = win.reduce((m, t) => Math.max(m, t.price), 0);
+      return { price: top, latest, anomalous: true, peerMed: round1(peerMed), windowDays: A.windowDays };
+    }
+    return base;
+  }
+
   /* ═══════════ 미래가치 엔진 (V3 §24~28) — 5축 → g 시나리오 ═══════════ */
   function engineFuture(cx, supplyE, hedonic, option, CFG) {
     const F = CFG.future;
@@ -785,9 +809,9 @@ const AptEngine = (() => {
     if (!market.value) throw new Error('비교거래 없음 — 현재 가격을 직접 입력해 주세요.');
     const marketRef = marketReference(area, input, CFG);
 
-    // 현재 시장가격: 사용자 수정 > 최근 실거래 (최근 1건은 기준가와 분리 표시 — §7)
-    const t1 = (area.trades || []).slice().sort((a, b) => ymToNum(b.ym) - ymToNum(a.ym));
-    const basePrice = input.overrides.price != null ? input.overrides.price : (t1.length ? t1[0].price : market.value);
+    // 현재 시장가격: 사용자 수정 > 대표 최근가 (V3.2 — 이상 저가 1건이면 3개월 최고가로 보정)
+    const rep = repRecentPrice(area, input.asOfYM, CFG);
+    const basePrice = input.overrides.price != null ? input.overrides.price : (rep ? rep.price : market.value);
     const currentPrice = basePrice * (input.overrides.priceMul || 1);
 
     // Engine D 수급 → Station → Engine C 히도닉 → Engine E 옵션
@@ -836,7 +860,7 @@ const AptEngine = (() => {
     const trace = [
       ['시장 기준가', marketRef ? `${round1(marketRef.low)}~${round1(marketRef.high)}억 (중앙 ${round1(marketRef.med)}, ${marketRef.windowDays}일창 ${marketRef.n}건, 이상치 ${marketRef.nOutlier})` : '없음 → 비교거래 폴백'],
       ['최근 실거래', marketRef ? `${marketRef.latest.date} · ${marketRef.latest.price}억 · ${marketRef.latest.floor}층${marketRef.latest.outlier ? ' [이상치]' : ''}` : '—'],
-      ['현재가', `${round1(currentPrice)}억 (${input.overrides.price != null ? '수동' : '최근 실거래'})`],
+      ['현재가', `${round1(currentPrice)}억 (${input.overrides.price != null ? '수동' : (rep && rep.anomalous ? '이상 저가 보정 — 최근 3개월 최고가' : '최근 실거래')})`],
       ['R 연간주거서비스', `${(fin.R).toFixed(3)}억 = ${fin.rSourceText}`],
       ['요구수익률 r', (fin.r * 100).toFixed(2) + '%'],
       ['g 시나리오', `보수 ${(fin.gScen.low * 100).toFixed(1)}% / 기준 ${(fin.gScen.base * 100).toFixed(1)}% / 우호 ${(fin.gScen.high * 100).toFixed(1)}% (미래점수 ${future.score})`],
@@ -852,7 +876,7 @@ const AptEngine = (() => {
     ];
 
     const res = {
-      cx, area, input, currentPrice, market, marketRef, financial: fin, support, hedonic, supplyE, option,
+      cx, area, input, currentPrice, repPrice: rep, market, marketRef, financial: fin, support, hedonic, supplyE, option,
       future, structural, verdicts, transit, combineOut, range, gaps, fillRate, dataStatus, trace,
       scores: { living, invest, attract },
       confidence: conf
@@ -875,7 +899,7 @@ const AptEngine = (() => {
     return analyze(Object.assign({}, rawInput, { overrides: ov }), CFG, HUBS, JOBS, STN);
   }
 
-  return { analyze, applyStress, interp, weightedMedian, weightedPercentile, monthsBetween, clamp, round1 };
+  return { analyze, applyStress, repRecentPrice, interp, weightedMedian, weightedPercentile, monthsBetween, clamp, round1 };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = AptEngine;
