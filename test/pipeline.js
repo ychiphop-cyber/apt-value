@@ -19,9 +19,26 @@ ok(!P.checkResult('<r><resultCode>22</resultCode><resultMsg>LIMITED_NUMBER_OF_SE
 
 const region = { code: '11440', name: '마포구', sido: '서울' };
 const shard = P.emptyShard(region);
-P.mergeMonth(shard, '202607', trades, rents);
-P.mergeMonth(shard, '202607', trades, rents);   // 같은 데이터 재병합 → 매매 중복 없어야 함
+// 실사용 패턴: 월별로 해당 월 데이터만 병합 — 같은 월 재수집 시 Full Replace로 멱등해야 함
+const byM = arr => { const m = {}; for (const it of arr) { const k = `${it.y}${String(it.mo).padStart(2, '0')}`; (m[k] = m[k] || []).push(it); } return m; };
+const tM = byM(trades), rM = byM(rents);
+const months = [...new Set([...Object.keys(tM), ...Object.keys(rM)])];
+for (const ymd of months) P.mergeMonth(shard, ymd, tM[ymd] || [], rM[ymd] || []);
+for (const ymd of months) P.mergeMonth(shard, ymd, tM[ymd] || [], rM[ymd] || []);   // 재수집 → Full Replace 멱등
 P.finalizeShard(shard, '2026-08');
+{
+  // 취소거래 반영 검증: 다음 수집에서 그 거래가 취소로 바뀌면 기존 기록이 제거되어야 함 (§4)
+  const before = shard.complexes['공덕동|공덕삼성래미안'].areas['84'].trades.length;
+  const cancelled = (tM['202607'] || []).map(t => ({ ...t, cancel: t.price === 152000 ? true : t.cancel }));
+  P.mergeMonth(shard, '202607', cancelled, rM['202607'] || []);
+  P.finalizeShard(shard, '2026-08');
+  const after = shard.complexes['공덕동|공덕삼성래미안'].areas['84'].trades;
+  ok(!after.some(t => t.price === 15.2), 'Full Replace: 취소된 거래가 DB에서 제거됨');
+  ok(after.length === before - 1, 'Full Replace: 해당 월만 교체되고 다른 월 보존');
+  // 원상복구
+  P.mergeMonth(shard, '202607', tM['202607'] || [], rM['202607'] || []);
+  P.finalizeShard(shard, '2026-08');
+}
 
 const cx = shard.complexes['공덕동|공덕삼성래미안'];
 ok(!!cx, '단지 키 생성 (동|단지명)');

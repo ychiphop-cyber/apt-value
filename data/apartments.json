@@ -2,7 +2,7 @@
   "meta": {
     "kind": "sample",
     "asOf": "2026-08",
-    "notice": "데모 샘플 데이터 — 실제 API 연동 전 참고용이며, 가격·전세는 화면에서 직접 수정할 수 있습니다."
+    "notice": "상세 프로필 단지 — 실거래·전세는 국토교통부 자동수집 데이터로 연동되며, 입지·상품 정보는 검증된 프로필입니다."
   },
   "defaultSources": {
     "trades": {
@@ -181,7 +181,8 @@
           "st": "고덕",
           "min": 12
         }
-      }
+      },
+      "regionCode": "11740"
     },
     {
       "id": "eunma",
@@ -328,7 +329,8 @@
           "st": "한티",
           "min": 12
         }
-      }
+      },
+      "regionCode": "11680"
     },
     {
       "id": "jamsil-els",
@@ -481,14 +483,16 @@
           "st": "종합운동장",
           "min": 10
         }
-      }
+      },
+      "regionCode": "11710"
     },
     {
       "id": "mapo-raemian",
       "name": "마포래미안푸르지오",
       "aliases": [
         "마래푸",
-        "아현 래미안"
+        "아현 래미안",
+        "마포래미안푸르지오3단지"
       ],
       "city": "서울",
       "district": "마포구",
@@ -631,7 +635,8 @@
           "st": "공덕",
           "min": 9
         }
-      }
+      },
+      "regionCode": "11440"
     },
     {
       "id": "helio-city",
@@ -788,7 +793,8 @@
           "st": "가락시장",
           "min": 8
         }
-      }
+      },
+      "regionCode": "11710"
     },
     {
       "id": "banpo-xi",
@@ -930,7 +936,8 @@
           "st": "사평",
           "min": 8
         }
-      }
+      },
+      "regionCode": "11650"
     },
     {
       "id": "mokdong-7",
@@ -1067,14 +1074,16 @@
           "min": 8,
           "status": "VERIFIED"
         }
-      }
+      },
+      "regionCode": "11470"
     },
     {
       "id": "gwangjang-hyundai10",
       "name": "광장현대파크빌10차",
       "aliases": [
         "광장동 현대파크빌",
-        "광장 현대 10차"
+        "광장 현대 10차",
+        "현대파크빌"
       ],
       "city": "서울",
       "district": "광진구",
@@ -1191,14 +1200,16 @@
           "min": 8,
           "status": "VERIFIED"
         }
-      }
+      },
+      "regionCode": "11215"
     },
     {
       "id": "sunae-yangji",
       "name": "수내 양지마을",
       "aliases": [
         "분당 양지마을",
-        "수내동 양지"
+        "수내동 양지",
+        "양지마을(금호1)"
       ],
       "city": "경기 성남",
       "district": "분당구",
@@ -1332,7 +1343,8 @@
           "min": 6,
           "status": "VERIFIED"
         }
-      }
+      },
+      "regionCode": "41135"
     },
     {
       "id": "pyeongchon-guiin",
@@ -1469,18 +1481,20 @@
           "st": "범계",
           "min": 15
         }
-      }
+      },
+      "regionCode": "41173"
     },
     {
       "id": "gwacheon-raemian",
       "name": "래미안슈르",
       "aliases": [
         "과천 래미안슈르",
-        "과천 슈르"
+        "과천 슈르",
+        "래미안슈르"
       ],
       "city": "경기 과천",
       "district": "과천시",
-      "dong": "부림동",
+      "dong": "원문동",
       "regionTier": "수도권핵심",
       "builtYear": 2008,
       "households": 3143,
@@ -1607,14 +1621,16 @@
           "st": "정부과천청사",
           "min": 9
         }
-      }
+      },
+      "regionCode": "41290"
     },
     {
       "id": "dongtan-hanwha",
       "name": "동탄역시범한화꿈에그린프레스티지",
       "aliases": [
         "동탄 시범한화",
-        "동탄역 한화"
+        "동탄역 한화",
+        "동탄역시범한화꿈에그린프레스티지"
       ],
       "city": "경기 화성",
       "district": "화성시",
@@ -1742,14 +1758,16 @@
           "min": 8,
           "status": "VERIFIED"
         }
-      }
+      },
+      "regionCode": "41597"
     },
     {
       "id": "junggye-chunggu3",
       "name": "중계 청구3차",
       "aliases": [
         "중계동 청구",
-        "은행사거리 청구3차"
+        "은행사거리 청구3차",
+        "청구3"
       ],
       "city": "서울",
       "district": "노원구",
@@ -1875,7 +1893,8 @@
           "min": 12,
           "status": "VERIFIED"
         }
-      }
+      },
+      "regionCode": "11350"
     }
   ]
 }

@@ -5,7 +5,8 @@
    단지 소스 3종: ① 상세 프로필 샘플(DATA) ② 실거래 자동수집(data/live/*)
                  ③ 직접 입력
    ═══════════════════════════════════════════════════════════════════ */
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '3.0.0';
+const DEBUG_MODE = /[?&]debug=true/.test(location.search);
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtEok = x => `${(Math.round(x * 10) / 10).toFixed(1)}억`;
@@ -204,6 +205,11 @@ function renderAptList(q) {
       state.manual = false; state.liveSel = null; state.cxId = b.dataset.id; state.areaKey = null;
       state.ovPrice = null; state.ovJeonse = null; state.ovConv = null;
       $('manualCard').hidden = true;
+      // 상세 프로필 단지도 실거래는 자동수집 데이터로 연동 (샤드 선로딩)
+      const cx0 = DATA.complexes.find(c => c.id === b.dataset.id);
+      if (cx0 && cx0.regionCode && LIVE.status === 'ready' && !LIVE.shards[cx0.regionCode]) {
+        try { await getShard(cx0.regionCode); } catch (e) {}
+      }
       go(2);
     }
   });
@@ -253,7 +259,8 @@ function buildAutoComplex() {
     stationLink = { primary: { st: es.st, min: es.min > 0 ? es.min : 8, status: 'MANUAL' } };
     stStatus = 'MANUAL';
   } else {
-    const dl = DONG.map[entry.dong];
+    // "시군구코드:동" 오버라이드 우선 — 동명 충돌 방지 (예: 화성 목동 ≠ 양천 목동)
+    const dl = dongLinkFor(state.liveSel.code, entry.dong);
     if (dl && dl.length && STN.stations[dl[0].st]) {
       stationLink = {
         primary: { st: dl[0].st, min: dl[0].min, status: 'ESTIMATED' },
@@ -291,11 +298,12 @@ function buildAutoComplex() {
   }
 
   return {
-    id: 'live|' + state.liveSel.id, name: entry.name,
+    id: 'live|' + state.liveSel.id, name: entry.name, aptSeq: entry.aptSeq || null,
     city: region.sido, district: region.name, dong: entry.dong,
-    regionTier: region.tier, builtYear: entry.builtYear || 2000,
-    households: e.households > 0 ? e.households : 700, brandTier: 2,
-    parkingRatio: 0.9, far: 250, rentalShare: 0,
+    regionTier: region.tier, builtYear: entry.builtYear || null,
+    // §10·12: 임의 기본값 폐기 — 미확인은 null로 두고 엔진이 해당 항목을 제외·재정규화한다
+    households: e.households > 0 ? e.households : null,
+    brandTier: null, parkingRatio: null, far: null, rentalShare: null,
     redev: { stage: e.redevStage || 'none' },
     conversionRate: state.ovConv != null ? state.ovConv : region.conv,
     tags: ['실거래 자동'], dataGaps: gaps, fieldStatus, stationLink,
@@ -303,15 +311,45 @@ function buildAutoComplex() {
     location: { subwayMin: stationLink ? stationLink.primary.min : null, unknownTransport, lines: [], transfer: false, express: false, futureTransit: null, jobMinutes: region.jobMinutes },
     education: hub
       ? { elemM: 400, chopuma: false, middlePref: hub.hub_type === 'school_zone' ? 4 : 3, hubId: hub.id, inHub: true, hubAccess: [], age3049: 0.31, studentTrend: 'stable' }
-      : { elemM: 500, chopuma: false, middlePref: 3, hubId: null, inHub: false, localAcademyLevel: 3, hubAccess: [], age3049: 0.30, studentTrend: 'stable' },
-    life: { martMin: 10, deptMin: 20, hospitalMin: 15, streetLevel: 3 },
-    nature: { parkMin: 10, bigPark: false, riverMin: 30, hanRiver: false, hanRiverView: null, forest: false },
+      : null,   // 허브 매칭도 안 되면 교육은 미확인 — 평가 제외
+    life: null, nature: null,   // 시설 거리 데이터 미확보 — 평가 제외 (10분 기본값 폐기, §56)
     supply: {
       pop: region.pop, next3yAvg: e.supplyNext3yAvg > 0 ? e.supplyNext3yAvg : region.supplyNext3yAvg,
       adjacentRatio: region.adjacentRatio, metroRatio: region.metroRatio,
       unsoldLevel: 2, txVolumeLevel: 3, jeonseListingsLevel: 3, jeonseTrend: 'stable', regulated: region.regulated
     }
   };
+}
+
+/* 법정동→역 연결 조회: "시군구코드:동" 오버라이드 우선 (빈 배열 = 연결 안 함) */
+function dongLinkFor(regionCode, dong) {
+  const scoped = DONG.map[`${regionCode}:${dong}`];
+  if (scoped !== undefined) return scoped.length ? scoped : null;
+  return DONG.map[dong] || null;
+}
+
+/* 샘플(상세 프로필) 단지에 자동수집 실거래를 연동 — 프로필은 유지, 가격 데이터만 실데이터로 교체 (V3 P0-1) */
+function mergeSampleWithLive(cx) {
+  if (!cx.regionCode || LIVE.status !== 'ready') return cx;
+  const shard = LIVE.shards[cx.regionCode];
+  if (!shard) return cx;
+  const key = Object.keys(shard.complexes).find(k => {
+    const [dong, nm] = k.split('|');
+    return dong === cx.dong && (nm === cx.name || (cx.aliases || []).some(a => a.replace(/\s/g, '') === nm.replace(/\s/g, '')));
+  });
+  if (!key) return cx;
+  const live = shard.complexes[key];
+  const out = JSON.parse(JSON.stringify(cx));
+  let merged = 0;
+  for (const a of out.areas) {
+    const la = live.areas[a.key];
+    if (la && la.trades && la.trades.length) {
+      a.trades = la.trades; merged++;
+      if (la.jeonse) { a.jeonse = la.jeonse.v; a.jeonseMeta = la.jeonse; }
+    }
+  }
+  if (merged) { out.liveLinked = true; out.aptSeq = live.aptSeq || null; }
+  return out;
 }
 function liveAsOf() { return (LIVE.index && LIVE.index.meta.updatedAt) || DATA.meta.asOf; }
 
@@ -375,7 +413,8 @@ function buildManualComplex() {
 function getComplex() {
   if (state.manual) return buildManualComplex();
   if (state.liveSel) return buildAutoComplex();
-  return DATA.complexes.find(c => c.id === state.cxId);
+  const cx = DATA.complexes.find(c => c.id === state.cxId);
+  return cx ? mergeSampleWithLive(cx) : cx;
 }
 
 function renderStep2() {
@@ -410,12 +449,12 @@ function renderStep2() {
       <div>
         <label class="mini">현재 시장가격 ${state.ovPrice != null ? '<span class="stat est">수정됨</span>' : (latest ? '<span class="stat ok">자동입력</span>' : '<span class="stat chk" style="color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent)">입력 필요</span>')}
           <span class="inline-num"><input type="number" id="inPrice" step="0.1" min="0" value="${priceVal}"><em>억원</em></span></label>
-        ${latest ? `<div class="srcline">최근 실거래 ${latest.ym} · ${fmtEok(latest.price)}${latest.floor ? ` (${latest.floor}층)` : ''} — ${isLive ? '국토교통부 실거래가 API' : esc(S.trades.src)}, ${isLive ? esc(liveAsOf()) : esc(S.trades.asOf)} 기준</div>` : '<div class="srcline">이 평형은 최근 매매 실거래가 없습니다 — 시세를 직접 입력하세요.</div>'}
+        ${latest ? `<div class="srcline">최근 실거래 ${latest.ym}${latest.d ? '-' + String(latest.d).padStart(2, '0') : ''} · ${fmtEok(latest.price)}${latest.floor ? ` (${latest.floor}층)` : ''}${latest.o ? ' <span class="stat est">이상거래 의심</span>' : ''} — ${(isLive || cx.liveLinked) ? '국토교통부 실거래가 API' : esc(S.trades.src)}, ${(isLive || cx.liveLinked) ? esc(liveAsOf()) : esc(S.trades.asOf)} 기준</div>` : '<div class="srcline">이 평형은 최근 매매 실거래가 없습니다 — 시세를 직접 입력하세요.</div>'}
       </div>
       <div>
         <label class="mini">전세 시세 ${state.ovJeonse != null ? '<span class="stat est">수정됨</span>' : (area.jeonse ? '<span class="stat ok">자동입력</span>' : '<span class="stat chk" style="color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent)">입력 필요</span>')}
           <span class="inline-num"><input type="number" id="inJeonse" step="0.1" min="0" value="${jeonseVal}"><em>억원</em></span></label>
-        <div class="srcline">${isLive ? (jm ? `전월세 실거래 ${jm.n}건 중앙값 (최근 ${jm.windowMo}개월, 신규계약)` : '전세 실거래 없음 — 직접 입력') : `${esc(S.jeonse.src)}, ${esc(S.jeonse.asOf)} 기준`}</div>
+        <div class="srcline">${jm ? `전월세 실거래 ${jm.n}건 중앙값 (최근 ${jm.windowMo}개월, 신규계약)` : isLive ? '전세 실거래 없음 — 직접 입력' : `${esc(S.jeonse.src)}, ${esc(S.jeonse.asOf)} 기준`}</div>
       </div>
     </div>`;
   $('areaSeg').querySelectorAll('button').forEach(b => b.onclick = () => {
@@ -439,7 +478,7 @@ function renderStep2() {
   const e = state.autoEdits;
   let stationRow = '';
   if (isLive) {
-    const dl = DONG.map[state.liveSel.entry.dong];
+    const dl = dongLinkFor(state.liveSel.code, state.liveSel.entry.dong);
     const autoSt = (!e.station && dl && dl.length && STN.stations[dl[0].st]) ? dl[0] : null;
     const badge = e.station && e.station.st ? '<span class="stat ok">입력됨</span>'
       : autoSt ? `<span class="stat est">자동연결(추정) ${esc(autoSt.st)}역 ${autoSt.min}분</span>`
@@ -544,19 +583,24 @@ function verdictBadge(pos) {
 function renderReport(r) {
   const cx = r.cx, area = r.area;
   const isLive = !!state.liveSel;
-  const [vbCls, vbText] = verdictBadge(r.scores.attract.positionLabel);
   const conf = r.confidence;
   const S = DATA.defaultSources;
+  const mref = r.marketRef, V = r.verdicts, FU = r.future, ST = r.structural;
 
-  const lo0 = Math.min(r.range.low, r.currentPrice), hi0 = Math.max(r.range.high, r.currentPrice);
+  const rvLow = mref ? mref.low : r.range.low, rvHigh = mref ? mref.high : r.range.high, rvMid = mref ? mref.med : r.combineOut.center;
+  const lo0 = Math.min(rvLow, r.currentPrice), hi0 = Math.max(rvHigh, r.currentPrice);
   const span = hi0 - lo0 || 1;
   const dLo = lo0 - span * 0.18, dHi = hi0 + span * 0.18;
   const pos = x => ((x - dLo) / (dHi - dLo) * 100).toFixed(1);
 
+  const vCls = { '할인': 'green', '적정': 'blue', '프리미엄': 'amber' };
+  const fCls = { '강함': 'green', '양호': 'green', '보통': 'blue', '약함': 'amber' };
+  const eCls = { '낮음': 'green', '보통': 'blue', '높음': 'amber', '매우 높음': '' };
+
   const tiles = [
     { k: '주거가치', v: Math.round(r.scores.living.total), s: '실제 거주하기 좋은가', id: 'accC' },
     { k: '투자가치', v: Math.round(r.scores.invest.total), s: '자산으로 보유할 경쟁력', id: 'accI' },
-    { k: '가격매력도', v: r.scores.attract.score, s: '장점을 감안해도 지금 싼가', id: 'accP' }
+    { k: '미래가치', v: FU.score, s: '앞으로 더 선호될 이유가 있는가', id: 'accF' }
   ];
 
   const contribRows = r.explain.contrib.map(c => {
@@ -582,26 +626,36 @@ function renderReport(r) {
   <div class="hero">
     <div class="aptname">${esc(cx.name)} <span style="font-weight:500;color:var(--muted);font-size:13px">${esc(area.label)}</span></div>
     <div class="aptsub">${esc(cx.city)} ${esc(cx.district)} ${esc(cx.dong)} · ${cx.builtYear}년 · ${cx.households.toLocaleString()}세대${isLive ? ' · 실거래 자동수집' : ''}</div>
-    <div class="duo">
-      <div><div class="k">현재 시장가격</div><div class="big">${fmtEokW(r.currentPrice)}</div></div>
-      <div><div class="k">모델 적정가치</div><div class="big accent">${fmtEok(r.range.low)} ~ ${fmtEokW(r.range.high)}</div></div>
+    <div class="quad">
+      <div class="hs"><span class="k">현재 시장가격</span><div class="big">${fmtEokW(r.currentPrice)}</div>
+        <div class="s">${mref ? `최근 실거래 ${esc(mref.latest.date)} · ${fmtEok(mref.latest.price)} · ${mref.latest.floor}층${mref.latest.outlier ? ' <span class="stat est">이상거래 의심</span>' : ''}` : '실거래 기준'}</div></div>
+      <div class="hs"><span class="k">시장 기준가</span><div class="big accent mid" style="font-size:21px">${mref ? `${fmtEok(mref.low)} ~ ${fmtEokW(mref.high)}` : `${fmtEok(r.range.low)} ~ ${fmtEokW(r.range.high)}`}</div>
+        <div class="s">${mref ? `최근 ${mref.windowDays}일 동일평형 ${mref.n}건 가중중앙값${mref.extended ? ' <span class="stat est">거래 부족 — 기간 확장</span>' : ''}${mref.nOutlier ? ` · 이상거래 ${mref.nOutlier}건 저가중` : ''}` : '비교거래 기반'}</div></div>
+      <div class="hs"><span class="k">금융 지지가치</span><div class="big mid">${fmtEok(r.financial.fsv.low)} ~ ${fmtEokW(r.financial.fsv.high)}</div>
+        <div class="s">전세·금리·요구수익률 기준 (성장률 보수~우호 시나리오)</div></div>
+      <div class="hs"><span class="k">장기 경쟁력</span><div class="big mid">${ST.score} <em style="font-style:normal;font-size:13px;color:var(--muted)">/ 100 · ${esc(ST.band)}</em></div>
+        <div class="s">입지·교육·상품·희소성·미래 종합${ST.excluded.length ? ` (미확인 ${ST.excluded.length}개 항목 제외)` : ''}</div></div>
     </div>
     <div class="rangeviz">
       <div class="rv-band">
         <div class="rv-rail"></div>
-        <div class="rv-fill" style="left:${pos(r.range.low)}%;width:${(pos(r.range.high) - pos(r.range.low)).toFixed(1)}%"></div>
-        <div class="rv-center" style="left:${pos(r.combineOut.center)}%"></div>
+        <div class="rv-fill" style="left:${pos(rvLow)}%;width:${(pos(rvHigh) - pos(rvLow)).toFixed(1)}%"></div>
+        <div class="rv-center" style="left:${pos(rvMid)}%"></div>
         <div class="rv-price" style="left:${pos(r.currentPrice)}%" title="현재 가격"></div>
       </div>
-      <div class="rv-labels"><span>${fmtEok(r.range.low)}</span><span>적정범위 (중앙 ${fmtEok(r.combineOut.center)})</span><span>${fmtEok(r.range.high)}</span></div>
+      <div class="rv-labels"><span>${fmtEok(rvLow)}</span><span>시장 기준가 (중앙 ${fmtEok(rvMid)})</span><span>${fmtEok(rvHigh)}</span></div>
       <div class="rv-cap">● 현재 가격 위치</div>
     </div>
     <div class="chiprow">
-      <span class="badge ${vbCls}">${vbText}</span>
+      <span class="vlabel-chip">시장 상대평가</span><span class="badge ${vCls[V.market.label] ?? 'gray'}">${V.market.label}</span>
+      <span class="vlabel-chip">금융 지지력</span><span class="badge ${fCls[V.financial.label] ?? 'gray'}">${V.financial.label} ${Math.round(V.financial.ratio * 100)}%</span>
+      <span class="vlabel-chip">미래 기대 반영도</span><span class="badge ${eCls[V.expectation.label] ?? 'gray'}">${V.expectation.label}</span>
       <span class="badge gray">신뢰도 ${conf.label}</span>
     </div>
-    <div class="conf">최근 동일평형 비교거래 ${r.market.compCount}건 · 데이터 충족률 ${(r.fillRate * 100).toFixed(0)}% · 신뢰도 점수 ${conf.score}/100${r.dataStatus ? ` · 확인 ${r.dataStatus.VERIFIED} / 수동 ${r.dataStatus.MANUAL} / 추정 ${r.dataStatus.ESTIMATED} / 미확인 ${r.dataStatus.UNKNOWN}` : ''}</div>
+    <div class="conf">시장 기준가 거래 ${mref ? mref.n : r.market.compCount}건 · 데이터 충족률 ${(r.fillRate * 100).toFixed(0)}% · 신뢰도 ${conf.score}/100${r.dataStatus ? ` · 확인 ${r.dataStatus.VERIFIED} / 수동 ${r.dataStatus.MANUAL} / 추정 ${r.dataStatus.ESTIMATED} / 미확인 ${r.dataStatus.UNKNOWN}` : ''}</div>
   </div>
+
+  ${r.explain.oneLiner ? `<div class="oneliner"><b>이 아파트를 한 문장으로 보면</b> — ${esc(r.explain.oneLiner)}</div>` : ''}
 
   <div class="card">
     <h2>핵심 진단</h2>
@@ -749,11 +803,21 @@ function renderReport(r) {
       ${sbRow('전세지지력', r.scores.invest.subs.jeonseSupport)}${sbRow('수급 구조', r.scores.invest.subs.supplyDemand)}${sbRow('희소성', r.scores.invest.subs.scarcity)}${sbRow('미래가치', r.scores.invest.subs.future)}${sbRow('핵심입지', r.scores.invest.subs.location)}${sbRow('유동성', r.scores.invest.subs.liquidity)}
     </div></details>
 
-    <details class="acc" id="accP"><summary><span class="sumleft">가격매력도 산출</span><span class="sumr">${r.scores.attract.score}점</span></summary><div class="detail-body">
-      <div class="kv"><span>모델 적정가치 (중앙)</span><span>${fmtEokW(r.combineOut.center)}</span></div>
-      <div class="kv"><span>현재가의 프리미엄/할인</span><span class="strong">${signPct(r.scores.attract.premium)}</span></div>
-      <div class="kv"><span>판단</span><span>${r.scores.attract.positionLabel}</span></div>
-      <p class="subtle">결합 가중치: 시장앵커 ${(r.combineOut.wm * 100).toFixed(0)}% + 임대내재가치 ${(r.combineOut.wf * 100).toFixed(0)}% (두 모델의 괴리 ${fmtPct(r.combineOut.disagreement, 0)}만큼 내재가치 가중을 줄이고 범위를 넓힘${r.combineOut.anchorClamped ? ' · 시장앵커 ±' + fmtPct(CFG.final.anchorClamp, 0) + ' 클램프 적용' : ''}). 좋은 아파트라는 사실이 아니라, 그 장점을 감안한 뒤에도 가격이 싼지를 봅니다.</p>
+    <details class="acc" id="accF"><summary><span class="sumleft">미래가치 · 성장률 시나리오</span><span class="sumr">${FU.score}점</span></summary><div class="detail-body">
+      ${[['수요 지속성', FU.comps.demand], ['공급 희소성', FU.comps.scarcity], ['교통·일자리 변화', FU.comps.transitChange], ['교육·주거선호', FU.comps.eduPref], ['정비사업 옵션', FU.comps.redevOption]]
+        .map(([k, v]) => v == null ? `<div class="sb"><div class="k">${k}</div><div style="font-size:11px;color:var(--muted)">미확인 — 제외</div><div class="v">—</div></div>` : sbRow(k, v)).join('')}
+      <div class="kv"><span>장기 주거가치 성장률 시나리오</span><span class="strong">보수 ${fmtPct(r.financial.gScen.low)} · 기준 ${fmtPct(r.financial.gScen.base)} · 우호 ${fmtPct(r.financial.gScen.high)}</span></div>
+      <div class="kv"><span>현재가 유지에 필요한 성장률 (역산)</span><span class="strong">연 ${fmtPct(r.financial.impliedG)}</span></div>
+      <p class="subtle">미래가치는 재건축 하나가 아니라 수요·공급·교통변화·교육선호·정비옵션 다섯 축으로 평가하며, 그 결과가 금융가치의 성장률 가정(g)을 결정합니다. 역산 성장률이 우호 시나리오보다 높으면 "미래 기대 반영도"가 높음/매우 높음으로 표시됩니다.</p>
+    </div></details>
+
+    <details class="acc" id="accP"><summary><span class="sumleft">가격 판정 산출 근거</span><span class="sumr">${V.market.label} · ${V.financial.label} · ${V.expectation.label}</span></summary><div class="detail-body">
+      <div class="kv"><span>① 시장 상대평가</span><span class="strong">${V.market.label}</span></div>
+      <p class="subtle">현재가 ${fmtEokW(r.currentPrice)} vs 시장 기준가 ${mref ? `${fmtEok(mref.low)}~${fmtEok(mref.high)}` : '—'} — 최근 실거래 여러 건의 가중중앙값 범위와 비교합니다. 최근 1건이 아니라 기간창(${mref ? mref.windowDays : 90}일) 거래로 판단합니다.</p>
+      <div class="kv"><span>② 금융 지지력</span><span class="strong">${V.financial.label} (현재가의 ${Math.round(V.financial.ratio * 100)}%)</span></div>
+      <p class="subtle">전세 ${fmtEok(r.financial.jeonse)} × 전환율 ${(r.financial.conv * 100).toFixed(1)}% ÷ (요구수익률 ${fmtPct(r.financial.r)} − 성장률) = ${fmtEok(r.financial.fsv.low)}~${fmtEok(r.financial.fsv.high)}. 금융수익률이 낮다고 '고평가'로 단정하지 않습니다 — 서울 핵심 아파트의 가격은 임대수익만으로 설명되지 않는 프리미엄(입지·교육·희소성·토지가치)을 포함할 수 있습니다.</p>
+      <div class="kv"><span>③ 미래 기대 반영도</span><span class="strong">${V.expectation.label}</span></div>
+      <p class="subtle">역산 성장률 ${fmtPct(r.financial.impliedG)} vs 모델 시나리오(${fmtPct(r.financial.gScen.low)}~${fmtPct(r.financial.gScen.high)}) — 현재 가격이 어느 시나리오까지 미래를 당겨왔는지 봅니다.</p>
     </div></details>
 
     <details class="acc" id="accConf"><summary><span class="sumleft">신뢰도 · 데이터 출처</span><span class="sumr">${conf.label} ${conf.score}/100</span></summary><div class="detail-body">
@@ -784,7 +848,12 @@ function renderReport(r) {
     <div id="cmpOut"></div>
   </div>
 
-  <div class="warnbox"><b>이 결과를 읽는 법</b> — 본 진단은 미래 집값 예측이 아니라, 현재 가격이 어떤 요인으로 설명되며 어떤 조건이 무너지면 취약해지는지 이해를 돕는 도구입니다. 적정가치는 범위로만 제시하며, 개별 동·층·향·내부상태는 반영되지 않습니다. 투자 권유가 아닙니다.</div>`;
+  <div class="warnbox"><b>이 결과를 읽는 법</b> — 본 진단은 미래 집값 예측이 아니라, 현재 가격이 어떤 요인으로 설명되며 어떤 조건이 무너지면 취약해지는지 이해를 돕는 도구입니다. 가격은 항상 범위와 판정으로 제시하며, 개별 동·층·향·내부상태는 반영되지 않습니다. 투자 권유가 아닙니다.</div>
+
+  ${DEBUG_MODE ? `<div class="card"><h2>🛠 Calculation Trace (debug)</h2>
+    <p class="hint">?debug=true — 개발자용 전체 계산 경로. 일반 결과 화면에는 노출되지 않습니다.</p>
+    <div class="tblwrap"><table><tbody>${r.trace.map(([k, v]) => `<tr><td style="white-space:nowrap">${esc(k)}</td><td style="text-align:left;white-space:normal">${esc(String(v))}</td></tr>`).join('')}</tbody></table></div>
+  </div>` : ''}`;
 
   $('report').querySelectorAll('.t3[data-acc]').forEach(b => b.onclick = () => {
     const acc = $(b.dataset.acc); if (!acc) return;
@@ -840,13 +909,13 @@ function renderStress() {
     <div class="notebox" style="margin-top:14px"><b>시나리오: ${esc(labels)}</b></div>
     <div class="tblwrap"><table class="deltatbl">
       <thead><tr><th>지표</th><th>기본</th><th>시나리오</th><th>변화</th></tr></thead><tbody>
-      <tr><td>적정가치 범위</td><td>${fmtEok(b.range.low)}~${fmtEok(b.range.high)}</td><td class="strong">${fmtEok(sr.range.low)}~${fmtEok(sr.range.high)}</td><td class="delta">${dArrow(b.combineOut.center, sr.combineOut.center)}억</td></tr>
-      <tr><td>가격 판단</td><td>${b.scores.attract.positionLabel}</td><td class="strong">${sr.scores.attract.positionLabel}</td><td></td></tr>
-      <tr><td>가격매력도</td><td>${b.scores.attract.score}</td><td class="strong">${sr.scores.attract.score}</td><td class="delta">${dArrow(b.scores.attract.score, sr.scores.attract.score)}</td></tr>
-      <tr><td>투자가치</td><td>${Math.round(b.scores.invest.total)}</td><td class="strong">${Math.round(sr.scores.invest.total)}</td><td class="delta">${dArrow(b.scores.invest.total, sr.scores.invest.total)}</td></tr>
-      <tr><td>전세지지력</td><td>${b.support.label}</td><td class="strong">${sr.support.label}</td><td></td></tr>
-      <tr><td>임대 내재가치</td><td>${fmtEok(b.financial.value)}</td><td class="strong">${fmtEok(sr.financial.value)}</td><td class="delta">${dArrow(b.financial.value, sr.financial.value)}억</td></tr>
+      <tr><td>금융 지지가치</td><td>${fmtEok(b.financial.fsv.low)}~${fmtEok(b.financial.fsv.high)}</td><td class="strong">${fmtEok(sr.financial.fsv.low)}~${fmtEok(sr.financial.fsv.high)}</td><td class="delta">${dArrow(b.financial.fsv.base, sr.financial.fsv.base)}억</td></tr>
+      <tr><td>금융 지지력</td><td>${b.verdicts.financial.label} ${Math.round(b.verdicts.financial.ratio * 100)}%</td><td class="strong">${sr.verdicts.financial.label} ${Math.round(sr.verdicts.financial.ratio * 100)}%</td><td></td></tr>
+      <tr><td>미래 기대 반영도</td><td>${b.verdicts.expectation.label}</td><td class="strong">${sr.verdicts.expectation.label}</td><td></td></tr>
       <tr><td>필요 성장률(역산)</td><td>${fmtPct(b.financial.impliedG)}</td><td class="strong">${fmtPct(sr.financial.impliedG)}</td><td></td></tr>
+      <tr><td>전세지지력</td><td>${b.support.label}</td><td class="strong">${sr.support.label}</td><td></td></tr>
+      <tr><td>투자가치</td><td>${Math.round(b.scores.invest.total)}</td><td class="strong">${Math.round(sr.scores.invest.total)}</td><td class="delta">${dArrow(b.scores.invest.total, sr.scores.invest.total)}</td></tr>
+      <tr><td>미래가치 점수</td><td>${b.future.score}</td><td class="strong">${sr.future.score}</td><td class="delta">${dArrow(b.future.score, sr.future.score)}</td></tr>
       </tbody></table></div>
     <p class="subtle">시나리오는 해당 변수만 바꾼 조건부 재계산입니다. 실제 시장에서는 변수들이 함께 움직일 수 있습니다.</p>`;
 }
@@ -883,11 +952,13 @@ function renderCompare() {
     <div class="tblwrap"><table>
       <thead><tr><th></th><th>${esc(a.cx.name)} ${esc(a.area.key)}㎡</th><th>${esc(b.cx.name)} ${esc(b.area.key)}㎡</th></tr></thead><tbody>
       ${row('현재 가격', fmtEokW(a.currentPrice), fmtEokW(b.currentPrice), true)}
-      ${row('적정가치 범위', `${fmtEok(a.range.low)}~${fmtEok(a.range.high)}`, `${fmtEok(b.range.low)}~${fmtEok(b.range.high)}`)}
-      ${row('가격 판단', a.scores.attract.positionLabel, b.scores.attract.positionLabel)}
+      ${row('시장 기준가', a.marketRef ? `${fmtEok(a.marketRef.low)}~${fmtEok(a.marketRef.high)}` : '—', b.marketRef ? `${fmtEok(b.marketRef.low)}~${fmtEok(b.marketRef.high)}` : '—')}
+      ${row('금융 지지가치', `${fmtEok(a.financial.fsv.low)}~${fmtEok(a.financial.fsv.high)}`, `${fmtEok(b.financial.fsv.low)}~${fmtEok(b.financial.fsv.high)}`)}
+      ${row('판정', `${a.verdicts.market.label}·${a.verdicts.financial.label}·기대 ${a.verdicts.expectation.label}`, `${b.verdicts.market.label}·${b.verdicts.financial.label}·기대 ${b.verdicts.expectation.label}`)}
+      ${row('장기 경쟁력', `${a.structural.score} (${a.structural.band})`, `${b.structural.score} (${b.structural.band})`)}
       ${row('주거가치', Math.round(a.scores.living.total), Math.round(b.scores.living.total))}
       ${row('투자가치', Math.round(a.scores.invest.total), Math.round(b.scores.invest.total))}
-      ${row('가격매력도', a.scores.attract.score, b.scores.attract.score)}
+      ${row('미래가치', a.future.score, b.future.score)}
       ${row('전세지지력', a.support.label, b.support.label)}
       ${row('수급', a.supplyE.gradeLabel, b.supplyE.gradeLabel)}
       ${row('미래 옵션', a.option.gradeLabel, b.option.gradeLabel)}
@@ -926,7 +997,7 @@ function buildMap() {
   const netSorted = entries.slice().sort((a, b) => a[1].comps.net - b[1].comps.net);
   netSorted.forEach(([n], i) => { mapState.netPct[n] = Math.round((i + 1) / netSorted.length * 100); });
 
-  // 노선 칩
+  // 노선 칩 (Golden Corridor 지수순)
   $('lineChips').innerHTML = `<button class="lchip" data-line="" aria-pressed="true">전체</button>` +
     LINEI.lines.map(l => `<button class="lchip" data-line="${esc(l.name)}" aria-pressed="false"><i style="background:${l.color}"></i>${esc(l.name)} ${l.golden}</button>`).join('');
   $('lineChips').querySelectorAll('.lchip').forEach(b => b.onclick = () => {
@@ -946,16 +1017,104 @@ function buildMap() {
   drawMap(); renderRank();
 }
 
+/* Leaflet 실지도 (줌·팬·fit) — 로드 실패 시 개념도 SVG 폴백 */
 function drawMap() {
+  if (typeof L !== 'undefined') drawMapLeaflet();
+  else drawMapSVG();
+}
+
+function accentColor() { return (getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#A8252C').trim(); }
+
+function drawMapLeaflet() {
+  const M = mapState;
+  if (!M.lmap) {
+    $('mapBox').innerHTML = '<div id="leafletMap"></div>';
+    M.lmap = L.map('leafletMap', { preferCanvas: true, zoomSnap: 0.25 }).setView([37.535, 127.0], 11);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 17, attribution: '© OpenStreetMap'
+    }).addTo(M.lmap);
+    M.lineLayer = L.layerGroup().addTo(M.lmap);
+    M.markerLayer = L.layerGroup().addTo(M.lmap);
+    M.tipLayer = L.layerGroup().addTo(M.lmap);
+    M.lmap.on('zoomend moveend', () => renderMapTips());
+  }
+  // 노선
+  M.lineLayer.clearLayers();
+  const lineOn = M.line;
+  M.lineStations = new Set();
+  for (const le of RAIL_LINES) {
+    if (le.overlay) continue;
+    const hi = lineOn && le.name === lineOn;
+    if (hi) le.stations.forEach(s => M.lineStations.add(s));
+    const pts = le.stations.filter(s => STN.stations[s] && STN.stations[s].c).map(s => STN.stations[s].c);
+    if (le.loop && pts.length) pts.push(pts[0]);
+    L.polyline(pts, { color: le.color, weight: hi ? 5 : 2, opacity: lineOn ? (hi ? 0.9 : 0.12) : 0.4, interactive: false }).addTo(M.lineLayer);
+  }
+  // Golden Corridor 강조 (§73)
+  if (lineOn) {
+    const LI = LINEI.lines.find(x => x.name === lineOn);
+    if (LI && LI.corridor) {
+      const cpts = LI.corridor.stations.filter(s => STN.stations[s] && STN.stations[s].c).map(s => STN.stations[s].c);
+      if (cpts.length > 1) L.polyline(cpts, { color: accentColor(), weight: 11, opacity: 0.3, interactive: false }).addTo(M.lineLayer);
+    }
+    const all = [...M.lineStations].filter(s => STN.stations[s] && STN.stations[s].c).map(s => STN.stations[s].c);
+    if (all.length) M.lmap.fitBounds(L.latLngBounds(all).pad(0.12));
+  }
+  // 역 버블
+  M.markerLayer.clearLayers();
+  M.markers = {};
+  const ac = accentColor();
+  const names = Object.keys(STN.stations).filter(n => STN.stations[n].c);
+  for (const n of names.sort((a, b) => metricOf(STN.stations[a]) - metricOf(STN.stations[b]))) {
+    const s = STN.stations[n];
+    const v = metricOf(s);
+    const faded = lineOn && !M.lineStations.has(n);
+    const mk = L.circleMarker(s.c, {
+      radius: 3 + Math.pow(v / 100, 2) * 15,
+      color: M.sel === n ? '#111' : '#fff', weight: M.sel === n ? 2 : 0.7,
+      fillColor: ac, fillOpacity: faded ? 0.06 : 0.2 + Math.pow(v / 100, 1.5) * 0.65,
+      interactive: !faded
+    }).addTo(M.markerLayer);
+    mk.on('click', () => selectStation(n));
+    M.markers[n] = mk;
+  }
+  renderMapTips();
+  $('mapLegend').innerHTML = `<span>● 크기·진하기 = ${M.mode === 'sv' ? 'Station Value' : 'Station Wealth'}</span><span>확대할수록 더 많은 역 이름·점수가 표시됩니다</span><span>역 ${names.length}개 · 자동 계산 (${esc(STN.meta.updatedAt)})</span>`;
+}
+
+/* 줌 레벨별 라벨 (§66·71 — 숫자 겹침 방지) */
+function renderMapTips() {
+  const M = mapState;
+  if (!M.lmap || !M.tipLayer) return;
+  M.tipLayer.clearLayers();
+  const z = M.lmap.getZoom();
+  const bounds = M.lmap.getBounds();
+  const topN = z < 10.5 ? 14 : z < 11.5 ? 34 : z < 12.5 ? 80 : z < 13.5 ? 200 : 999;
+  const cand = Object.keys(STN.stations)
+    .filter(n => STN.stations[n].c && bounds.contains(STN.stations[n].c))
+    .filter(n => !M.line || M.lineStations.has(n))
+    .sort((a, b) => metricOf(STN.stations[b]) - metricOf(STN.stations[a]))
+    .slice(0, topN);
+  if (M.sel && STN.stations[M.sel] && !cand.includes(M.sel)) cand.push(M.sel);
+  const showVal = z >= 12 || M.line;
+  for (const n of cand) {
+    const s = STN.stations[n];
+    const v = Math.round(metricOf(s));
+    L.tooltip({ permanent: true, direction: 'top', offset: [0, -6], className: 'stn-tip' + (v >= 85 ? ' hi' : ''), interactive: false })
+      .setLatLng(s.c).setContent(showVal ? `${n} ${v}` : n).addTo(M.tipLayer);
+  }
+}
+
+/* 폴백: 고정 SVG 개념도 (오프라인 등 Leaflet 불가 시) */
+function drawMapSVG() {
   const names = Object.keys(STN.stations).filter(n => STN.stations[n].c);
   const lats = names.map(n => STN.stations[n].c[0]), lngs = names.map(n => STN.stations[n].c[1]);
   const laMin = Math.min(...lats), laMax = Math.max(...lats), loMin = Math.min(...lngs), loMax = Math.max(...lngs);
-  const W = 700, kx = 0.793;   // cos(37.5°) 근사 — 경도 축척 보정
+  const W = 700, kx = 0.793;
   const H = Math.round(W * (laMax - laMin) / ((loMax - loMin) * kx));
   const pad = 26;
   const X = lng => pad + (lng - loMin) / (loMax - loMin) * (W - pad * 2);
   const Y = lat => pad + (laMax - lat) / (laMax - laMin) * (H - pad * 2);
-
   const lineOn = mapState.line;
   const lineStations = new Set();
   let paths = '';
@@ -965,14 +1124,12 @@ function drawMap() {
     if (hi) le.stations.forEach(s => lineStations.add(s));
     const pts = le.stations.filter(s => STN.stations[s] && STN.stations[s].c)
       .map(s => `${X(STN.stations[s].c[1]).toFixed(1)},${Y(STN.stations[s].c[0]).toFixed(1)}`).join(' ');
-    paths += `<polyline class="lpath ${hi ? 'hi' : ''}" stroke="${le.color}" points="${pts}"${le.loop ? '' : ''}></polyline>`;
+    paths += `<polyline class="lpath ${hi ? 'hi' : ''}" stroke="${le.color}" points="${pts}"></polyline>`;
   }
-
   const ranked = names.slice().sort((a, b) => metricOf(STN.stations[b]) - metricOf(STN.stations[a]));
   const labelSet = new Set(ranked.slice(0, 22));
   if (lineOn) [...lineStations].forEach(s => labelSet.add(s));
   if (mapState.sel) labelSet.add(mapState.sel);
-
   let dots = '';
   for (const n of ranked.slice().reverse()) {
     const s = STN.stations[n];
@@ -980,14 +1137,13 @@ function drawMap() {
     const x = X(s.c[1]).toFixed(1), y = Y(s.c[0]).toFixed(1);
     const rr = (2 + Math.pow(v / 100, 1.7) * 10).toFixed(1);
     const dim = lineOn && !lineStations.has(n);
-    const op = (0.25 + v / 100 * 0.72).toFixed(2);
     dots += `<g class="stn ${dim ? 'dim' : ''} ${mapState.sel === n ? 'sel' : ''}" data-st="${esc(n)}">
-      <circle cx="${x}" cy="${y}" r="${rr}" fill="var(--accent)" fill-opacity="${op}"></circle>
-      ${labelSet.has(n) && !dim ? `<text class="slabel ${v >= 70 ? 'hi' : ''}" x="${x}" y="${(y - rr - 2.5)}" text-anchor="middle">${esc(n)}${lineOn ? ' ' + Math.round(v) : ''}</text>` : ''}
+      <circle cx="${x}" cy="${y}" r="${rr}" fill="var(--accent)" fill-opacity="${(0.25 + v / 100 * 0.72).toFixed(2)}"></circle>
+      ${labelSet.has(n) && !dim ? `<text class="slabel ${v >= 85 ? 'hi' : ''}" x="${x}" y="${(y - rr - 2.5)}" text-anchor="middle">${esc(n)}${lineOn ? ' ' + Math.round(v) : ''}</text>` : ''}
     </g>`;
   }
   $('mapBox').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="역 가치 지도">${paths}${dots}</svg>`;
-  $('mapLegend').innerHTML = `<span>● 크기·진하기 = ${mapState.mode === 'sv' ? 'Station Value' : 'Station Wealth'}</span><span>좌표는 근사값(개념도)</span><span>역 ${names.length}개 · 자동 계산 (${esc(STN.meta.updatedAt)})</span>`;
+  $('mapLegend').innerHTML = `<span>● 크기·진하기 = ${mapState.mode === 'sv' ? 'Station Value' : 'Station Wealth'}</span><span>오프라인 개념도 모드</span>`;
   $('mapBox').querySelectorAll('.stn').forEach(g => g.onclick = () => selectStation(g.dataset.st));
 }
 
@@ -996,6 +1152,7 @@ function selectStation(name) {
   drawMap();
   const s = STN.stations[name];
   if (!s) return;
+  if (mapState.lmap && s.c) mapState.lmap.panTo(s.c, { animate: true });
   const total = Object.keys(STN.stations).length;
   const sb = (k, v) => `<div class="sb"><div class="k">${k}</div><div class="sbar"><i style="width:${Math.round(v)}%"></i></div><div class="v">${Math.round(v)}</div></div>`;
   // 한 정거장 비교
@@ -1041,20 +1198,30 @@ function renderLineCard() {
   if (!L) { $('lineCard').hidden = true; return; }
   const strengths = [];
   if (L.centersOnLine.length) strengths.push(`${L.centersOnLine.join('·')} 업무지 직접 연결`);
-  strengths.push(`상위 역 평균 ${L.top20} (${L.topStations.slice(0, 3).map(s => s.n).join('·')})`);
+  if (L.corridor) strengths.push(`Golden Corridor ${L.corridor.avg} — ${L.corridor.stations.slice(0, 4).join('·')} 고가치 벨트 관통`);
+  if (L.friction >= 90) strengths.push('짧은 배차·낮은 이용 마찰 (일상 교통 편의)');
   if (L.util >= 60) strengths.push('노선 전반의 네트워크 효용 높음');
   const weaknesses = [];
-  if (L.stdev >= 12) weaknesses.push(`전체 역의 가치 편차가 큼(±${L.stdev}) — 같은 노선이라도 역마다 프리미엄이 다름`);
+  if (L.stdev >= 16) weaknesses.push(`전체 역의 가치 편차가 큼(±${L.stdev}) — 같은 노선이라도 역마다 프리미엄이 다름`);
+  if (L.friction < 70) weaknesses.push(`이용 마찰 높음 — 배차 ${L.svc.headway}분${L.svc.fare ? ' · 별도요금' : ''}${L.svc.depth >= 3 ? ' · 깊은 역사(진입시간)' : ''} → 일상 이용 편의 감점`);
   if (L.avg < 45) weaknesses.push('노선 평균 접근성은 보통 이하 — 핵심 구간 위주로 평가 필요');
   if (!weaknesses.length) weaknesses.push('뚜렷한 구조적 약점 없음');
+  const corr = new Set((L.corridor && L.corridor.stations) || []);
+  const profile = (L.profile || []).map(p => `
+    <div class="pcol ${corr.has(p.n) ? 'corr' : ''}">
+      <div class="pbar"><i style="height:${Math.max(6, p.sv)}%"></i></div>
+      <div class="pv">${p.sv}</div><div class="pn">${esc(p.n)}</div>
+    </div>`).join('');
   $('lineCard').hidden = false;
   $('lineCard').innerHTML = `
     <h2><i style="width:10px;height:10px;border-radius:50%;background:${L.color};display:inline-block;margin-right:6px"></i>${esc(nm)} — 황금노선 지수 ${L.golden} / 100 <span style="font-size:12px;color:var(--muted)">(${LINEI.lines.findIndex(x => x.name === nm) + 1}위)</span></h2>
-    <p class="hint">전체 역 평균 ${L.avg} · 상위 20% 역 평균 ${L.top20} · 네트워크 효용 ${L.util} · ${L.count}개 역 — 역 점수의 합이 아니라 가중 구조로 계산합니다.</p>
+    <p class="hint">Golden Corridor ${L.corridor ? L.corridor.avg : '—'} · 전체 역 평균 ${L.avg} · 운행 편의(배차 ${L.svc.headway}분${L.svc.fare ? '·별도요금' : ''}${L.svc.depth >= 3 ? '·심도 깊음' : ''}) ${L.friction} · ${L.count}개 역 — 역 점수의 합이 아니라, 노선이 관통하는 고가치 벨트 중심으로 계산합니다.</p>
     <div class="factors">
       <div class="fbox up"><div class="fh">강점</div><ul>${strengths.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
       <div class="fbox down"><div class="fh">약점</div><ul>${weaknesses.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
-    </div>`;
+    </div>
+    <h3 class="mini-h">역별 가치 프로필 — <span style="color:var(--accent)">붉은 구간 = Golden Corridor</span> (${esc((L.corridor ? L.corridor.stations : []).slice(0, 3).join('·'))}${L.corridor && L.corridor.stations.length > 3 ? '…' : ''})</h3>
+    <div class="profile-strip">${profile}</div>`;
 }
 
 function renderRank() {

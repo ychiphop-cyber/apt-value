@@ -86,8 +86,84 @@ const AptEngine = (() => {
     };
   }
 
+  /* ═══════════ 시장 기준가 (V3 §7~9) ═══════════
+     최근 실거래 1건 ≠ 시장가치. 기간창(90→180→365일) 동일평형 거래의 가중중앙값을 쓰고,
+     이상거래(o)·저층은 저가중. 최근 1건은 '최근 실거래'로만 별도 표시한다. */
+  function dateOf(t) {
+    const [y, m] = t.ym.split('-').map(Number);
+    return Date.UTC(y, m - 1, Math.min(28, t.d || 15));
+  }
+  function marketReference(area, input, CFG) {
+    const M = CFG.marketRef;
+    const [ay, am] = input.asOfYM.split('-').map(Number);
+    const asOf = Date.UTC(ay, am, 0);   // 기준월 말일
+    const all = (area.trades || []).map(t => ({ ...t, days: Math.max(0, Math.round((asOf - dateOf(t)) / 86400000)) }))
+      .sort((a, b) => a.days - b.days);
+    if (!all.length) return null;
+    let win = null, windowDays = null;
+    for (const wd of M.windowsDays) {
+      const w = all.filter(t => t.days <= wd);
+      if (w.length >= M.minComps) { win = w; windowDays = wd; break; }
+    }
+    if (!win) { win = all.filter(t => t.days <= M.windowsDays[M.windowsDays.length - 1]); windowDays = M.windowsDays[M.windowsDays.length - 1]; }
+    if (!win.length) { win = all.slice(0, 5); windowDays = null; }
+    const items = win.map(t => ({
+      v: t.price,
+      w: Math.pow(0.5, t.days / M.recencyHalfLifeDays)
+        * (t.o ? M.outlierWeight : 1)
+        * (t.floor > 0 && t.floor <= M.lowFloorMax ? M.lowFloorWeight : 1),
+      t
+    }));
+    const med = weightedMedian(items);
+    const p25 = weightedPercentile(items, 0.25), p75 = weightedPercentile(items, 0.75);
+    const half = Math.max(M.minHalfSpread * med, (p75 - p25) / 2);
+    const latest = all[0];
+    return {
+      med, low: med - half, high: med + half,
+      windowDays, extended: windowDays != null && windowDays > M.windowsDays[0],
+      n: win.length, nOutlier: win.filter(t => t.o).length,
+      latest: { date: `${latest.ym}-${String(latest.d || 15).padStart(2, '0')}`, price: latest.price, floor: latest.floor, outlier: !!latest.o, daysAgo: latest.days },
+      dispersion: med > 0 ? Math.max(0, (p75 - p25) / med / 2) : 0.04
+    };
+  }
+
+  /* ═══════════ 미래가치 엔진 (V3 §24~28) — 5축 → g 시나리오 ═══════════ */
+  function engineFuture(cx, supplyE, hedonic, option, CFG) {
+    const F = CFG.future;
+    const comps = {};
+    const edu = cx.education || {};
+    comps.demand = clamp(
+      0.5 * interp(edu.age3049 ?? 0.29, [[0.24, 45], [0.27, 58], [0.30, 72], [0.33, 84], [0.36, 92]]) +
+      0.25 * (F.jeonseTrendScore[(cx.supply || {}).jeonseTrend] ?? 60) +
+      0.25 * (F.tierPrior[cx.regionTier] ?? 45), 0, 100);
+    comps.scarcity = clamp(interp(supplyE.combined, F.scarcityCurve.map(p => [p.x, p.s])) - ((cx.supply || {}).unsoldLevel >= 4 ? 8 : 0), 0, 100);
+    const ftText = (cx.location || {}).futureTransit || '';
+    let ts = F.transitNoneScore;
+    for (const st of F.transitStages) if (new RegExp(st.re).test(ftText)) { ts = st.s; break; }
+    comps.transitChange = ts;
+    comps.eduPref = hedonic.subs.education != null ? hedonic.subs.education : null;   // 미확인이면 축 제외
+    comps.redevOption = F.optionGradeScore[option.gradeIdx] ?? 45;
+
+    let sum = 0, wsum = 0;
+    const W = F.weights;
+    const keyMap = { demand: 'demand', scarcity: 'scarcity', transitChange: 'transitChange', eduPref: 'eduPref', redevOption: 'redevOption' };
+    for (const k of Object.keys(W)) {
+      const v = comps[keyMap[k]];
+      if (v == null) continue;
+      sum += W[k] * v; wsum += W[k];
+    }
+    const score = wsum > 0 ? clamp(sum / wsum, 0, 100) : 50;
+    const gPrior = CFG.financial.longTermRentGrowth[cx.regionTier] ?? CFG.financial.longTermRentGrowth['기타'];
+    const gBase = gPrior + clamp((score - 60) / 40, -1, 1) * F.gSwing;
+    return {
+      score: Math.round(score), comps,
+      g: { low: gBase - F.gBandDown, base: gBase, high: gBase + F.gBandUp },
+      gPrior
+    };
+  }
+
   /* ═══════════ Engine B · 금융·임대 내재가치 ═══════════ */
-  function engineFinancial(cx, area, input, CFG, currentPrice) {
+  function engineFinancial(cx, area, input, CFG, currentPrice, gScen) {
     const F = CFG.financial;
     const rateDelta = input.overrides.rateDelta || 0;
     const jeonse = (input.overrides.jeonse != null ? input.overrides.jeonse : area.jeonse) * (input.overrides.jeonseMul || 1);
@@ -101,22 +177,72 @@ const AptEngine = (() => {
       R = jeonse * conv;
       rSourceText = `전세 ${round1(jeonse)}억 × 시장 전월세전환율 ${(conv * 100).toFixed(1)}%`;
     }
-    // 요구수익률 r (합성) + 장기 임대가치 성장률 g
+    // 요구수익률 r (합성)
     const r = F.altReturn + F.liquidityPremium + F.assetRiskPremium + (F.regionRiskPremium[cx.regionTier] ?? F.regionRiskPremium['기타']) + rateDelta;
-    const g = F.longTermRentGrowth[cx.regionTier] ?? F.longTermRentGrowth['기타'];
-    // 고든 성장모형 가드: r-g가 비정상적으로 근접하면 유한 DCF로 대체
-    let value, mode;
-    if (r - g >= F.minSpread) { value = R / (r - g); mode = 'gordon'; }
-    else {
+    // g 시나리오: 미래가치 엔진 결과 (없으면 지역 prior 단일값)
+    const gPrior = F.longTermRentGrowth[cx.regionTier] ?? F.longTermRentGrowth['기타'];
+    const gs = gScen || { low: gPrior - 0.005, base: gPrior, high: gPrior + 0.004 };
+    const valueAt = g => {
+      if (r - g >= F.minSpread) return { v: R / (r - g), mode: 'gordon' };
       let pv = 0;
       for (let t = 1; t <= F.dcfYears; t++) pv += R * Math.pow(1 + g, t - 1) / Math.pow(1 + r, t);
-      value = pv; mode = 'dcf';
-    }
+      return { v: pv, mode: 'dcf' };
+    };
+    const base = valueAt(gs.base);
+    const fsv = { low: valueAt(gs.low).v, base: base.v, high: valueAt(gs.high).v };
     // 역산: 현재가 유지에 필요한 성장률
     const impliedG = currentPrice > 0 ? r - R / currentPrice : null;
     const jeonseRatio = currentPrice > 0 ? jeonse / currentPrice : null;
     const equity = currentPrice - jeonse;
-    return { R, r, g, conv, mode, value, impliedG, jeonse, jeonseRatio, equity, rSourceText };
+    return { R, r, g: gs.base, gScen: gs, conv, mode: base.mode, value: base.v, fsv, impliedG, jeonse, jeonseRatio, equity, rSourceText };
+  }
+
+  /* 금융 지지력 등급 (V3 §21) */
+  function financialGrade(fin, currentPrice, CFG) {
+    const G = CFG.financialGrade;
+    const ratio = currentPrice > 0 ? fin.fsv.base / currentPrice : 0;
+    let i = G.bands.length;
+    for (let k = 0; k < G.bands.length; k++) if (ratio >= G.bands[k]) { i = k; break; }
+    return { ratio, label: G.labels[i], idx: i };
+  }
+
+  /* 미래 기대 반영도 (V3 §21·29): 역산 g* vs 시나리오 밴드 */
+  function expectationGrade(fin, CFG) {
+    const L = CFG.verdicts.expectationLabels;
+    const g = fin.impliedG, s = fin.gScen;
+    if (g == null) return { label: L[1], idx: 1 };
+    if (g < s.low) return { label: L[0], idx: 0 };
+    if (g <= s.base) return { label: L[1], idx: 1 };
+    if (g <= s.high) return { label: L[2], idx: 2 };
+    return { label: L[3], idx: 3 };
+  }
+
+  /* 시장 상대평가 (V3 §21): 현재가 vs 시장 기준가 범위 */
+  function marketVerdict(currentPrice, ref, CFG) {
+    const T = CFG.verdicts.marketTolerance, L = CFG.verdicts.marketLabels;
+    if (!ref) return { label: L[1], idx: 1 };
+    if (currentPrice < ref.low * (1 - T)) return { label: L[0], idx: 0 };
+    if (currentPrice > ref.high * (1 + T)) return { label: L[2], idx: 2 };
+    return { label: L[1], idx: 1 };
+  }
+
+  /* 장기 경쟁력 Score (V3 §19) — 미확인 카테고리 제외·재정규화 */
+  function structuralScore(hedonic, future, CFG) {
+    const W = CFG.structural.weights;
+    const comps = {
+      transit: hedonic.subs.transport, job: hedonic.subs.job, education: hedonic.subs.education,
+      product: hedonic.subs.product, nature: hedonic.subs.nature, life: hedonic.subs.life,
+      scarcity: future.comps.scarcity, future: 0.6 * future.comps.transitChange + 0.4 * future.comps.redevOption
+    };
+    let sum = 0, wsum = 0;
+    const used = {};
+    for (const k of Object.keys(W)) {
+      if (comps[k] == null || !isFinite(comps[k])) continue;
+      sum += W[k] * comps[k]; wsum += W[k]; used[k] = Math.round(comps[k]);
+    }
+    const score = wsum > 0 ? clamp(sum / wsum, 0, 100) : 50;
+    const band = CFG.structural.bands.find(b => score >= b.min) || CFG.structural.bands[CFG.structural.bands.length - 1];
+    return { score: Math.round(score), band: band.label, comps: used, excluded: Object.keys(W).filter(k => comps[k] == null) };
   }
 
   /* 전세지지력 (5등급) */
@@ -218,9 +344,9 @@ const AptEngine = (() => {
       const near = JOBS.centers.filter(c => (transit.jobMinutes[c.id] ?? 999) <= 30).map(c => `${c.name} ${transit.jobMinutes[c.id]}분`);
       notes.job = near.length ? [`${transit.primary.st} 기준 30분 내 업무지: ${near.join(' · ')}`] : ['30분 내 주요 업무지 없음'];
     } else if (loc.unknownTransport) {
-      transport = CFG.station ? CFG.station.unknownTransportScore : 55;
-      notes.transport = ['역거리 미확인 — 중립 처리(신뢰도 하락)'];
-      gaps.push('역거리 미확인 — 교통 중립 처리');
+      transport = null;   // §12: 미확인은 중립값으로 몰래 대체하지 않는다 — 평가 제외 + 재정규화
+      notes.transport = ['역거리 미확인 — 교통 항목 제외(신뢰도 하락)'];
+      gaps.push('역거리 미확인 — 교통 평가 제외');
       let ja0 = 0;
       for (const c of JOBS.centers) ja0 += c.jobsIndex * Math.exp(-((loc.jobMinutes || {})[c.id] ?? 75) / H.jobDecayTau);
       job = clamp(100 * ja0 / H.jobRefAccess, 0, 100);
@@ -247,79 +373,96 @@ const AptEngine = (() => {
       job = clamp(100 * ja / H.jobRefAccess, 0, 100);
       notes.job = jN.length ? [`30분 내 업무지: ${jN.join(' · ')}`] : ['30분 내 주요 업무지 없음'];
     }
-    transport = clamp(transport, 0, 100);
+    if (transport != null) transport = clamp(transport, 0, 100);
     job = clamp(job, 0, 100);
 
-    // 교육 (4개 하위 모듈)
-    const elemBase = edu.elemM <= 300 ? 95 : edu.elemM <= 500 ? 85 : edu.elemM <= 800 ? 72 : 55;
-    const school = clamp(0.45 * (elemBase + (edu.chopuma ? 3 : 0)) + 0.55 * [40, 55, 70, 84, 95][(edu.middlePref || 3) - 1], 0, 100);
-    const hub = edu.inHub && edu.hubId ? HUBS.hubs.find(h => h.id === edu.hubId) : null;
-    const academy = hub ? hub.initial_strength
-      : (E.localAcademyScore[String(edu.localAcademyLevel || 2)] ?? 50);
-    const accessCands = [];
-    if (hub) accessCands.push({ v: hub.initial_strength, tier: hub.tier });
-    for (const ha of (edu.hubAccess || [])) {
-      const h2 = HUBS.hubs.find(h => h.id === ha.hubId);
-      if (!h2) continue;
-      const dec = E.accessDecay.find(d => ha.min <= d.maxMin);
-      accessCands.push({ v: h2.initial_strength * (dec ? dec.factor : 0.25), tier: h2.tier });
+    // 교육 (4개 하위 모듈) — 정보 전체 미확인이면 항목 제외 + 재정규화 (§12)
+    let eduScore = null, eduCoeff = 0, school = null, academy = null, access = null, demand = null, hub = null;
+    if (edu) {
+      const elemBase = edu.elemM <= 300 ? 95 : edu.elemM <= 500 ? 85 : edu.elemM <= 800 ? 72 : 55;
+      school = clamp(0.45 * (elemBase + (edu.chopuma ? 3 : 0)) + 0.55 * [40, 55, 70, 84, 95][(edu.middlePref || 3) - 1], 0, 100);
+      hub = edu.inHub && edu.hubId ? HUBS.hubs.find(h => h.id === edu.hubId) : null;
+      academy = hub ? hub.initial_strength
+        : (E.localAcademyScore[String(edu.localAcademyLevel || 2)] ?? 50);
+      const accessCands = [];
+      if (hub) accessCands.push({ v: hub.initial_strength, tier: hub.tier });
+      for (const ha of (edu.hubAccess || [])) {
+        const h2 = HUBS.hubs.find(h => h.id === ha.hubId);
+        if (!h2) continue;
+        const dec = E.accessDecay.find(d => ha.min <= d.maxMin);
+        accessCands.push({ v: h2.initial_strength * (dec ? dec.factor : 0.25), tier: h2.tier });
+      }
+      if (!accessCands.length) accessCands.push({ v: academy * 0.7, tier: 4 });
+      accessCands.sort((a, b) => b.v - a.v);
+      access = clamp(accessCands[0].v, 0, 100);
+      demand = interp(edu.age3049 || 0.28, [[0.24, 45], [0.27, 58], [0.30, 72], [0.33, 84], [0.36, 92]]);
+      demand += edu.studentTrend === 'up' ? 5 : edu.studentTrend === 'down' ? -7 : 0;
+      demand = clamp(demand, 0, 100);
+      eduScore = E.subWeights.school * school + E.subWeights.academy * academy + E.subWeights.access * access + E.subWeights.demand * demand;
+      const coeffTier = hub ? hub.tier : Math.min(4, (accessCands[0].tier || 4) + 1);
+      eduCoeff = E.coefficientByTier[String(coeffTier)] ?? 0.55;
+      notes.education = [
+        `학교환경 ${Math.round(school)} · 학원가 ${Math.round(academy)} · 교육접근성 ${Math.round(access)} · 수요지속성 ${Math.round(demand)}`,
+        hub ? `${hub.hub_name} 허브 생활권 (계수 ×${eduCoeff})` : `주요 교육 허브 비생활권 (계수 ×${eduCoeff})`
+      ];
+    } else {
+      notes.education = ['교육 정보 미확인 — 평가 제외(신뢰도 하락)'];
+      gaps.push('교육 정보 미확인 — 평가 제외');
     }
-    if (!accessCands.length) accessCands.push({ v: academy * 0.7, tier: 4 });
-    accessCands.sort((a, b) => b.v - a.v);
-    const access = clamp(accessCands[0].v, 0, 100);
-    let demand = interp(edu.age3049 || 0.28, [[0.24, 45], [0.27, 58], [0.30, 72], [0.33, 84], [0.36, 92]]);
-    demand += edu.studentTrend === 'up' ? 5 : edu.studentTrend === 'down' ? -7 : 0;
-    demand = clamp(demand, 0, 100);
-    const eduScore = E.subWeights.school * school + E.subWeights.academy * academy + E.subWeights.access * access + E.subWeights.demand * demand;
-    // 지역 교육 계수 (대치 500m ≠ 일반도시 500m)
-    const coeffTier = hub ? hub.tier : Math.min(4, (accessCands[0].tier || 4) + 1);
-    const eduCoeff = E.coefficientByTier[String(coeffTier)] ?? 0.55;
-    notes.education = [
-      `학교환경 ${Math.round(school)} · 학원가 ${Math.round(academy)} · 교육접근성 ${Math.round(access)} · 수요지속성 ${Math.round(demand)}`,
-      hub ? `${hub.hub_name} 허브 생활권 (계수 ×${eduCoeff})` : `주요 교육 허브 비생활권 (계수 ×${eduCoeff})`
+
+    // 생활편의 — 미확인이면 제외 (10분 기본값 폐기, §56)
+    let lifeScore = null;
+    if (life) {
+      lifeScore = clamp(
+        0.35 * interp(life.martMin, [[5, 90], [10, 80], [15, 68], [30, 55]]) +
+        0.25 * interp(life.deptMin, [[5, 92], [10, 84], [15, 74], [25, 62], [40, 50]]) +
+        0.20 * interp(life.hospitalMin, [[5, 90], [10, 80], [15, 70], [25, 58], [40, 48]]) +
+        0.20 * [40, 55, 68, 80, 92][(life.streetLevel || 3) - 1], 0, 100);
+      notes.life = [`마트 ${life.martMin}분 · 백화점 ${life.deptMin}분 · 병원 ${life.hospitalMin}분`];
+    } else { notes.life = ['생활편의 미확인 — 평가 제외']; gaps.push('생활편의 미확인 — 평가 제외'); }
+
+    // 자연환경 — 미확인이면 제외 (한강 접근 ≠ 조망)
+    let nature = null;
+    if (nat) {
+      const parkComp = nat.bigPark ? interp(nat.parkMin, [[5, 92], [10, 84], [15, 72], [30, 55]])
+        : interp(nat.parkMin, [[5, 80], [10, 72], [15, 62], [30, 50]]);
+      let riverComp = nat.hanRiver ? interp(nat.riverMin, [[10, 95], [15, 88], [25, 75], [40, 60]])
+        : interp(nat.riverMin, [[10, 72], [20, 60], [40, 50]]);
+      const natN = [`공원 ${nat.parkMin}분${nat.bigPark ? ' (대형)' : ''}`];
+      if (nat.hanRiver) natN.push(`한강 접근 ${nat.riverMin}분`);
+      if (nat.hanRiverView === true) { riverComp = clamp(riverComp + 8, 0, 100); natN.push('한강 조망 세대'); }
+      else if (nat.hanRiverView == null && nat.hanRiver) { gaps.push('한강 조망 데이터 없음 — 평가 제외'); }
+      nature = clamp(0.5 * parkComp + 0.35 * riverComp + 0.15 * (nat.forest ? 80 : 55), 0, 100);
+      notes.nature = natN;
+    } else { notes.nature = ['자연환경 미확인 — 평가 제외']; gaps.push('자연환경 미확인 — 평가 제외'); }
+
+    // 상품가치 — 미확인 구성요소는 제외하고 가중치 재정규화 (700세대 등 임의 기본값 폐기, §10·12·50)
+    const age = cx.builtYear ? input.asOfYear - cx.builtYear : null;
+    const pcomps = [
+      { w: 0.30, s: age != null ? interp(age, [[3, 95], [7, 88], [12, 80], [18, 70], [25, 60], [32, 52], [45, 46]]) : null, gap: '준공연도 미확인' },
+      { w: 0.24, s: cx.households > 0 ? clamp(35 + 14 * Math.log(cx.households / 100), 40, 95) : null, gap: '세대수 미확인' },
+      { w: 0.15, s: cx.brandTier ? [92, 82, 70, 58][cx.brandTier - 1] : null, gap: '브랜드 미확인' },
+      { w: 0.22, s: cx.parkingRatio != null ? interp(cx.parkingRatio, [[0.4, 38], [0.6, 50], [0.8, 62], [1.0, 75], [1.2, 85], [1.5, 95]]) : null, gap: '주차 미확인' },
+      { w: 0.09, s: cx.rentalShare != null ? (cx.rentalShare >= 0.15 ? 62 : cx.rentalShare >= 0.08 ? 74 : 85) : null, gap: null }
     ];
-
-    // 생활편의
-    const lifeScore = clamp(
-      0.35 * interp(life.martMin, [[5, 90], [10, 80], [15, 68], [30, 55]]) +
-      0.25 * interp(life.deptMin, [[5, 92], [10, 84], [15, 74], [25, 62], [40, 50]]) +
-      0.20 * interp(life.hospitalMin, [[5, 90], [10, 80], [15, 70], [25, 58], [40, 48]]) +
-      0.20 * [40, 55, 68, 80, 92][(life.streetLevel || 3) - 1], 0, 100);
-    notes.life = [`마트 ${life.martMin}분 · 백화점 ${life.deptMin}분 · 병원 ${life.hospitalMin}분`];
-
-    // 자연환경 (한강 접근 ≠ 한강 조망 — 조망 데이터 없으면 제외)
-    const parkComp = nat.bigPark ? interp(nat.parkMin, [[5, 92], [10, 84], [15, 72], [30, 55]])
-      : interp(nat.parkMin, [[5, 80], [10, 72], [15, 62], [30, 50]]);
-    let riverComp = nat.hanRiver ? interp(nat.riverMin, [[10, 95], [15, 88], [25, 75], [40, 60]])
-      : interp(nat.riverMin, [[10, 72], [20, 60], [40, 50]]);
-    const natN = [`공원 ${nat.parkMin}분${nat.bigPark ? ' (대형)' : ''}`];
-    if (nat.hanRiver) natN.push(`한강 접근 ${nat.riverMin}분`);
-    if (nat.hanRiverView === true) { riverComp = clamp(riverComp + 8, 0, 100); natN.push('한강 조망 세대'); }
-    else if (nat.hanRiverView == null && nat.hanRiver) { gaps.push('한강 조망 데이터 없음 — 평가 제외'); }
-    const nature = clamp(0.5 * parkComp + 0.35 * riverComp + 0.15 * (nat.forest ? 80 : 55), 0, 100);
-    notes.nature = natN;
-
-    // 상품가치 (연식 비선형 · 세대수 로그 · 브랜드 제한 · 주차 · 임대비중 양면)
-    const age = input.asOfYear - cx.builtYear;
-    const ageScore = interp(age, [[3, 95], [7, 88], [12, 80], [18, 70], [25, 60], [32, 52], [45, 46]]);
-    const hhScore = clamp(35 + 14 * Math.log((cx.households || 300) / 100), 40, 95);
-    const brandScore = [92, 82, 70, 58][(cx.brandTier || 3) - 1];
-    const parkingScore = interp(cx.parkingRatio ?? 0.9, [[0.4, 38], [0.6, 50], [0.8, 62], [1.0, 75], [1.2, 85], [1.5, 95]]);
-    const share = cx.rentalShare || 0;
-    const rentalScore = share >= 0.15 ? 62 : share >= 0.08 ? 74 : 85;
-    const product = clamp(0.30 * ageScore + 0.24 * hhScore + 0.15 * brandScore + 0.22 * parkingScore + 0.09 * rentalScore, 0, 100);
+    let pSum = 0, pW = 0;
+    const pGaps = [];
+    for (const c of pcomps) { if (c.s == null) { if (c.gap) pGaps.push(c.gap); continue; } pSum += c.w * c.s; pW += c.w; }
+    const product = pW > 0.25 ? clamp(pSum / pW, 0, 100) : null;
+    for (const g of pGaps) gaps.push(`${g} — 상품가치에서 제외`);
     notes.product = [
-      `${cx.builtYear}년 준공 (${age}년차) · ${(cx.households || 0).toLocaleString()}세대 · 주차 ${cx.parkingRatio ?? '?'}대/세대`,
-      ...(age >= 26 ? ['구축 연식은 상품성에서 감점하되, 정비사업 가능성은 미래 옵션가치에서 별도 평가'] : []),
-      ...(share >= 0.08 ? [`임대비중 ${(share * 100).toFixed(0)}% — 실거주 안정성은 감점, 임대수요 강도는 별도 판단`] : [])
+      `${cx.builtYear ? cx.builtYear + '년 준공 (' + age + '년차)' : '준공연도 미확인'} · ${cx.households > 0 ? cx.households.toLocaleString() + '세대' : '세대수 미확인'} · 주차 ${cx.parkingRatio ?? '미확인'}`,
+      ...(pGaps.length ? [`미확인 항목(${pGaps.join('·')})은 제외하고 나머지 가중치로 재계산`] : []),
+      ...(age >= 26 ? ['구축 연식은 상품성에서 감점하되, 정비사업 가능성은 미래 옵션가치에서 별도 평가'] : [])
     ];
 
     const subs = { transport, job, education: eduScore, life: lifeScore, nature, product };
 
-    // 가격 반영: 카테고리별 캡 × (점수−기준)/분모, 교육은 지역계수 곱, 총합 클램프
+    // 가격 반영: 카테고리별 캡 × (점수−기준)/분모 — 미확인(null) 카테고리는 조정 없음
     const adj = {};
     let total = 0;
     for (const k of Object.keys(H.categoryCaps)) {
+      if (subs[k] == null) { adj[k] = 0; continue; }
       let a = H.categoryCaps[k] * (subs[k] - H.baselineScore) / H.scoreToAdjDivisor;
       a = clamp(a, -H.categoryCaps[k], H.categoryCaps[k]);
       if (k === 'education') a *= eduCoeff;
@@ -419,18 +562,28 @@ const AptEngine = (() => {
   /* ═══════════ 3대 점수 ═══════════ */
   function livingScore(hed, CFG) {
     const W = CFG.scores.living;
-    let s = 0; for (const k of Object.keys(W)) s += W[k] * hed.subs[k];
-    return clamp(s, 0, 100);
+    let s = 0, w = 0;
+    for (const k of Object.keys(W)) {
+      if (hed.subs[k] == null) continue;   // 미확인 카테고리 제외 + 재정규화 (§12)
+      s += W[k] * hed.subs[k]; w += W[k];
+    }
+    return w > 0 ? clamp(s / w, 0, 100) : 50;
   }
 
   function investScore(cx, hed, sup, opt, support, CFG) {
     const W = CFG.scores.invest;
     const tierScore = { '서울핵심': 88, '서울': 78, '수도권핵심': 72, '수도권': 60, '지방광역': 52, '기타': 46 }[cx.regionTier] ?? 50;
-    const hhScore = clamp(35 + 14 * Math.log((cx.households || 300) / 100), 40, 95);
-    const scarcity = clamp(0.4 * hhScore + 0.25 * [92, 82, 70, 58][(cx.brandTier || 3) - 1] + 0.35 * tierScore + (opt.gradeIdx <= 1 ? 5 : 0), 0, 100);
+    // 희소성: 미확인 구성요소는 제외·재정규화
+    const sc = [
+      [0.4, cx.households > 0 ? clamp(35 + 14 * Math.log(cx.households / 100), 40, 95) : null],
+      [0.25, cx.brandTier ? [92, 82, 70, 58][cx.brandTier - 1] : null],
+      [0.35, tierScore]
+    ].filter(x => x[1] != null);
+    const scW = sc.reduce((a, x) => a + x[0], 0);
+    const scarcity = clamp(sc.reduce((a, x) => a + x[0] * x[1], 0) / scW + (opt.gradeIdx <= 1 ? 5 : 0), 0, 100);
     let future = [88, 74, 60, 48][opt.gradeIdx];
     if (cx.location.futureTransit && /확정|공사/.test(cx.location.futureTransit)) future = clamp(future + 6, 0, 100);
-    const location = clamp(0.55 * hed.subs.job + 0.45 * hed.subs.transport, 0, 100);
+    const location = hed.subs.transport != null ? clamp(0.55 * hed.subs.job + 0.45 * hed.subs.transport, 0, 100) : clamp(hed.subs.job, 0, 100);
     const liquidity = [30, 45, 60, 75, 88][(cx.supply.txVolumeLevel || 3) - 1];
     const subs = { jeonseSupport: support.score, supplyDemand: sup.score, scarcity, future, location, liquidity };
     let s = 0; for (const k of Object.keys(W)) s += W[k] * subs[k];
@@ -455,9 +608,12 @@ const AptEngine = (() => {
   }
 
   /* ═══════════ 신뢰도 ═══════════ */
-  function confidence(market, disagreement, fillRate, manualCount, CFG) {
+  function confidence(market, disagreement, fillRate, manualCount, CFG, marketRef) {
     const C = CFG.confidence.penalties, penalties = [];
     let s = 100;
+    if (!marketRef) { s -= 15; penalties.push('시장 기준가 산출 불가 — 비교거래 폴백'); }
+    else if (marketRef.windowDays > 180) { s -= 10; penalties.push(`거래 부족으로 기준가 기간 ${marketRef.windowDays}일로 확장`); }
+    else if (marketRef.windowDays > 90) { s -= 5; penalties.push(`거래 부족으로 기준가 기간 ${marketRef.windowDays}일로 확장`); }
     if (market.compCount < 3) { s -= C.compsUnder3; penalties.push(`동일평형 비교거래 ${market.compCount}건 (3건 미만)`); }
     else if (market.compCount < 6) { s -= C.compsUnder6; penalties.push(`동일평형 비교거래 ${market.compCount}건 (6건 미만)`); }
     if (market.latestMonths > 12) { s -= C.latestOver12mo; penalties.push('최근 12개월 내 거래 없음'); }
@@ -501,16 +657,17 @@ const AptEngine = (() => {
     if (!up.length) up.push('뚜렷한 프리미엄 요인 없음 — 가격 부담이 낮은 편인지 확인');
     if (!down.length) down.push('뚜렷한 하방 요인 없음');
 
-    // 상대적 가치 기여도 (평균적 아파트 60점 대비, 개념적 지표)
+    // 상대적 가치 기여도 (평균적 아파트 60점 대비, 개념적 지표 — 미확인 카테고리 제외)
+    const mv = res.marketRef ? res.marketRef.med : res.market.value;
     const contrib = [
-      { k: '금융·임대 지지력', v: clamp((fin.value / res.market.value - 1) * 100, -40, 40) },
-      { k: '교통·직주 프리미엄', v: clamp((0.5 * (sub.transport + sub.job) - 60) * 0.9, -40, 40) },
-      { k: '교육 프리미엄', v: clamp((sub.education - 60) * 0.9 * hed.eduDetail.eduCoeff, -40, 40) },
-      { k: '생활·자연환경', v: clamp((0.5 * (sub.life + sub.nature) - 60) * 0.9, -40, 40) },
-      { k: '상품성·희소성', v: clamp((0.5 * (sub.product + scores.invest.subs.scarcity) - 60) * 0.9, -40, 40) },
+      { k: '금융·임대 지지력', v: clamp((fin.value / mv - 1) * 100, -40, 40) },
+      sub.transport != null ? { k: '교통·직주 프리미엄', v: clamp((0.5 * (sub.transport + sub.job) - 60) * 0.9, -40, 40) } : null,
+      sub.education != null ? { k: '교육 프리미엄', v: clamp((sub.education - 60) * 0.9 * hed.eduDetail.eduCoeff, -40, 40) } : null,
+      (sub.life != null && sub.nature != null) ? { k: '생활·자연환경', v: clamp((0.5 * (sub.life + sub.nature) - 60) * 0.9, -40, 40) } : null,
+      sub.product != null ? { k: '상품성·희소성', v: clamp((0.5 * (sub.product + scores.invest.subs.scarcity) - 60) * 0.9, -40, 40) } : null,
       { k: '수급 구조', v: clamp((sup.score - 60) * 0.9, -40, 40) },
       { k: '미래 기대(정비·교통)', v: clamp([30, 18, 5, 0][opt.gradeIdx] + (cx.location.futureTransit && /확정|공사/.test(cx.location.futureTransit) ? 8 : 0), -40, 40) }
-    ];
+    ].filter(Boolean);
 
     // 조건부 해석
     const interp2 = [];
@@ -539,7 +696,7 @@ const AptEngine = (() => {
 
     /* 진단형 문장 4종 — 계산 결과(JSON)만으로 template 생성, AI 불필요 */
     const catNames = { transport: '교통', job: '직주근접', education: '교육', life: '생활편의', nature: '자연환경', product: '상품성' };
-    const ranked = Object.entries(sub).sort((a, b) => b[1] - a[1]);
+    const ranked = Object.entries(sub).filter(([, v]) => v != null).sort((a, b) => b[1] - a[1]);
     const top2 = ranked.slice(0, 2).filter(([, v]) => v >= 65);
     const coreBits = [];
     for (const [k] of top2) {
@@ -581,7 +738,34 @@ const AptEngine = (() => {
     if (fin.impliedG != null && fin.impliedG > fin.g) watchBits.push('금리 방향');
     const watch = `앞으로는 ${watchBits.join(', ')}이 이 단지의 가격·투자매력도에 가장 큰 영향을 줄 가능성이 높습니다.`;
 
-    return { up, down, contrib, interpretation: interp2, diagnosis: { core, support: supportSentence, weakness, watch } };
+    /* ── V3: 한 문장 요약(§59) + 가격을 만드는 핵심요인(§60) ── */
+    const V = res.verdicts, ST = res.structural, FU = res.future;
+    const driverPool = [];
+    if (sub.transport != null && sub.transport >= 70) driverPool.push([sub.transport, res.transit ? `${res.transit.primary.st} 등 강한 역 접근성` : '교통 접근성']);
+    if (sub.job != null && sub.job >= 70) driverPool.push([sub.job, '강남·핵심 업무지 접근성']);
+    if (sub.education != null && sub.education >= 74) driverPool.push([sub.education, hed.eduDetail.hubName ? `${hed.eduDetail.hubName} 교육환경` : '교육환경']);
+    if (sub.product != null && sub.product >= 74) driverPool.push([sub.product, '신축·대단지 상품성']);
+    if (sub.nature != null && sub.nature >= 78) driverPool.push([sub.nature, '한강·녹지 환경']);
+    if (FU && FU.comps.scarcity >= 72) driverPool.push([FU.comps.scarcity, '공급 희소성']);
+    if (support.gradeIdx <= 1) driverPool.push([support.score, '강한 전세수요']);
+    if (opt.gradeIdx <= 1) driverPool.push([80, `정비사업 기대(${opt.label})`]);
+    driverPool.sort((a, b) => b[0] - a[0]);
+    const drivers = driverPool.slice(0, 4).map(d => d[1]);
+
+    let oneLiner = '';
+    if (V) {
+      const mPart = V.market.idx === 0 ? '현재 가격은 최근 실거래 대비 낮은 편이고'
+        : V.market.idx === 2 ? '현재 가격은 최근 실거래 범위보다 높지만'
+        : '현재 가격은 최근 실거래 기준 적정 범위이고';
+      const fPart = V.financial.idx >= 2
+        ? `금융·임대 수익만으로는 가격의 약 ${Math.round(V.financial.ratio * 100)}%만 설명됩니다`
+        : `전세·금리 기준으로도 가격의 약 ${Math.round(V.financial.ratio * 100)}%가 지지됩니다`;
+      const dPart = drivers.length ? `다만 ${drivers.slice(0, 3).join(', ')}이 나머지 프리미엄을 상당 부분 정당화합니다.` : '구조적 프리미엄 요인은 뚜렷하지 않습니다.';
+      const ePart = V.expectation.idx >= 2 ? ' 현재 가격에는 미래 성장 기대도 반영되어 있습니다.' : '';
+      oneLiner = `${mPart}, ${fPart}. ${dPart}${ePart}`;
+    }
+
+    return { up, down, contrib, interpretation: interp2, diagnosis: { core, support: supportSentence, weakness, watch }, oneLiner, drivers };
   }
 
   /* ═══════════ 메인 파이프라인 ═══════════ */
@@ -596,26 +780,25 @@ const AptEngine = (() => {
     const gaps = [];
     if (Array.isArray(cx.dataGaps)) gaps.push(...cx.dataGaps);   // 자동 수집 단지의 결측 항목
 
-    // Engine A
+    // Engine A: 비교거래 앵커(폴백용) + V3 시장 기준가(기간창 가중중앙값)
     const market = engineMarket(cx, area, input, CFG);
     if (!market.value) throw new Error('비교거래 없음 — 현재 가격을 직접 입력해 주세요.');
+    const marketRef = marketReference(area, input, CFG);
 
-    // 현재 시장가격: 사용자 수정 > 최근 실거래
+    // 현재 시장가격: 사용자 수정 > 최근 실거래 (최근 1건은 기준가와 분리 표시 — §7)
     const t1 = (area.trades || []).slice().sort((a, b) => ymToNum(b.ym) - ymToNum(a.ym));
     const basePrice = input.overrides.price != null ? input.overrides.price : (t1.length ? t1[0].price : market.value);
     const currentPrice = basePrice * (input.overrides.priceMul || 1);
 
-    // Engine B
-    const fin = engineFinancial(cx, area, input, CFG, currentPrice);
-    // Engine D (전세지지력이 공급부담을 참조하므로 먼저)
+    // Engine D 수급 → Station → Engine C 히도닉 → Engine E 옵션
     const supplyE = engineSupply(cx, input, CFG);
-    const support = jeonseSupport(fin, cx.supply, supplyE.combined, CFG);
-    // Station Intelligence (있으면 교통·직주를 교체)
     const transit = engineTransit(cx, input, CFG, JOBS, STN, gaps);
-    // Engine C
     const hedonic = engineHedonic(cx, area, input, CFG, HUBS, JOBS, gaps, transit);
-    // Engine E
     const option = engineOption(cx, input, CFG, gaps);
+    // 미래가치 엔진 (5축 → g 시나리오) → Engine B 금융 (시나리오 범위)
+    const future = engineFuture(cx, supplyE, hedonic, option, CFG);
+    const fin = engineFinancial(cx, area, input, CFG, currentPrice, future.g);
+    const support = jeonseSupport(fin, cx.supply, supplyE.combined, CFG);
 
     // 데이터 충족률 (조망 등 결측 + 수동입력 단지 감안)
     const expectedGapBase = 10;
@@ -632,7 +815,7 @@ const AptEngine = (() => {
 
     // 신뢰도
     const manualCount = (input.overrides.price != null ? 1 : 0) + (input.overrides.jeonse != null ? 1 : 0) + (input.manualComplex ? 2 : 0);
-    const conf = confidence(market, combineOut.disagreement, fillRate, manualCount, CFG);
+    const conf = confidence(market, combineOut.disagreement, fillRate, manualCount, CFG, marketRef);
 
     // 데이터 상태 집계 (VERIFIED / ESTIMATED / MANUAL / UNKNOWN — §39)
     let dataStatus = null;
@@ -641,9 +824,36 @@ const AptEngine = (() => {
       for (const v of Object.values(cx.fieldStatus)) if (dataStatus[v] != null) dataStatus[v]++;
     }
 
+    // V3 판정 3종 + 장기 경쟁력
+    const structural = structuralScore(hedonic, future, CFG);
+    const verdicts = {
+      market: marketVerdict(currentPrice, marketRef, CFG),
+      financial: financialGrade(fin, currentPrice, CFG),
+      expectation: expectationGrade(fin, CFG)
+    };
+
+    // 계산 trace (§86 — debug 모드 표시용)
+    const trace = [
+      ['시장 기준가', marketRef ? `${round1(marketRef.low)}~${round1(marketRef.high)}억 (중앙 ${round1(marketRef.med)}, ${marketRef.windowDays}일창 ${marketRef.n}건, 이상치 ${marketRef.nOutlier})` : '없음 → 비교거래 폴백'],
+      ['최근 실거래', marketRef ? `${marketRef.latest.date} · ${marketRef.latest.price}억 · ${marketRef.latest.floor}층${marketRef.latest.outlier ? ' [이상치]' : ''}` : '—'],
+      ['현재가', `${round1(currentPrice)}억 (${input.overrides.price != null ? '수동' : '최근 실거래'})`],
+      ['R 연간주거서비스', `${(fin.R).toFixed(3)}억 = ${fin.rSourceText}`],
+      ['요구수익률 r', (fin.r * 100).toFixed(2) + '%'],
+      ['g 시나리오', `보수 ${(fin.gScen.low * 100).toFixed(1)}% / 기준 ${(fin.gScen.base * 100).toFixed(1)}% / 우호 ${(fin.gScen.high * 100).toFixed(1)}% (미래점수 ${future.score})`],
+      ['금융지지가치', `${round1(fin.fsv.low)}~${round1(fin.fsv.high)}억 (기준 ${round1(fin.fsv.base)}, ${fin.mode})`],
+      ['역산 g*', fin.impliedG != null ? (fin.impliedG * 100).toFixed(2) + '%' : '—'],
+      ['미래 5축', Object.entries(future.comps).map(([k, v]) => `${k}:${v == null ? '제외' : Math.round(v)}`).join(' ')],
+      ['히도닉 조정', Object.entries(hedonic.adj).map(([k, v]) => `${k}:${(v * 100).toFixed(1)}%`).join(' ') + ` → 총 ${(hedonic.total * 100).toFixed(1)}% (잔차 ${(combineOut.hRes * 100).toFixed(1)}%)`],
+      ['수급 조정', (supplyE.adj * 100).toFixed(1) + '%'],
+      ['옵션 프리미엄', (option.premium * 100).toFixed(1) + '%'],
+      ['장기 경쟁력', `${structural.score} (${structural.band})${structural.excluded.length ? ' · 제외: ' + structural.excluded.join(',') : ''}`],
+      ['판정', `시장 ${verdicts.market.label} / 금융 ${verdicts.financial.label}(${Math.round(verdicts.financial.ratio * 100)}%) / 기대 ${verdicts.expectation.label}`],
+      ['신뢰도', `${conf.score} (${conf.label}) — ${conf.penalties.join('; ') || '감점 없음'}`]
+    ];
+
     const res = {
-      cx, area, input, currentPrice, market, financial: fin, support, hedonic, supplyE, option,
-      transit, combineOut, range, gaps, fillRate, dataStatus,
+      cx, area, input, currentPrice, market, marketRef, financial: fin, support, hedonic, supplyE, option,
+      future, structural, verdicts, transit, combineOut, range, gaps, fillRate, dataStatus, trace,
       scores: { living, invest, attract },
       confidence: conf
     };

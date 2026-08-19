@@ -107,7 +107,8 @@ ok(st('고속터미널').sv > st('녹번').sv, '고속터미널 > 녹번');
     supply: { pop: 400000, next3yAvg: 2000, adjacentRatio: 1, metroRatio: 1, unsoldLevel: 2, txVolumeLevel: 3, jeonseListingsLevel: 3, jeonseTrend: 'stable', regulated: false }
   };
   const r = E.analyze({ complex: cx, areaKey: '84', asOfYM: '2026-08', overrides: {}, autoComplex: true }, CFG, HUBS, JOBS, STN);
-  ok(r.hedonic.subs.transport === CFG.station.unknownTransportScore, '미확인 역거리 → 중립점수(몰래 좋은 값 금지)');
+  ok(r.hedonic.subs.transport === null, '미확인 역거리 → 항목 제외(null) — 중립값으로 몰래 대체 금지(V3 §12)');
+  ok(r.scores.living.total > 0 && isFinite(r.scores.living.total), '교통 제외 후 주거가치 재정규화 정상');
   ok(r.gaps.some(g => g.includes('역거리 미확인')), '미확인이 데이터 공백에 기록');
   ok(r.dataStatus && r.dataStatus.UNKNOWN === 2 && r.dataStatus.VERIFIED === 1, '필드 상태 집계(VERIFIED/UNKNOWN)');
   ok(isFinite(r.combineOut.center) && r.range.low > 0, '미확인 상태에서도 전체 분석 정상 완주');

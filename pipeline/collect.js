@@ -27,8 +27,9 @@ const BASES = ['https://apis.data.go.kr/1613000', 'https://apis.data.go.kr/16110
 const EP_TRADE = 'RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade';
 const EP_RENT = 'RTMSDataSvcAptRent/getRTMSDataSvcAptRent';
 const ROWS = 1000;
-const MAX_TRADES_KEPT = 14;      // 단지·평형별 보관 최근 매매 건수
+const MAX_TRADES_KEPT = 20;      // 단지·평형별 보관 최근 매매 건수
 const JEONSE_WINDOW_MO = 6;      // 전세 대표값 기본 관찰기간(개월) — 부족 시 12→24로 확장
+const OUTLIER_BAND = 0.28;       // 12개월 중앙값 대비 ±28% 초과 → 이상거래 플래그(삭제 아님)
 
 /* ── 유틸 ── */
 function args() {
@@ -69,6 +70,7 @@ function parseItems(xml) {
     const x = m[1];
     items.push({
       aptNm: tag(x, 'aptNm') || tag(x, '아파트'),
+      aptSeq: tag(x, 'aptSeq') || null,
       umdNm: tag(x, 'umdNm') || tag(x, '법정동'),
       jibun: tag(x, 'jibun'),
       buildYear: num(tag(x, 'buildYear') || tag(x, '건축년도')),
@@ -102,9 +104,18 @@ async function fetchAll(base, ep, key, lawd, ymd, log) {
   let page = 1, total = Infinity, calls = 0;
   while ((page - 1) * ROWS < total && page <= 10) {
     const url = `${base}/${ep}?serviceKey=${enc}&LAWD_CD=${lawd}&DEAL_YMD=${ymd}&numOfRows=${ROWS}&pageNo=${page}`;
-    const res = await fetch(url, { headers: { accept: 'application/xml' } });
-    calls++;
-    const xml = await res.text();
+    let xml = null;
+    for (let att = 1; att <= 3; att++) {   // 일시적 네트워크 오류 재시도
+      try {
+        const res = await fetch(url, { headers: { accept: 'application/xml' }, signal: AbortSignal.timeout(15000) });
+        calls++;
+        xml = await res.text();
+        break;
+      } catch (e) {
+        if (att === 3) throw new Error(`네트워크 오류(${lawd} ${ymd}): ${e.message}`);
+        await new Promise(r => setTimeout(r, 1500 * att));
+      }
+    }
     const chk = checkResult(xml);
     if (!chk.ok) {
       if (chk.fatal) throw new Error(`API 오류(${lawd} ${ymd}): ${chk.msg}`);
@@ -127,15 +138,26 @@ function emptyShard(region) {
   return { meta: { code: region.code, name: region.name, sido: region.sido, updatedAt: null, months: [] }, complexes: {} };
 }
 
-/* 매매·전월세 원시 레코드를 샤드에 병합 */
-function mergeMonth(shard, ymd, trades, rents) {
+/* 매매·전월세 원시 레코드를 샤드에 병합
+   ★ Monthly Full Replace: 해당 월을 다시 수집하면 그 월의 기존 거래를 전부 지우고
+   국토부 최신 원본으로 교체한다 — 수집 후 취소·정정된 거래가 DB에 남는 문제 차단 */
+function mergeMonth(shard, ymd, trades, rents, opts) {
+  const replaceTrades = !opts || opts.replaceTrades !== false;
+  const replaceRents = !opts || opts.replaceRents !== false;
   const ym = `${ymd.slice(0, 4)}-${ymd.slice(4)}`;
   if (!shard.meta.months.includes(ym)) shard.meta.months.push(ym);
+  for (const cx of Object.values(shard.complexes)) {
+    for (const ar of Object.values(cx.areas)) {
+      if (replaceTrades) ar.trades = (ar.trades || []).filter(t => t.ym !== ym);
+      if (replaceRents) ar.jeonseRaw = (ar.jeonseRaw || []).filter(r => r.ym !== ym);
+    }
+  }
   const touch = it => {
     const k = cxKey(it);
     if (!shard.complexes[k]) shard.complexes[k] = { name: it.aptNm, dong: it.umdNm, jibun: it.jibun || '', builtYear: it.buildYear || null, areas: {} };
     const cx = shard.complexes[k];
     if (!cx.builtYear && it.buildYear) cx.builtYear = it.buildYear;
+    if (!cx.aptSeq && it.aptSeq) cx.aptSeq = it.aptSeq;     // 단지 고유 식별값 보존(전월세 응답 제공)
     const ak = areaKey(it.m2);
     if (!cx.areas[ak]) cx.areas[ak] = { m2: it.m2, trades: [], jeonseRaw: [] };
     const ar = cx.areas[ak];
@@ -145,7 +167,7 @@ function mergeMonth(shard, ymd, trades, rents) {
   for (const it of trades) {
     if (!it.aptNm || !it.m2 || !it.price || it.cancel) continue;
     const ar = touch(it);
-    const rec = { ym: ymOf(it), d: it.d || 1, price: Math.round(it.price / 100) / 100, floor: it.floor || 0 }; // 억
+    const rec = { ym: ymOf(it), d: it.d || 1, price: Math.round(it.price / 100) / 100, floor: it.floor || 0 }; // 억, 계약일 보존
     if (!ar.trades.some(t => t.ym === rec.ym && t.d === rec.d && t.price === rec.price && t.floor === rec.floor)) ar.trades.push(rec);
   }
   for (const it of rents) {
@@ -170,6 +192,14 @@ function finalizeShard(shard, nowYM) {
       ar.trades.sort((a, b) => (b.ym + String(b.d).padStart(2, '0')).localeCompare(a.ym + String(a.d).padStart(2, '0')));
       // 중복 제거 후 최근 N건 + 24개월 내만 보관
       ar.trades = ar.trades.filter(t => nowN - ymNum(t.ym) <= 24).slice(0, MAX_TRADES_KEPT);
+      // 이상거래 플래그: 12개월 중앙값 대비 큰 이탈 — 삭제하지 않고 표시만 (시장기준가 계산에서 저가중)
+      const w12 = ar.trades.filter(t => nowN - ymNum(t.ym) <= 12).map(t => t.price).sort((a, b) => a - b);
+      if (w12.length >= 3) {
+        const med = w12[Math.floor(w12.length / 2)];
+        for (const t of ar.trades) {
+          if (Math.abs(t.price / med - 1) > OUTLIER_BAND) t.o = 1; else delete t.o;
+        }
+      }
       total += ar.trades.length;
       // 전세 대표값: 최근 6→12→24개월 중앙값
       const raw = (ar.jeonseRaw || []).filter(r => nowN - ymNum(r.ym) <= 24);
@@ -279,18 +309,31 @@ async function main() {
     if (shard.meta.kind === 'fixture') shard = emptyShard(region);   // 픽스처는 실데이터로 교체
     for (const ymd of months) {
       let tr = { items: [], calls: 0 }, rn = { items: [], calls: 0 };
-      if (useTrade) tr = await fetchAll(base, EP_TRADE, key, region.code, ymd, log);
+      if (useTrade) {
+        try { tr = await fetchAll(base, EP_TRADE, key, region.code, ymd, log); }
+        catch (e) {
+          if (/REGISTERED|SERVICE|KEY|REQUESTS/i.test(e.message)) throw e;   // 키·한도 문제는 중단
+          log(`  ! ${region.name} ${ymd} 매매 수집 실패(일시 오류) — 이 월 건너뜀: ${e.message}`);
+          totalCalls += tr.calls; continue;   // 기존 데이터 보존
+        }
+      }
       if (useRent) {
         try { rn = await fetchAll(base, EP_RENT, key, region.code, ymd, log); }
         catch (e) {
-          useRent = false; rn = { items: [], calls: 1 };
-          log(`  ! 전월세 API 사용 불가 — 이후 매매만 수집합니다. (${e.message})`);
-          log(`    → data.go.kr에서 "아파트 전월세 자료" 활용신청 후 다시 실행하면 전세가 채워집니다.`);
+          if (/REGISTERED|SERVICE|KEY/i.test(e.message)) {
+            useRent = false; rn = { items: [], calls: 1 };
+            log(`  ! 전월세 API 미승인 — 이후 매매만 수집합니다. (${e.message})`);
+            log(`    → data.go.kr에서 "아파트 전월세 자료" 활용신청 후 다시 실행하면 전세가 채워집니다.`);
+          } else {
+            rn = { items: [], calls: 1, failed: true };
+            log(`  ! ${region.name} ${ymd} 전월세 수집 실패(일시 오류) — 이 월만 건너뜀: ${e.message}`);
+          }
         }
       }
       totalCalls += tr.calls + rn.calls;
-      mergeMonth(shard, ymd, tr.items, rn.items);
-      log(`  ${region.name} ${ymd}: 매매 ${tr.items.length}건 · 전월세 ${rn.items.length}건`);
+      // Full Replace는 실제 수집한 API에만 적용 — rent만 수집할 때 매매를 지우지 않는다
+      mergeMonth(shard, ymd, tr.items, rn.items, { replaceTrades: useTrade, replaceRents: rn.calls > 0 && !rn.failed });
+      log(`  ${region.name} ${ymd}: 매매 ${tr.items.length}건 · 전월세 ${rn.items.length}건 (월 전체교체)`);
     }
     shard.meta.updatedAt = nowYM;
     delete shard.meta.kind;

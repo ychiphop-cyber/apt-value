@@ -63,6 +63,14 @@
     "distanceDecay": [ { "min": 3, "f": 1.0 }, { "min": 6, "f": 0.95 }, { "min": 10, "f": 0.85 }, { "min": 15, "f": 0.68 }, { "min": 22, "f": 0.5 }, { "min": 30, "f": 0.32 } ],
     "multiStation": { "secondMax": 0.25, "thirdMax": 0.10, "totalBonusCap": 0.30, "newDestReachMin": 36 },
     "lineScore": { "avgAll": 0.60, "top20": 0.25, "networkUtility": 0.15 },
+    "generalized": {
+      "note": "체감 이동시간 = 차내시간 + 대기(배차/2×가중) + 환승도보 + 진입시간 — GTX·공항철도가 차내시간만으로 과대평가되는 것 방지",
+      "waitWeight": 0.6, "transferWalkMin": 3, "depthEntryMin": [1.5, 3, 5]
+    },
+    "friction": { "base": 100, "headwayRef": 4, "perHeadwayMin": 5, "perFareStep": 12, "perDepthStep": 8, "floor": 20 },
+    "displayCurve": [ { "p": 1, "s": 98 }, { "p": 3, "s": 95 }, { "p": 5, "s": 93 }, { "p": 10, "s": 88 }, { "p": 20, "s": 80 }, { "p": 35, "s": 70 }, { "p": 50, "s": 60 }, { "p": 70, "s": 47 }, { "p": 85, "s": 36 }, { "p": 100, "s": 24 } ],
+    "corridor": { "svWeight": 0.7, "wealthWeight": 0.3, "windowShare": 0.25, "windowMinLen": 4 },
+    "goldenV3": { "corridorAvg": 0.65, "lineAvg": 0.20, "friction": 0.15, "displayMin": 22, "displayMax": 98 },
     "wealthNote": "Station Wealth는 콘텐츠·참고용 — 아파트 적정가치 계산에 사용하지 않는다",
     "unknownTransportScore": 55,
     "maxTravelMin": 120
@@ -103,6 +111,49 @@
     "headroomRef": 1.2,
     "gradeBands": [0.55, 0.3, 0.08],
     "gradeLabels": ["높음", "중상", "중립", "낮음"]
+  },
+
+  "marketRef": {
+    "note": "시장 기준가 — 최근 실거래 1건이 아니라 기간창 가중중앙값 (V3 §7~9)",
+    "windowsDays": [90, 180, 365],
+    "minComps": 3,
+    "recencyHalfLifeDays": 90,
+    "outlierWeight": 0.2,
+    "lowFloorMax": 3,
+    "lowFloorWeight": 0.85,
+    "minHalfSpread": 0.025
+  },
+
+  "future": {
+    "note": "미래가치 5축 (V3 §24) — 결과로 장기 주거가치 성장률 g 시나리오를 산출",
+    "weights": { "demand": 0.25, "scarcity": 0.25, "transitChange": 0.20, "eduPref": 0.15, "redevOption": 0.15 },
+    "tierPrior": { "서울핵심": 85, "서울": 74, "수도권핵심": 68, "수도권": 56, "지방광역": 48, "기타": 42 },
+    "jeonseTrendScore": { "up": 85, "stable": 62, "down": 40 },
+    "scarcityCurve": [ { "x": 0.6, "s": 90 }, { "x": 0.9, "s": 76 }, { "x": 1.2, "s": 62 }, { "x": 1.6, "s": 44 }, { "x": 2.2, "s": 28 } ],
+    "transitStages": [ { "re": "개통", "s": 88 }, { "re": "공사|착공", "s": 78 }, { "re": "확정", "s": 72 }, { "re": "계획|예정|추진", "s": 55 } ],
+    "transitNoneScore": 50,
+    "optionGradeScore": [88, 74, 58, 45],
+    "gSwing": 0.004,
+    "gBandDown": 0.006,
+    "gBandUp": 0.005
+  },
+
+  "financialGrade": {
+    "note": "금융 지지력 = 금융지지가치(기준 시나리오) ÷ 현재가",
+    "bands": [0.88, 0.72, 0.58],
+    "labels": ["강함", "양호", "보통", "약함"]
+  },
+
+  "verdicts": {
+    "marketTolerance": 0.005,
+    "marketLabels": ["할인", "적정", "프리미엄"],
+    "expectationLabels": ["낮음", "보통", "높음", "매우 높음"]
+  },
+
+  "structural": {
+    "note": "장기 경쟁력 Score — 미확인 카테고리는 제외하고 가중치 재정규화 (§12·19)",
+    "weights": { "transit": 0.20, "job": 0.12, "education": 0.16, "product": 0.15, "nature": 0.07, "life": 0.05, "scarcity": 0.13, "future": 0.12 },
+    "bands": [ { "min": 85, "label": "최상위권" }, { "min": 72, "label": "상위권" }, { "min": 58, "label": "중상위권" }, { "min": 45, "label": "중위권" }, { "min": 0, "label": "하위권" } ]
   },
 
   "final": {
