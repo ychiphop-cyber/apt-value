@@ -200,7 +200,20 @@
   "verdicts": {
     "marketTolerance": 0.005,
     "marketLabels": ["할인", "적정", "프리미엄"],
-    "expectationLabels": ["낮음", "보통", "높음", "매우 높음"]
+    "expectationLabels": ["낮음", "보통", "높음", "매우 높음"],
+    "heldLabel": "분석 보류"
+  },
+
+  "search": {
+    "note": "FR-01 검색 정규화 — 통칭(동이름+단지명) 자동 흡수 + 브랜드 접두어 제거 재시도. FR-04 대표평형 우선순위.",
+    "brandPrefixes": [
+      "e편한세상", "이편한세상", "래미안", "자이", "푸르지오", "힐스테이트", "아이파크", "더샵",
+      "롯데캐슬", "아크로", "디에이치", "SK뷰", "에스케이뷰", "포레나", "한화포레나", "데시앙",
+      "호반써밋", "베르디움", "센트레빌", "스위첸", "어울림", "금호어울림", "리슈빌", "하늘채",
+      "코오롱하늘채", "아너스빌", "한신더휴", "파밀리에", "유보라", "제일풍경채", "중흥S클래스",
+      "서희스타힐스", "동문굿모닝힐", "우미린", "모아엘가", "칸타빌", "해링턴플레이스", "루센티아"
+    ],
+    "defaultAreaPrefs": [84, 59]
   },
 
   "structural": {
@@ -240,7 +253,8 @@
     "penalties": {
       "compsUnder3": 22, "compsUnder6": 10, "latestOver6mo": 10, "latestOver12mo": 20,
       "tier3Only": 15, "perManualOverride": 5, "manualOverrideMax": 15,
-      "disagreementOver": 0.35, "disagreementPenalty": 12, "dataGapFactor": 30
+      "disagreementOver": 0.35, "disagreementPenalty": 12, "dataGapFactor": 30,
+      "jeonseMissing": 8
     },
     "bands": { "high": 80, "mid": 58 },
     "labels": ["높음", "보통", "낮음"]

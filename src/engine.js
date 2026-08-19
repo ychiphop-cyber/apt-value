@@ -13,6 +13,15 @@ const AptEngine = (() => {
   const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
   const round1 = x => Math.round(x * 10) / 10;
 
+  // 한국어 조사: 받침 유무에 따라 이/가·은/는·을/를 선택 (FR-09 조사 오류 방지)
+  function josa(word, withBatchim, without) {
+    const w = String(word || '').trim();
+    if (!w) return w + without;
+    const c = w.charCodeAt(w.length - 1);
+    const has = c >= 0xAC00 && c <= 0xD7A3 ? (c - 0xAC00) % 28 > 0 : /[013678lmnbktp]$/i.test(w);
+    return w + (has ? withBatchim : without);
+  }
+
   function ymToNum(ym) { const [y, m] = ym.split('-').map(Number); return y * 12 + (m - 1); }
   function monthsBetween(nowYM, ym) { return Math.max(0, ymToNum(nowYM) - ymToNum(ym)); }
 
@@ -118,12 +127,26 @@ const AptEngine = (() => {
     const p25 = weightedPercentile(items, 0.25), p75 = weightedPercentile(items, 0.75);
     const half = Math.max(M.minHalfSpread * med, (p75 - p25) / 2);
     const latest = all[0];
+    const totW = items.reduce((s, it) => s + it.w, 0);
     return {
       med, low: med - half, high: med + half,
       windowDays, extended: windowDays != null && windowDays > M.windowsDays[0],
+      baseWindowDays: M.windowsDays[0],
       n: win.length, nOutlier: win.filter(t => t.o).length,
       latest: { date: `${latest.ym}-${String(latest.d || 15).padStart(2, '0')}`, price: latest.price, floor: latest.floor, outlier: !!latest.o, daysAgo: latest.days },
-      dispersion: med > 0 ? Math.max(0, (p75 - p25) / med / 2) : 0.04
+      dispersion: med > 0 ? Math.max(0, (p75 - p25) / med / 2) : 0.04,
+      // FR-07 "왜 이 금액인가": 사용 거래 전체와 실제 가중치·공식 구성값을 그대로 공개 (재계산 가능해야 함)
+      items: items.map(it => ({
+        date: `${it.t.ym}-${String(it.t.d || 15).padStart(2, '0')}`, price: it.t.price, floor: it.t.floor || null,
+        w: totW > 0 ? it.w / totW : 0, wRaw: it.w,
+        outlier: !!it.t.o, lowFloor: !!(it.t.floor > 0 && it.t.floor <= M.lowFloorMax)
+      })),
+      formula: {
+        p25, p75, half, iqrHalf: (p75 - p25) / 2, minHalf: M.minHalfSpread * med,
+        minHalfApplied: M.minHalfSpread * med >= (p75 - p25) / 2,
+        minHalfSpread: M.minHalfSpread, recencyHalfLifeDays: M.recencyHalfLifeDays,
+        outlierWeight: M.outlierWeight, lowFloorMax: M.lowFloorMax, lowFloorWeight: M.lowFloorWeight
+      }
     };
   }
 
@@ -190,7 +213,10 @@ const AptEngine = (() => {
   function engineFinancial(cx, area, input, CFG, currentPrice, gScen) {
     const F = CFG.financial;
     const rateDelta = input.overrides.rateDelta || 0;
-    const jeonse = (input.overrides.jeonse != null ? input.overrides.jeonse : area.jeonse) * (input.overrides.jeonseMul || 1);
+    const jeonseBase = input.overrides.jeonse != null ? input.overrides.jeonse : area.jeonse;
+    // FR-03 부분 분석: 전세가 없으면 금융·임대 엔진만 보류(null) — 다른 엔진은 계속 실행
+    if (!(jeonseBase > 0) && !(input.useRent && area.rentExample)) return null;
+    const jeonse = jeonseBase * (input.overrides.jeonseMul || 1);
     const conv = (cx.conversionRate || F.defaultConversionRate) + rateDelta * 0.5; // 금리 상승 시 전환율도 일부 동행
     // 연간 주거서비스 가치 R
     let R, rSourceText;
@@ -201,8 +227,10 @@ const AptEngine = (() => {
       R = jeonse * conv;
       rSourceText = `전세 ${round1(jeonse)}억 × 시장 전월세전환율 ${(conv * 100).toFixed(1)}%`;
     }
-    // 요구수익률 r (합성)
-    const r = F.altReturn + F.liquidityPremium + F.assetRiskPremium + (F.regionRiskPremium[cx.regionTier] ?? F.regionRiskPremium['기타']) + rateDelta;
+    // 요구수익률 r (합성) — 구성값을 rParts로 공개 (FR-07)
+    const regionRisk = F.regionRiskPremium[cx.regionTier] ?? F.regionRiskPremium['기타'];
+    const r = F.altReturn + F.liquidityPremium + F.assetRiskPremium + regionRisk + rateDelta;
+    const rParts = { altReturn: F.altReturn, liquidityPremium: F.liquidityPremium, assetRiskPremium: F.assetRiskPremium, regionRiskPremium: regionRisk, rateDelta };
     // g 시나리오: 미래가치 엔진 결과 (없으면 지역 prior 단일값)
     const gPrior = F.longTermRentGrowth[cx.regionTier] ?? F.longTermRentGrowth['기타'];
     const gs = gScen || { low: gPrior - 0.005, base: gPrior, high: gPrior + 0.004 };
@@ -218,12 +246,15 @@ const AptEngine = (() => {
     const impliedG = currentPrice > 0 ? r - R / currentPrice : null;
     const jeonseRatio = currentPrice > 0 ? jeonse / currentPrice : null;
     const equity = currentPrice - jeonse;
-    return { R, r, g: gs.base, gScen: gs, conv, mode: base.mode, value: base.v, fsv, impliedG, jeonse, jeonseRatio, equity, rSourceText };
+    // 시나리오별 대입값 전체 공개 (FR-07): V = R/(r−g) 또는 유한 DCF
+    const scen = ['low', 'base', 'high'].map(k => ({ k, g: gs[k], v: valueAt(gs[k]).v, mode: valueAt(gs[k]).mode }));
+    return { R, r, rParts, g: gs.base, gScen: gs, scen, conv, mode: base.mode, value: base.v, fsv, impliedG, jeonse, jeonseRatio, equity, rSourceText };
   }
 
-  /* 금융 지지력 등급 (V3 §21) */
+  /* 금융 지지력 등급 (V3 §21) — 전세 없음(fin null)이면 '분석 보류' (FR-03) */
   function financialGrade(fin, currentPrice, CFG) {
     const G = CFG.financialGrade;
+    if (!fin) return { ratio: null, label: CFG.verdicts.heldLabel, idx: null, held: true };
     const ratio = currentPrice > 0 ? fin.fsv.base / currentPrice : 0;
     let i = G.bands.length;
     for (let k = 0; k < G.bands.length; k++) if (ratio >= G.bands[k]) { i = k; break; }
@@ -233,6 +264,7 @@ const AptEngine = (() => {
   /* 미래 기대 반영도 (V3 §21·29): 역산 g* vs 시나리오 밴드 */
   function expectationGrade(fin, CFG) {
     const L = CFG.verdicts.expectationLabels;
+    if (!fin) return { label: CFG.verdicts.heldLabel, idx: null, held: true };
     const g = fin.impliedG, s = fin.gScen;
     if (g == null) return { label: L[1], idx: 1 };
     if (g < s.low) return { label: L[0], idx: 0 };
@@ -269,8 +301,9 @@ const AptEngine = (() => {
     return { score: Math.round(score), band: band.label, comps: used, excluded: Object.keys(W).filter(k => comps[k] == null) };
   }
 
-  /* 전세지지력 (5등급) */
+  /* 전세지지력 (5등급) — 전세 없음(fin null)이면 산출 보류 (FR-03) */
   function jeonseSupport(fin, sup, combinedBurden, CFG) {
+    if (!fin) return null;
     const J = CFG.jeonseSupport;
     const ratio = fin.jeonseRatio ?? 0;
     let idx = J.ratioBands.length; // 기본 최하
@@ -561,6 +594,12 @@ const AptEngine = (() => {
     // 히도닉 잔차: 비교거래가 대상 그 자체(동일단지 동일평형)일수록 이중반영 제거
     const hRes = hed.total * (1 - compQuality);
     const vMktAdj = vM * (1 + hRes + sup.adj);
+    if (!fin) {
+      // 전세 없음 → 금융 결합 없이 시장 경로만 (FR-03 부분 분석)
+      const lo0 = vM * (1 - FN.anchorClamp), hi0 = vM * (1 + FN.anchorClamp);
+      const c0 = clamp(vMktAdj, lo0, hi0);
+      return { center: c0, vMktAdj, vFundEff: null, hRes, wm: 1, wf: 0, disagreement: 0, anchorClamped: c0 !== vMktAdj, marketOnly: true };
+    }
     const vFundEff = fin.value * (1 + opt.premium);
     // 모델 괴리 → fundamental 가중 축소
     const d = Math.abs(vFundEff - vM) / vM;
@@ -609,16 +648,18 @@ const AptEngine = (() => {
     if (cx.location.futureTransit && /확정|공사/.test(cx.location.futureTransit)) future = clamp(future + 6, 0, 100);
     const location = hed.subs.transport != null ? clamp(0.55 * hed.subs.job + 0.45 * hed.subs.transport, 0, 100) : clamp(hed.subs.job, 0, 100);
     const liquidity = [30, 45, 60, 75, 88][(cx.supply.txVolumeLevel || 3) - 1];
-    const subs = { jeonseSupport: support.score, supplyDemand: sup.score, scarcity, future, location, liquidity };
-    let s = 0; for (const k of Object.keys(W)) s += W[k] * subs[k];
-    return { total: clamp(s, 0, 100), subs };
+    // 전세 없음 → 전세지지력 항목 제외 + 가중치 재정규화 (FR-03 부분 분석)
+    const subs = { jeonseSupport: support ? support.score : null, supplyDemand: sup.score, scarcity, future, location, liquidity };
+    let s = 0, w = 0;
+    for (const k of Object.keys(W)) { if (subs[k] == null) continue; s += W[k] * subs[k]; w += W[k]; }
+    return { total: w > 0 ? clamp(s / w, 0, 100) : 50, subs };
   }
 
   function attractScore(currentPrice, center, range, support, CFG) {
     const premium = (currentPrice - center) / center;
     const curve = CFG.scores.priceAttractCurve.map(p => [p.premium, p.score]);
     let s = interp(premium, curve);
-    s += (support.gradeIdx <= 1 ? 3 : support.gradeIdx >= 3 ? -3 : 0);
+    if (support) s += (support.gradeIdx <= 1 ? 3 : support.gradeIdx >= 3 ? -3 : 0);
     s = clamp(s, CFG.scores.priceAttractClamp[0], CFG.scores.priceAttractClamp[1]);
     // 범위 내 위치
     let positionLabel;
@@ -632,12 +673,13 @@ const AptEngine = (() => {
   }
 
   /* ═══════════ 신뢰도 ═══════════ */
-  function confidence(market, disagreement, fillRate, manualCount, CFG, marketRef) {
+  function confidence(market, disagreement, fillRate, manualCount, CFG, marketRef, finHeld) {
     const C = CFG.confidence.penalties, penalties = [];
     let s = 100;
     if (!marketRef) { s -= 15; penalties.push('시장 기준가 산출 불가 — 비교거래 폴백'); }
-    else if (marketRef.windowDays > 180) { s -= 10; penalties.push(`거래 부족으로 기준가 기간 ${marketRef.windowDays}일로 확장`); }
-    else if (marketRef.windowDays > 90) { s -= 5; penalties.push(`거래 부족으로 기준가 기간 ${marketRef.windowDays}일로 확장`); }
+    else if (marketRef.windowDays > 180) { s -= 10; penalties.push(`90일 거래 부족으로 기준가 조회기간을 ${marketRef.windowDays}일까지 확장`); }
+    else if (marketRef.windowDays > 90) { s -= 5; penalties.push(`90일 거래 부족으로 기준가 조회기간을 ${marketRef.windowDays}일까지 확장`); }
+    if (finHeld) { s -= C.jeonseMissing ?? 8; penalties.push('전세 실거래 없음 — 금융·임대 지지가치 분석 보류'); }
     if (market.compCount < 3) { s -= C.compsUnder3; penalties.push(`동일평형 비교거래 ${market.compCount}건 (3건 미만)`); }
     else if (market.compCount < 6) { s -= C.compsUnder6; penalties.push(`동일평형 비교거래 ${market.compCount}건 (6건 미만)`); }
     if (market.latestMonths > 12) { s -= C.latestOver12mo; penalties.push('최근 12개월 내 거래 없음'); }
@@ -665,17 +707,17 @@ const AptEngine = (() => {
     if (sub.product >= 80) up.push('신축급 상품성·대단지');
     else if ((cx.households || 0) >= 3000) up.push('대단지 규모');
     if (sub.nature >= 80) up.push('공원·수변 등 자연환경');
-    if (support.gradeIdx <= 1) up.push(`전세지지력 ${support.label}`);
+    if (support && support.gradeIdx <= 1) up.push(`전세지지력 ${support.label}`);
     if (sup.gradeIdx <= 1) up.push('향후 공급 부족·양호');
     if (opt.gradeIdx <= 1) up.push(`정비사업 기대 (${opt.label})`);
     if (scores.attract.premium <= -0.05) up.push('모델 적정가치 대비 낮은 현재 가격');
 
     if (scores.attract.premium >= 0.05) down.push('모델 적정가치 대비 높은 현재 가격');
-    if (fin.impliedG != null && fin.impliedG > CFG.financial.impliedGrowthConcernOver) down.push('가격에 반영된 미래 성장 기대가 큼');
+    if (fin && fin.impliedG != null && fin.impliedG > CFG.financial.impliedGrowthConcernOver) down.push('가격에 반영된 미래 성장 기대가 큼');
     if (sub.product < 60) down.push('구축 연식·상품성 열위');
     if ((cx.parkingRatio ?? 1) < 0.7) down.push('주차 경쟁력 부족');
     if (sup.gradeIdx >= 3) down.push(`공급 ${sup.gradeLabel}`);
-    if (support.gradeIdx >= 3) down.push(`전세지지력 ${support.label}`);
+    if (support && support.gradeIdx >= 3) down.push(`전세지지력 ${support.label}`);
     if (sub.transport < 55) down.push('대중교통 접근성 열위');
     if (cx.supply.txVolumeLevel <= 2) down.push('거래 빈도 낮음 — 가격 발견 제한');
     if (!up.length) up.push('뚜렷한 프리미엄 요인 없음 — 가격 부담이 낮은 편인지 확인');
@@ -684,7 +726,7 @@ const AptEngine = (() => {
     // 상대적 가치 기여도 (평균적 아파트 60점 대비, 개념적 지표 — 미확인 카테고리 제외)
     const mv = res.marketRef ? res.marketRef.med : res.market.value;
     const contrib = [
-      { k: '금융·임대 지지력', v: clamp((fin.value / mv - 1) * 100, -40, 40) },
+      fin ? { k: '금융·임대 지지력', v: clamp((fin.value / mv - 1) * 100, -40, 40) } : null,
       sub.transport != null ? { k: '교통·직주 프리미엄', v: clamp((0.5 * (sub.transport + sub.job) - 60) * 0.9, -40, 40) } : null,
       sub.education != null ? { k: '교육 프리미엄', v: clamp((sub.education - 60) * 0.9 * hed.eduDetail.eduCoeff, -40, 40) } : null,
       (sub.life != null && sub.nature != null) ? { k: '생활·자연환경', v: clamp((0.5 * (sub.life + sub.nature) - 60) * 0.9, -40, 40) } : null,
@@ -696,7 +738,8 @@ const AptEngine = (() => {
     // 조건부 해석
     const interp2 = [];
     const P = res.currentPrice;
-    if (fin.impliedG != null) {
+    if (!fin) interp2.push('전세 실거래가 없어 금융·임대 지지가치와 역산 성장률 해석은 보류했습니다. STEP 2에서 전세 시세를 입력하면 이 분석이 포함됩니다.');
+    if (fin && fin.impliedG != null) {
       const gPct = (fin.impliedG * 100).toFixed(1);
       if (fin.impliedG > CFG.financial.impliedGrowthConcernOver)
         interp2.push(`현재 ${round1(P)}억원이 유지되려면 임대가치가 연평균 약 ${gPct}% 성장해야 합니다. 장기 평균 가정(${(fin.g * 100).toFixed(1)}%)을 크게 웃도는 수준으로, 현재 가격에는 상당한 미래 성장 기대가 이미 반영되어 있습니다.`);
@@ -709,7 +752,7 @@ const AptEngine = (() => {
       interp2.push(`현재 가격에는 임대(사용)가치보다 정비사업(${opt.label}) 기대가 크게 반영되어 있습니다. 사업 지연·분담금 증가 시나리오에서 가격 하방 변동성이 커질 수 있습니다.`);
     else if (sub.education >= 80 && sub.job >= 70)
       interp2.push(`현재 가격에는 학군·직주근접 프리미엄이 상대적으로 크게 반영되어 있습니다.`);
-    if (support.gradeIdx <= 1 && sup.gradeIdx <= 1)
+    if (support && support.gradeIdx <= 1 && sup.gradeIdx <= 1)
       interp2.push(`현재 가격이 유지되려면 지금 수준의 전세수요와 공급 ${sup.gradeLabel} 상태가 상당 기간 이어질 필요가 있습니다.`);
     if (sup.gradeIdx >= 3)
       interp2.push(`향후 공급 부담(종합 부담률 ${sup.combined.toFixed(2)})이 현실화되면 전세가격과 매매가격 지지력이 함께 약해질 수 있습니다.`);
@@ -732,24 +775,24 @@ const AptEngine = (() => {
       else if (k === 'life') coreBits.push('생활 인프라');
     }
     const core = top2.length
-      ? `이 단지의 가장 큰 경쟁력은 ${top2.map(([k]) => catNames[k]).join('과 ')}입니다. ${coreBits.join(', ')}이 높은 평가를 받았습니다.`
+      ? `이 단지의 가장 큰 경쟁력은 ${top2.map(([k]) => catNames[k]).join('과 ')}입니다. ${josa(coreBits.join(', '), '이', '가')} 높은 평가를 받았습니다.`
       : `단일 항목의 두드러진 경쟁력보다는 요소들이 고르게 평균 수준인 단지입니다.`;
 
     const supBits = [];
-    if (support.gradeIdx <= 1) supBits.push(`${support.label} 전세지지력`);
+    if (support && support.gradeIdx <= 1) supBits.push(`${support.label} 전세지지력`);
     if (sup.gradeIdx <= 1) supBits.push(`공급 ${sup.gradeLabel} 환경`);
     if (sub.job >= 70) supBits.push('직주근접 수요');
     if (sub.education >= 78) supBits.push('학군 수요');
     if (sub.product >= 78) supBits.push('신축·대단지 희소성');
     if (opt.gradeIdx <= 1) supBits.push(`정비사업 기대(${opt.label})`);
     const supportSentence = supBits.length
-      ? `${supBits.join(', ')}가 현재 가격을 지지하고 있습니다.`
+      ? `${josa(supBits.join(', '), '이', '가')} 현재 가격을 지지하고 있습니다.`
       : `현재 가격을 강하게 지지하는 구조적 요인은 뚜렷하지 않아, 시장 전반의 흐름에 더 민감할 수 있습니다.`;
 
     const weakBits = [];
-    if (res.combineOut.disagreement > 0.35) weakBits.push(`임대(사용)가치가 시장가격보다 크게 낮아(괴리 ${(res.combineOut.disagreement * 100).toFixed(0)}%) 현재 가격에는 향후 기대가 상당 부분 포함되어 있습니다`);
-    else if (fin.impliedG != null && fin.impliedG > CFG.financial.impliedGrowthConcernOver) weakBits.push(`현재가 유지에 연 ${(fin.impliedG * 100).toFixed(1)}%의 임대가치 성장이 필요해 기대 선반영 폭이 큽니다`);
-    if (support.gradeIdx >= 3) weakBits.push(`전세지지력이 ${support.label} 수준입니다`);
+    if (fin && res.combineOut.disagreement > 0.35) weakBits.push(`임대(사용)가치가 시장가격보다 크게 낮아(괴리 ${(res.combineOut.disagreement * 100).toFixed(0)}%) 현재 가격에는 향후 기대가 상당 부분 포함되어 있습니다`);
+    else if (fin && fin.impliedG != null && fin.impliedG > CFG.financial.impliedGrowthConcernOver) weakBits.push(`현재가 유지에 연 ${(fin.impliedG * 100).toFixed(1)}%의 임대가치 성장이 필요해 기대 선반영 폭이 큽니다`);
+    if (support && support.gradeIdx >= 3) weakBits.push(`전세지지력이 ${support.label} 수준입니다`);
     if (sup.gradeIdx >= 3) weakBits.push(`향후 공급이 ${sup.gradeLabel} 구간입니다`);
     if (sub.product < 58) weakBits.push('구축 연식·상품성이 열위입니다');
     if ((cx.parkingRatio ?? 1) < 0.7 && cx.fieldStatus?.parkingRatio !== 'UNKNOWN') weakBits.push('주차 경쟁력이 부족합니다');
@@ -759,8 +802,8 @@ const AptEngine = (() => {
     if (sup.gradeIdx >= 2) watchBits.push('인접 생활권 공급 물량');
     watchBits.push('전세가격 흐름');
     if (opt.prob >= 0.2) watchBits.push('정비사업 진행 속도와 분담금');
-    if (fin.impliedG != null && fin.impliedG > fin.g) watchBits.push('금리 방향');
-    const watch = `앞으로는 ${watchBits.join(', ')}이 이 단지의 가격·투자매력도에 가장 큰 영향을 줄 가능성이 높습니다.`;
+    if (fin && fin.impliedG != null && fin.impliedG > fin.g) watchBits.push('금리 방향');
+    const watch = `앞으로는 ${josa(watchBits.join(', '), '이', '가')} 이 단지의 가격·투자매력도에 가장 큰 영향을 줄 가능성이 높습니다.`;
 
     /* ── V3: 한 문장 요약(§59) + 가격을 만드는 핵심요인(§60) ── */
     const V = res.verdicts, ST = res.structural, FU = res.future;
@@ -771,7 +814,7 @@ const AptEngine = (() => {
     if (sub.product != null && sub.product >= 74) driverPool.push([sub.product, '신축·대단지 상품성']);
     if (sub.nature != null && sub.nature >= 78) driverPool.push([sub.nature, '한강·녹지 환경']);
     if (FU && FU.comps.scarcity >= 72) driverPool.push([FU.comps.scarcity, '공급 희소성']);
-    if (support.gradeIdx <= 1) driverPool.push([support.score, '강한 전세수요']);
+    if (support && support.gradeIdx <= 1) driverPool.push([support.score, '강한 전세수요']);
     if (opt.gradeIdx <= 1) driverPool.push([80, `정비사업 기대(${opt.label})`]);
     driverPool.sort((a, b) => b[0] - a[0]);
     const drivers = driverPool.slice(0, 4).map(d => d[1]);
@@ -781,11 +824,13 @@ const AptEngine = (() => {
       const mPart = V.market.idx === 0 ? '현재 가격은 최근 실거래 대비 낮은 편이고'
         : V.market.idx === 2 ? '현재 가격은 최근 실거래 범위보다 높지만'
         : '현재 가격은 최근 실거래 기준 적정 범위이고';
-      const fPart = V.financial.idx >= 2
-        ? `금융·임대 수익만으로는 가격의 약 ${Math.round(V.financial.ratio * 100)}%만 설명됩니다`
-        : `전세·금리 기준으로도 가격의 약 ${Math.round(V.financial.ratio * 100)}%가 지지됩니다`;
-      const dPart = drivers.length ? `다만 ${drivers.slice(0, 3).join(', ')}이 나머지 프리미엄을 상당 부분 정당화합니다.` : '구조적 프리미엄 요인은 뚜렷하지 않습니다.';
-      const ePart = V.expectation.idx >= 2 ? ' 현재 가격에는 미래 성장 기대도 반영되어 있습니다.' : '';
+      const fPart = V.financial.held
+        ? '전세 실거래가 없어 금융·임대 지지력 판정은 보류했습니다'
+        : V.financial.idx >= 2
+          ? `금융·임대 수익만으로는 가격의 약 ${Math.round(V.financial.ratio * 100)}%만 설명됩니다`
+          : `전세·금리 기준으로도 가격의 약 ${Math.round(V.financial.ratio * 100)}%가 지지됩니다`;
+      const dPart = drivers.length ? `다만 ${josa(drivers.slice(0, 3).join(', '), '이', '가')} 나머지 프리미엄을 상당 부분 정당화합니다.` : '구조적 프리미엄 요인은 뚜렷하지 않습니다.';
+      const ePart = V.expectation.idx != null && V.expectation.idx >= 2 ? ' 현재 가격에는 미래 성장 기대도 반영되어 있습니다.' : '';
       oneLiner = `${mPart}, ${fPart}. ${dPart}${ePart}`;
     }
 
@@ -806,7 +851,12 @@ const AptEngine = (() => {
 
     // Engine A: 비교거래 앵커(폴백용) + V3 시장 기준가(기간창 가중중앙값)
     const market = engineMarket(cx, area, input, CFG);
-    if (!market.value) throw new Error('비교거래 없음 — 현재 가격을 직접 입력해 주세요.');
+    if (!market.value) {
+      // PRD 8.2: 사용자 조치를 안내하는 메시지 — err.user 플래그로 시스템 오류와 구분
+      const err = new Error('현재가와 실거래가 모두 없어 시장 분석을 만들 수 없습니다. 현재 시세를 입력해 주세요.');
+      err.user = true;
+      throw err;
+    }
     const marketRef = marketReference(area, input, CFG);
 
     // 현재 시장가격: 사용자 수정 > 대표 최근가 (V3.2 — 이상 저가 1건이면 3개월 최고가로 보정)
@@ -820,8 +870,11 @@ const AptEngine = (() => {
     const hedonic = engineHedonic(cx, area, input, CFG, HUBS, JOBS, gaps, transit);
     const option = engineOption(cx, input, CFG, gaps);
     // 미래가치 엔진 (5축 → g 시나리오) → Engine B 금융 (시나리오 범위)
+    // 전세 없음 → fin=null (금융·전세지지력만 보류, 나머지 분석은 계속 — FR-03)
     const future = engineFuture(cx, supplyE, hedonic, option, CFG);
     const fin = engineFinancial(cx, area, input, CFG, currentPrice, future.g);
+    const finHeld = !fin;
+    if (finHeld) gaps.push('전세 실거래 없음 — 금융·임대 지지가치 분석 보류');
     const support = jeonseSupport(fin, cx.supply, supplyE.combined, CFG);
 
     // 데이터 충족률 (조망 등 결측 + 수동입력 단지 감안)
@@ -839,7 +892,7 @@ const AptEngine = (() => {
 
     // 신뢰도
     const manualCount = (input.overrides.price != null ? 1 : 0) + (input.overrides.jeonse != null ? 1 : 0) + (input.manualComplex ? 2 : 0);
-    const conf = confidence(market, combineOut.disagreement, fillRate, manualCount, CFG, marketRef);
+    const conf = confidence(market, combineOut.disagreement, fillRate, manualCount, CFG, marketRef, finHeld);
 
     // 데이터 상태 집계 (VERIFIED / ESTIMATED / MANUAL / UNKNOWN — §39)
     let dataStatus = null;
@@ -861,28 +914,198 @@ const AptEngine = (() => {
       ['시장 기준가', marketRef ? `${round1(marketRef.low)}~${round1(marketRef.high)}억 (중앙 ${round1(marketRef.med)}, ${marketRef.windowDays}일창 ${marketRef.n}건, 이상치 ${marketRef.nOutlier})` : '없음 → 비교거래 폴백'],
       ['최근 실거래', marketRef ? `${marketRef.latest.date} · ${marketRef.latest.price}억 · ${marketRef.latest.floor}층${marketRef.latest.outlier ? ' [이상치]' : ''}` : '—'],
       ['현재가', `${round1(currentPrice)}억 (${input.overrides.price != null ? '수동' : (rep && rep.anomalous ? '이상 저가 보정 — 최근 3개월 최고가' : '최근 실거래')})`],
-      ['R 연간주거서비스', `${(fin.R).toFixed(3)}억 = ${fin.rSourceText}`],
-      ['요구수익률 r', (fin.r * 100).toFixed(2) + '%'],
-      ['g 시나리오', `보수 ${(fin.gScen.low * 100).toFixed(1)}% / 기준 ${(fin.gScen.base * 100).toFixed(1)}% / 우호 ${(fin.gScen.high * 100).toFixed(1)}% (미래점수 ${future.score})`],
-      ['금융지지가치', `${round1(fin.fsv.low)}~${round1(fin.fsv.high)}억 (기준 ${round1(fin.fsv.base)}, ${fin.mode})`],
-      ['역산 g*', fin.impliedG != null ? (fin.impliedG * 100).toFixed(2) + '%' : '—'],
+      ['R 연간주거서비스', fin ? `${(fin.R).toFixed(3)}억 = ${fin.rSourceText}` : '전세 없음 — 보류'],
+      ['요구수익률 r', fin ? (fin.r * 100).toFixed(2) + '%' : '—'],
+      ['g 시나리오', `보수 ${(future.g.low * 100).toFixed(1)}% / 기준 ${(future.g.base * 100).toFixed(1)}% / 우호 ${(future.g.high * 100).toFixed(1)}% (미래점수 ${future.score})`],
+      ['금융지지가치', fin ? `${round1(fin.fsv.low)}~${round1(fin.fsv.high)}억 (기준 ${round1(fin.fsv.base)}, ${fin.mode})` : '전세 없음 — 분석 보류'],
+      ['역산 g*', fin && fin.impliedG != null ? (fin.impliedG * 100).toFixed(2) + '%' : '—'],
       ['미래 5축', Object.entries(future.comps).map(([k, v]) => `${k}:${v == null ? '제외' : Math.round(v)}`).join(' ')],
       ['히도닉 조정', Object.entries(hedonic.adj).map(([k, v]) => `${k}:${(v * 100).toFixed(1)}%`).join(' ') + ` → 총 ${(hedonic.total * 100).toFixed(1)}% (잔차 ${(combineOut.hRes * 100).toFixed(1)}%)`],
       ['수급 조정', (supplyE.adj * 100).toFixed(1) + '%'],
       ['옵션 프리미엄', (option.premium * 100).toFixed(1) + '%'],
       ['장기 경쟁력', `${structural.score} (${structural.band})${structural.excluded.length ? ' · 제외: ' + structural.excluded.join(',') : ''}`],
-      ['판정', `시장 ${verdicts.market.label} / 금융 ${verdicts.financial.label}(${Math.round(verdicts.financial.ratio * 100)}%) / 기대 ${verdicts.expectation.label}`],
+      ['판정', `시장 ${verdicts.market.label} / 금융 ${verdicts.financial.held ? verdicts.financial.label : verdicts.financial.label + '(' + Math.round(verdicts.financial.ratio * 100) + '%)'} / 기대 ${verdicts.expectation.label}`],
       ['신뢰도', `${conf.score} (${conf.label}) — ${conf.penalties.join('; ') || '감점 없음'}`]
     ];
 
     const res = {
-      cx, area, input, currentPrice, repPrice: rep, market, marketRef, financial: fin, support, hedonic, supplyE, option,
+      cx, area, input, currentPrice, repPrice: rep, market, marketRef, financial: fin, finHeld, support, hedonic, supplyE, option,
       future, structural, verdicts, transit, combineOut, range, gaps, fillRate, dataStatus, trace,
       scores: { living, invest, attract },
       confidence: conf
     };
     res.explain = buildExplain(res, cx, area, CFG);
     return res;
+  }
+
+  /* ═══════════ V3.3 P0 헬퍼 (FR-01·02·04) — 순수함수, Node 테스트 가능 ═══════════ */
+
+  /* FR-04 평형 기본선택: 거래 0건 평형은 기본선택하지 않는다.
+     거래 있는 평형 중 ①84㎡ 최근접 → ②59㎡ 최근접 → ③거래량 많은 순. 거래가 전혀 없으면 첫 평형. */
+  function pickDefaultAreaKey(areas, prefs) {
+    const P = prefs || [84, 59];
+    const list = (areas || []).filter(a => a && a.key != null);
+    if (!list.length) return null;
+    const m2Of = a => a.m2 > 0 ? a.m2 : Number(a.key) || 0;
+    const traded = list.filter(a => (a.trades || []).length > 0);
+    if (!traded.length) return list[0].key;
+    const sorted = traded.slice().sort((a, b) =>
+      Math.abs(m2Of(a) - P[0]) - Math.abs(m2Of(b) - P[0]) ||
+      Math.abs(m2Of(a) - P[1]) - Math.abs(m2Of(b) - P[1]) ||
+      (b.trades || []).length - (a.trades || []).length);
+    return sorted[0].key;
+  }
+
+  /* FR-02 단지명 정규화 (K-apt 매칭·검색 공용): 공백·괄호·'아파트' 접미어 제거 */
+  function normNameK(s) { return String(s || '').replace(/\s|\(.*?\)|아파트$/g, ''); }
+
+  /* FR-01 검색 정규화: 통칭(동이름+단지명)·브랜드 접두어·공백 차이를 흡수.
+     entry: {n:단지명, gn:시군구, d:법정동}, opts: {brandPrefixes:[], aliases:[]} */
+  function liveSearchHay(entry, aliases) {
+    const dongPrefix = String(entry.d || '').replace(/동$/, '');
+    const parts = [entry.n, entry.gn, entry.d, dongPrefix + entry.n, String(entry.gn || '').replace(/\s/g, '') + entry.n, ...(aliases || [])];
+    return parts.map(normNameK).join('').toLowerCase();
+  }
+  function liveSearchMatch(q, entry, opts) {
+    const o = opts || {};
+    const hay = liveSearchHay(entry, o.aliases);
+    const tokens = String(q || '').toLowerCase().split(/\s+/).map(normNameK).filter(Boolean);
+    if (!tokens.length) return false;
+    if (tokens.every(t => hay.includes(t))) return true;
+    // 브랜드 접두어 제거 후 재시도 (예: "e편한세상옥수파크힐스" → "옥수파크힐스")
+    const brands = o.brandPrefixes || [];
+    if (!brands.length) return false;
+    const re = new RegExp(`^(${brands.map(normNameK).join('|').toLowerCase()})`);
+    const stripped = tokens.map(t => t.replace(re, '')).filter(Boolean);
+    return stripped.length > 0 && stripped.every(t => hay.includes(t));
+  }
+
+  /* FR-01 분할 등재 단지 병합: 실거래명이 동 구간별로 나뉜 물리단지를 하나로 합친다.
+     거래 원자료는 그대로 합산, 전세 대표값은 관측 수가 많은 쪽을 대표로 쓴다. */
+  function mergeLiveEntries(displayName, entries) {
+    const areas = {};
+    for (const e of entries) {
+      for (const [k, a] of Object.entries(e.areas || {})) {
+        if (!areas[k]) areas[k] = { m2: a.m2, trades: [], jeonse: null };
+        areas[k].trades.push(...(a.trades || []));
+        if (a.jeonse && (!areas[k].jeonse || (a.jeonse.n || 0) > (areas[k].jeonse.n || 0))) areas[k].jeonse = a.jeonse;
+      }
+    }
+    for (const k of Object.keys(areas)) areas[k].trades.sort((x, y) => (y.ym + '|' + String(y.d || 0).padStart(2, '0')).localeCompare(x.ym + '|' + String(x.d || 0).padStart(2, '0')));
+    const first = entries[0] || {};
+    return {
+      name: displayName, dong: first.dong, builtYear: first.builtYear || null, aptSeq: first.aptSeq || null,
+      areas, mergedFrom: entries.map(e => e.name)
+    };
+  }
+
+  /* FR-02 K-apt 기본정보 매칭: complex_info 샤드(byName, normName 키)에서 실거래 단지명으로 조회 */
+  function matchKaptInfo(info, entryName) {
+    if (!info || !info.byName) return null;
+    const rec = info.byName[normNameK(entryName)];
+    return rec && rec.households > 0 ? rec : null;
+  }
+
+  /* 생활권 허브 매칭 (ui에서 이동 — 순수화) */
+  function matchHubIn(hubs, dong, district) {
+    const norm = s => String(s || '').replace(/\s/g, '');
+    for (const h of (hubs && hubs.hubs) || []) {
+      const d1 = norm(district), d2 = norm(h.district);
+      if (!d1.includes(d2) && !d2.includes(d1)) continue;
+      if (norm(h.neighborhood).includes(norm(dong))) return h;
+    }
+    return null;
+  }
+
+  /* ═══ 자동수집 단지 → 엔진 스키마 (ui에서 이동 — AC-09 Node E2E 테스트 가능) ═══
+     entry: 샤드 단지 {name,dong,builtYear,aptSeq,areas}, region: regions.json 항목
+     o: { edits:{households,redevStage,supplyNext3yAvg,station}, ovPrice, areaKey,
+          conv, asOf, stations(STN), hubs(HUBS), dongLink([{st,min}]|null), kapt(rec|null), liveId } */
+  function buildAutoComplex(entry, region, o) {
+    const e = (o && o.edits) || {};
+    const STN = o.stations, kapt = o.kapt || null;
+    const gaps = [];
+    const hub = matchHubIn(o.hubs, entry.dong, region.district);
+    const hhManual = e.households > 0;
+    const hhKapt = !hhManual && kapt ? kapt.households : null;
+    const households = hhManual ? e.households : (hhKapt || null);
+    if (!households) gaps.push('세대수 미확인 (중립 가정)');
+    if (!e.redevStage) gaps.push('정비사업 단계 미확인');
+    if (!entry.builtYear) gaps.push('준공연도 미확인');
+    if (kapt && kapt.parkingRatio != null) gaps.push('브랜드·생활·자연환경 기본값 사용');
+    else gaps.push('주차·브랜드·생활·자연환경 기본값 사용');
+    if (!hub) gaps.push('교육 상세 미확인 (중립 가정)');
+
+    // 역 연결: 사용자 입력(MANUAL) > 법정동 자동 연결(ESTIMATED) > 미확인(UNKNOWN)
+    let stationLink = null, unknownTransport = false, stStatus = 'UNKNOWN';
+    const es = e.station;
+    if (es && es.st && STN && STN.stations[es.st]) {
+      stationLink = { primary: { st: es.st, min: es.min > 0 ? es.min : 8, status: 'MANUAL' } };
+      stStatus = 'MANUAL';
+    } else {
+      const dl = o.dongLink;
+      if (dl && dl.length && STN && STN.stations[dl[0].st]) {
+        stationLink = {
+          primary: { st: dl[0].st, min: dl[0].min, status: 'ESTIMATED' },
+          secondary: dl[1] && STN.stations[dl[1].st] ? { st: dl[1].st, min: dl[1].min } : null
+        };
+        stStatus = 'ESTIMATED';
+      } else { unknownTransport = true; }
+    }
+
+    const fieldStatus = {
+      price: o.ovPrice != null ? 'MANUAL' : 'VERIFIED',
+      jeonse: o.ovJeonse != null ? 'MANUAL' : (Object.values(entry.areas).some(a => a.jeonse) ? 'VERIFIED' : 'UNKNOWN'),
+      builtYear: entry.builtYear ? 'VERIFIED' : 'UNKNOWN',
+      households: hhManual ? 'MANUAL' : (hhKapt ? 'VERIFIED' : 'UNKNOWN'),
+      station: stStatus,
+      redev: e.redevStage ? 'MANUAL' : 'UNKNOWN',
+      supply: e.supplyNext3yAvg > 0 ? 'MANUAL' : 'ESTIMATED',
+      education: hub ? 'ESTIMATED' : 'UNKNOWN',
+      lifeNature: 'UNKNOWN',
+      product: households || (kapt && kapt.parkingRatio != null) ? 'ESTIMATED' : 'UNKNOWN'
+    };
+
+    const areas = Object.entries(entry.areas).map(([k, a]) => ({
+      key: k, label: `전용 ${k}㎡형`, m2: a.m2,
+      trades: (a.trades || []).map(t => ({ ym: t.ym, price: t.price, floor: t.floor })),
+      jeonse: a.jeonse ? a.jeonse.v : null, jeonseMeta: a.jeonse || null
+    })).sort((x, y) => Number(x.key) - Number(y.key));
+
+    // 이 단지에 매매 실거래가 전혀 없으면, 사용자가 입력한 시세를 앵커로 사용
+    const totTrades = areas.reduce((s, a) => s + a.trades.length, 0);
+    if (!totTrades && o.ovPrice > 0) {
+      const sel = areas.find(a => a.key === o.areaKey) || areas[0];
+      sel.trades = [{ ym: o.asOf, price: o.ovPrice, floor: 0 }];
+      gaps.push('매매 실거래 없음 — 입력 시세 기준');
+    }
+
+    return {
+      id: 'live|' + (o.liveId || `${region.code}|${entry.dong}|${entry.name}`), name: entry.name, aptSeq: entry.aptSeq || null,
+      city: region.sido, district: region.name, dong: entry.dong,
+      regionTier: region.tier, builtYear: entry.builtYear || null,
+      // §10·12: 임의 기본값 폐기 — 미확인은 null로 두고 엔진이 해당 항목을 제외·재정규화한다
+      households,
+      householdsNote: hhManual ? null : (hhKapt ? `K-apt 확인${kapt.asOf ? ' · ' + kapt.asOf + ' 기준' : ''}` : null),
+      householdsSource: hhManual ? 'MANUAL' : (hhKapt ? 'KAPT' : null),
+      brandTier: null,
+      parkingRatio: kapt && kapt.parkingRatio != null ? kapt.parkingRatio : null,
+      far: null, rentalShare: null,
+      redev: { stage: e.redevStage || 'none' },
+      conversionRate: o.conv != null ? o.conv : region.conv,
+      tags: ['실거래 자동'], dataGaps: gaps, fieldStatus, stationLink,
+      areas,
+      location: { subwayMin: stationLink ? stationLink.primary.min : null, unknownTransport, lines: [], transfer: false, express: false, futureTransit: null, jobMinutes: region.jobMinutes },
+      education: hub
+        ? { elemM: 400, chopuma: false, middlePref: hub.hub_type === 'school_zone' ? 4 : 3, hubId: hub.id, inHub: true, hubAccess: [], age3049: 0.31, studentTrend: 'stable' }
+        : null,   // 허브 매칭도 안 되면 교육은 미확인 — 평가 제외
+      life: null, nature: null,   // 시설 거리 데이터 미확보 — 평가 제외 (10분 기본값 폐기, §56)
+      supply: {
+        pop: region.pop, next3yAvg: e.supplyNext3yAvg > 0 ? e.supplyNext3yAvg : region.supplyNext3yAvg,
+        adjacentRatio: region.adjacentRatio, metroRatio: region.metroRatio,
+        unsoldLevel: 2, txVolumeLevel: 3, jeonseListingsLevel: 3, jeonseTrend: 'stable', regulated: region.regulated
+      }
+    };
   }
 
   /* 스트레스 테스트: 프리셋 id 배열 → 오버라이드 병합 후 재계산 */
@@ -899,7 +1122,10 @@ const AptEngine = (() => {
     return analyze(Object.assign({}, rawInput, { overrides: ov }), CFG, HUBS, JOBS, STN);
   }
 
-  return { analyze, applyStress, repRecentPrice, interp, weightedMedian, weightedPercentile, monthsBetween, clamp, round1 };
+  return {
+    analyze, applyStress, repRecentPrice, interp, weightedMedian, weightedPercentile, monthsBetween, clamp, round1,
+    josa, pickDefaultAreaKey, normNameK, liveSearchHay, liveSearchMatch, mergeLiveEntries, matchKaptInfo, matchHubIn, buildAutoComplex
+  };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = AptEngine;

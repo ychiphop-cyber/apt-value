@@ -1,0 +1,4 @@
+{
+  "enabled": false,
+  "note": "K-apt 공동주택 기본정보 자동연동 상태. data.go.kr에서 '공동주택 단지 목록제공 서비스'와 '공동주택 기본 정보제공 서비스'를 활용신청(자동승인)한 뒤 `node pipeline/complex_info.js`를 실행하면 지역별 샤드가 생성되고 enabled가 true로 바뀝니다. 승인 전까지 앱은 세대수를 UNKNOWN으로 유지합니다(임의 기본값 금지)."
+}

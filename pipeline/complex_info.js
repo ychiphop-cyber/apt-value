@@ -123,7 +123,9 @@ async function main() {
     fs.writeFileSync(path.join(OUT, `${region.code}.json`), JSON.stringify(out));
     console.log(`  ${region.name}: 단지 ${list.length}개 수집`);
   }
-  console.log(`완료: K-apt 단지 ${totalK}개 · 정보 ${matched}건 · API 호출 ${calls}회`);
+  // 앱이 지역 샤드 조회를 시작하도록 상태 갱신 (수집 전에는 enabled:false → 404 없이 UNKNOWN 유지)
+  fs.writeFileSync(path.join(OUT, 'status.json'), JSON.stringify({ enabled: true, asOf: new Date().toISOString().slice(0, 10), regions: regions.length }));
+  console.log(`완료: K-apt 단지 ${totalK}개 · 정보 ${matched}건 · API 호출 ${calls}회 · status.json enabled=true`);
 }
 
 if (require.main === module) main().catch(e => { console.error('실패:', e.message); process.exit(1); });
