@@ -5,7 +5,7 @@
    단지 소스 3종: ① 상세 프로필 샘플(DATA) ② 실거래 자동수집(data/live/*)
                  ③ 직접 입력
    ═══════════════════════════════════════════════════════════════════ */
-const APP_VERSION = '3.2.2';
+const APP_VERSION = '3.2.3';
 const DEBUG_MODE = /[?&]debug=true/.test(location.search);
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -169,7 +169,7 @@ function renderAptList(q) {
   const sampleCards = sample.map(c => `
     <button class="apt ${state.cxId === c.id && !state.manual && !state.liveSel ? 'sel' : ''}" data-id="${c.id}">
       <b>${esc(c.name)}</b>
-      <span class="l1">${esc(c.city)} ${esc(c.district)} ${esc(c.dong)} · ${c.builtYear}년 · ${c.households.toLocaleString()}세대</span>
+      <span class="l1">${esc(c.city)} ${esc(c.district)} ${esc(c.dong)} · ${c.builtYear}년 · ${c.households != null ? c.households.toLocaleString() : '—'}세대</span>
       <span class="tagrow"><span class="tg" style="color:var(--accent);border-color:var(--accent)">상세 프로필</span>${(c.tags || []).map(t => `<span class="tg">${esc(t)}</span>`).join('')}</span>
     </button>`).join('');
   const liveCards = liveMatches.map(e => `
@@ -627,7 +627,7 @@ function renderReport(r) {
   $('report').innerHTML = `
   <div class="hero">
     <div class="aptname">${esc(cx.name)} <span style="font-weight:500;color:var(--muted);font-size:13px">${esc(area.label)}</span></div>
-    <div class="aptsub">${esc(cx.city)} ${esc(cx.district)} ${esc(cx.dong)} · ${cx.builtYear}년 · ${cx.households.toLocaleString()}세대${isLive ? ' · 실거래 자동수집' : ''}</div>
+    <div class="aptsub">${esc(cx.city)} ${esc(cx.district)} ${esc(cx.dong)} · ${cx.builtYear ? `${cx.builtYear}년` : '준공연도 미확인'} · ${cx.households != null ? `${cx.households.toLocaleString()}세대` : '세대수 미확인'}${isLive ? ' · 실거래 자동수집' : ''}</div>
     <div class="quad">
       <div class="hs"><span class="k">현재 시장가격</span><div class="big">${fmtEokW(r.currentPrice)}</div>
         <div class="s">${mref ? `최근 실거래 ${esc(mref.latest.date)} · ${fmtEok(mref.latest.price)} · ${mref.latest.floor}층${(mref.latest.outlier || (r.repPrice && r.repPrice.anomalous)) ? ' <span class="stat est">이상거래 의심</span>' : ''}${r.repPrice && r.repPrice.anomalous && r.input.overrides.price == null ? ' — 이상 저가로 보여 최근 3개월 최고가로 표기' : ''}` : '실거래 기준'}</div></div>
