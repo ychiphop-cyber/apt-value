@@ -19,14 +19,45 @@ const st = n => STN.stations[n];
 ok(Object.keys(STN.stations).length > 300, '역 300개 이상 계산됨');
 ok(Object.values(STN.stations).every(s => s.sv >= 0 && s.sv <= 100 && isFinite(s.sv)), 'Station Value 0~100');
 ok(LINEI.lines.length >= 10 && LINEI.lines.every(l => l.golden > 0 && l.golden <= 100), '노선 지수 정상');
+ok(LINEI.lines.every(l => l.breakdown && isFinite(l.breakdown.median) && isFinite(l.breakdown.topAvg) && isFinite(l.breakdown.coreConnect)),
+  '노선 V4 산출근거(중앙값·상위25%평균·핵심연결성) 저장');
+{
+  const rk = nm => LINEI.lines.findIndex(x => x.name === nm) + 1;
+  ok(rk('GTX-A') > 5, `GTX-A 상위 5위 밖 (${rk('GTX-A')}위) — 차내시간만으로 과대평가 금지`);
+  ok(rk('공항철도') > 3, `공항철도 상위 3위 밖 (${rk('공항철도')}위)`);
+}
 
-/* Test A — 같은 3호선: 신사 vs 녹번, 차이가 컴포넌트로 설명 가능해야 */
+/* Test A — 같은 3호선: 신사 vs 녹번, 차이가 4축 컴포넌트로 설명 가능해야 */
 {
   const a = st('신사'), b = st('녹번');
   ok(a.sv > b.sv + 15, 'A: 신사 SV가 녹번보다 뚜렷이 높음');
-  ok(a.comps.job > b.comps.job && a.comps.net > b.comps.net && a.comps.dest > b.comps.dest,
-    'A: 차이가 직주·네트워크·목적지 컴포넌트로 설명됨');
+  ok(a.comps.transit > b.comps.transit && a.comps.econ > b.comps.econ && a.comps.biz > b.comps.biz,
+    'A: 차이가 교통·경제력·업무 축으로 설명됨');
   ok(a.gangnamMin < b.gangnamMin, 'A: 강남 접근시간 차이 반영');
+}
+
+/* Test A2 — V4 구조: 4축 존재·범위, 가중치 정합, 가치평가용 블렌드의 중복 축소 */
+{
+  const V4 = CFG.station.v4;
+  const sum = o => Object.values(o).reduce((a, b) => a + b, 0);
+  ok(Math.abs(sum(V4.axes) - 1) < 1e-9, 'A2: 표시용 4축 가중치 합 = 1');
+  ok(Math.abs(sum(V4.axesForValuation) - 1) < 1e-9, 'A2: 가치평가용 블렌드 가중치 합 = 1');
+  ok(V4.axesForValuation.econ < V4.axes.econ && V4.axesForValuation.edu < V4.axes.edu,
+    'A2: 가치평가용 블렌드는 경제력·교육 축 축소 (아파트 자체 실거래·교육점수와 중복 방지)');
+  ok(Object.values(STN.stations).every(s => ['transit', 'econ', 'edu', 'biz'].every(k =>
+    s.comps[k] >= 0 && s.comps[k] <= 100 && isFinite(s.comps[k]))), 'A2: 전 역 4축 0~100');
+  ok(Object.values(STN.stations).some(s => s.econSrc === 'live') &&
+    Object.values(STN.stations).some(s => s.econSrc === 'manual'), 'A2: 경제력 실거래/폴백 출처 구분 저장');
+}
+
+/* Test A3 — §16 주거·교육·자산 강지역이 업무 유동인구 없이도 합리적으로 평가 */
+{
+  const total = Object.keys(STN.stations).length;
+  for (const n of ['대치', '목동', '고덕', '올림픽공원', '평촌', '수내'])
+    ok(st(n).rank <= total * 0.35, `A3: ${n} 상위 35% 이내 (${st(n).rank}위/${total})`);
+  ok(st('대치').rank <= total * 0.10, `A3: 대치 상위 10% 이내 (${st('대치').rank}위)`);
+  ok(st('대치').comps.edu >= 90, `A3: 대치 교육·주거 축 최상위 (${st('대치').comps.edu})`);
+  ok(st('압구정').rank < st('서울역').rank, 'A3: 압구정(주거 최상급) > 서울역(업무 중심) — 업무축만으로 최상위 불가');
 }
 
 /* Test B — 가치 높은 단일노선 역 > 가치 낮은 노선 환승역 (환승 개수만으로 승리 금지) */
@@ -64,16 +95,16 @@ ok(LINEI.lines.length >= 10 && LINEI.lines.every(l => l.golden > 0 && l.golden <
   ok(dual.transit.bonus <= CFG.station.multiStation.totalBonusCap + 1e-9, 'D: 보너스 총량 캡 준수');
 }
 
-/* Test E — 경제력 높음·네트워크 보통 vs 경제력 보통·네트워크 우수: 다른 프로필로 설명 */
+/* Test E — 경제력 높음·교통 보통 vs 경제력 보통·교통 탁월: 다른 프로필로 설명 */
 {
-  const rich = st('압구정');   // wealth 매우 높음
-  const hub = st('서울역');    // wealth 보통, 네트워크 탁월
-  ok(rich.wealth > hub.wealth && hub.comps.net > rich.comps.net,
-    `E: 압구정(경제력 ${rich.wealth}·네트워크 ${rich.comps.net}) vs 서울역(경제력 ${hub.wealth}·네트워크 ${hub.comps.net}) 프로필 상이`);
+  const rich = st('압구정');   // 경제력 최상
+  const hub = st('서울역');    // 교통·업무 탁월, 주거 경제력 낮음
+  ok(rich.comps.econ > hub.comps.econ && hub.comps.transit >= rich.comps.transit,
+    `E: 압구정(경제력 ${rich.comps.econ}·교통 ${rich.comps.transit}) vs 서울역(경제력 ${hub.comps.econ}·교통 ${hub.comps.transit}) 프로필 상이`);
 }
 
 /* 대표역 스팟체크 — 순서 타당성 (사전 점수 조작 없음, 관계만 검증) */
-ok(st('강남').sv >= st('신사').sv, '강남 ≥ 신사');
+ok(st('강남').sv >= 90 && st('신사').sv >= 90, '강남·신사 최상위권(90+)');
 ok(st('신사').sv > st('수내').sv, '신사 > 수내');
 ok(st('판교').sv > st('평촌').sv, '판교 > 평촌');
 ok(st('잠실').sv > st('고덕').sv, '잠실 > 고덕');

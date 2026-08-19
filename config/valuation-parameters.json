@@ -46,8 +46,22 @@
 
   "station": {
     "note": "Station Intelligence Engine — 역별 점수 하드코딩 금지, 전 계수는 여기서만 관리",
-    "svWeights": { "jobAccess": 0.30, "destination": 0.25, "network": 0.25, "economy": 0.20 },
-    "svForTransportReweight": { "jobAccess": 0.35, "destination": 0.15, "network": 0.40, "economy": 0.10 },
+    "v4": {
+      "note": "Station Value V4 — 4축(교통·네트워크 / 역세권 경제력 / 교육·주거 생활권 / 업무·도시 중심성). 각 축은 전 역 백분위 정규화 후 가중합 — 한 변수의 지배 방지",
+      "axes": { "transit": 0.30, "econ": 0.35, "edu": 0.20, "biz": 0.15 },
+      "axesForValuation": { "transit": 0.55, "econ": 0.10, "edu": 0.10, "biz": 0.25 },
+      "valuationNote": "아파트 가치평가용 블렌드(svT)는 경제력·교육 축을 축소 — 단지 자체의 시장기준가(실거래)·교육점수와의 중복 계상(순환참조) 방지",
+      "transitSub": { "core": 0.50, "network": 0.35, "friction": 0.15 },
+      "coreWeights": { "gangnam": 0.50, "cbd": 0.30, "ybd": 0.20 },
+      "eduSub": { "hub": 0.55, "density": 0.45 },
+      "hubDecayKm": 1.1,
+      "hubTierCoef": { "1": 1.0, "2": 0.82, "3": 0.62, "4": 0.45 },
+      "econWinsorPct": [5, 95],
+      "econMinSamples": 3,
+      "wealthFallbackScore": [null, 15, 35, 55, 78, 93],
+      "densityLogRef": 40,
+      "lineV4": { "median": 0.50, "topQuartileAvg": 0.30, "coreConnect": 0.20, "displayMin": 22, "displayMax": 98 }
+    },
     "transportBlend": { "svT": 0.6, "gangnam": 0.4 },
     "futureTransitBonus": { "confirmed": 4, "planned": 1 },
     "transferPenaltyMin": 4,
@@ -62,7 +76,6 @@
     },
     "distanceDecay": [ { "min": 3, "f": 1.0 }, { "min": 6, "f": 0.95 }, { "min": 10, "f": 0.85 }, { "min": 15, "f": 0.68 }, { "min": 22, "f": 0.5 }, { "min": 30, "f": 0.32 } ],
     "multiStation": { "secondMax": 0.25, "thirdMax": 0.10, "totalBonusCap": 0.30, "newDestReachMin": 36 },
-    "lineScore": { "avgAll": 0.60, "top20": 0.25, "networkUtility": 0.15 },
     "generalized": {
       "note": "체감 이동시간 = 차내시간 + 대기(배차/2×가중) + 환승도보 + 진입시간 — GTX·공항철도가 차내시간만으로 과대평가되는 것 방지",
       "waitWeight": 0.6, "transferWalkMin": 3, "depthEntryMin": [1.5, 3, 5]
@@ -70,8 +83,7 @@
     "friction": { "base": 100, "headwayRef": 4, "perHeadwayMin": 5, "perFareStep": 12, "perDepthStep": 8, "floor": 20 },
     "displayCurve": [ { "p": 1, "s": 98 }, { "p": 3, "s": 95 }, { "p": 5, "s": 93 }, { "p": 10, "s": 88 }, { "p": 20, "s": 80 }, { "p": 35, "s": 70 }, { "p": 50, "s": 60 }, { "p": 70, "s": 47 }, { "p": 85, "s": 36 }, { "p": 100, "s": 24 } ],
     "corridor": { "svWeight": 0.7, "wealthWeight": 0.3, "windowShare": 0.25, "windowMinLen": 4 },
-    "goldenV3": { "corridorAvg": 0.65, "lineAvg": 0.20, "friction": 0.15, "displayMin": 22, "displayMax": 98 },
-    "wealthNote": "Station Wealth는 콘텐츠·참고용 — 아파트 적정가치 계산에 사용하지 않는다",
+    "wealthNote": "역세권 경제력은 주변 실거래가 백분위(winsorize·중앙값) — SV의 35% 축이며, 아파트 가치평가용 svT에서는 10%로 축소(중복 계상 방지)",
     "unknownTransportScore": 55,
     "maxTravelMin": 120
   },

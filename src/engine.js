@@ -313,7 +313,7 @@ const AptEngine = (() => {
       ft = `${cx.location.futureTransit}${conf ? '' : ' — 미확정은 제한 반영'}`;
     }
     // 직주근접: 역 기반 업무지 접근성 (도보거리 소폭 반영)
-    const jobScore = clamp(p.comps.job * (0.9 + 0.1 * pd), 0, 100);
+    const jobScore = clamp((p.jobAccess ?? p.comps.transit) * (0.9 + 0.1 * pd), 0, 100);
     const gangnamScore = Math.round(interp(p.gangnamMin, gCurve));
     return {
       score: clamp(score, 0, 100), jobScore, bonus, bonusNotes, futureNote: ft,

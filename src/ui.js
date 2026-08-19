@@ -5,7 +5,7 @@
    단지 소스 3종: ① 상세 프로필 샘플(DATA) ② 실거래 자동수집(data/live/*)
                  ③ 직접 입력
    ═══════════════════════════════════════════════════════════════════ */
-const APP_VERSION = '3.0.0';
+const APP_VERSION = '3.1.0';
 const DEBUG_MODE = /[?&]debug=true/.test(location.search);
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -671,7 +671,7 @@ function renderReport(r) {
   ${r.transit ? (() => {
     const t = r.transit, p = t.primary;
     const totalStn = Object.keys(STN.stations).length;
-    const goldenRows = p.lines.map(ln => { const L = LINEI.lines.find(x => x.name === ln); return L ? `<span class="badge gray" style="border-color:${L.color};color:var(--ink)"><i style="width:8px;height:8px;border-radius:50%;background:${L.color};display:inline-block"></i>${esc(ln)} 황금노선 지수 ${L.golden}</span>` : ''; }).join(' ');
+    const goldenRows = p.lines.map(ln => { const L = LINEI.lines.find(x => x.name === ln); return L ? `<span class="badge gray" style="border-color:${L.color};color:var(--ink)"><i style="width:8px;height:8px;border-radius:50%;background:${L.color};display:inline-block"></i>${esc(ln)} 노선 가치 ${L.golden}</span>` : ''; }).join(' ');
     let hopViz = '';
     for (const ln of p.lines) {
       const le = RAIL_LINES.find(x => x.name === ln && !x.overlay && x.stations.includes(p.st));
@@ -698,14 +698,13 @@ function renderReport(r) {
         <div class="v g${gradeCls(t.gangnamScore)}">${t.gangnamScore}<em> / 100</em></div>
         <div class="s">${esc(p.st)}에서 강남권 약 ${t.gangnamMin}분</div></div>
     </div>
-    <h3 class="mini-h">역 가치 구성</h3>
-    ${sb('업무지 접근성', p.comps.job)}${sb('네트워크 연결성', p.comps.net)}${sb('역 목적지가치', p.comps.dest)}${sb('역세권 경제활동', p.comps.econ)}
-    <div class="chips" style="margin-top:10px">${goldenRows}
-      <span class="badge blue">Station Wealth ${p.wealth} — 참고용(가치평가 미사용)</span></div>
+    <h3 class="mini-h">역 가치 구성 — 4축 (수도권 전체 역 대비 백분위)</h3>
+    ${sb('교통·네트워크 (30%)', p.comps.transit)}${sb('역세권 경제력 (35%)', p.comps.econ)}${sb('교육·주거 생활권 (20%)', p.comps.edu)}${sb('업무·도시 중심성 (15%)', p.comps.biz)}
+    <div class="chips" style="margin-top:10px">${goldenRows}</div>
     ${hopViz}
     <div class="op" style="margin-top:14px"><div class="ot">분석</div><p>${sentence}</p></div>
     <button class="btn ghost" id="openMapFromResult" style="width:100%;margin-top:8px">🚇 역 가치 지도에서 ${esc(p.st)}역 보기</button>
-    <p class="subtle" style="margin-top:8px">역 가치는 그래프 이동시간·공개 데이터 기반 자동 계산(추정 포함)이며, 기존 교통점수를 대체할 뿐 별도 가산되지 않습니다.</p>
+    <p class="subtle" style="margin-top:8px">역 가치는 그래프 이동시간·실거래·공개 데이터 기반 자동 계산(추정 포함)이며, 기존 교통점수를 대체할 뿐 별도 가산되지 않습니다. 아파트 평가에 쓰는 블렌드(svT)는 역의 경제력·교육 축을 각 ${Math.round(CFG.station.v4.axesForValuation.econ * 100)}%·${Math.round(CFG.station.v4.axesForValuation.edu * 100)}%로 축소해, 단지 자체의 실거래 기준가·교육점수와 같은 정보가 두 번 계산되지 않게 합니다.</p>
   </div>`; })() : ''}
 
   <div class="card">
@@ -838,6 +837,58 @@ function renderReport(r) {
     </div></details>
   </div>
 
+  ${(() => {
+    const W = CFG.scores.living;
+    const cats = [['transport', '교통·역세권'], ['job', '직주근접'], ['education', '교육'], ['life', '생활편의'], ['nature', '자연환경'], ['product', '단지 경쟁력']];
+    const usedW = cats.reduce((a, [k]) => a + (hd.subs[k] != null ? W[k] : 0), 0);
+    const renorm = usedW < 0.999;
+    const rows = cats.map(([k, label]) => {
+      const s = hd.subs[k];
+      const reason = k === 'education' ? ((hd.notes.education || [])[1] || (hd.notes.education || [])[0] || '—') : ((hd.notes[k] || [])[0] || '—');
+      if (s == null) return `<tr style="color:var(--muted)"><td>${label}</td><td style="text-align:right">—</td><td style="text-align:right">${Math.round(W[k] * 100)}%</td><td style="text-align:right">제외</td><td>${esc(reason)}</td></tr>`;
+      const effW = W[k] / usedW;
+      return `<tr><td>${label}</td><td style="text-align:right"><b>${Math.round(s)}</b></td><td style="text-align:right">${Math.round(W[k] * 100)}%${renorm ? `→${Math.round(effW * 100)}%` : ''}</td><td style="text-align:right">${(s * effW).toFixed(1)}</td><td>${esc(reason)}</td></tr>`;
+    }).join('');
+    const lm = { transport: '교통·역세권', job: '직주근접', education: '교육', life: '생활편의', nature: '자연환경', product: '상품성', jeonseSupport: '전세지지력', supplyDemand: '수급', scarcity: '희소성', future: '미래가치', location: '핵심입지', liquidity: '유동성', transit: '교통' };
+    const wline = obj => Object.entries(obj).map(([k, v]) => `${lm[k] || k} ${Math.round(v * 100)}%`).join(' · ');
+    const cBadge = { '높음': 'green', '보통': 'blue', '낮음': 'amber' }[conf.label] || 'gray';
+    const AV = CFG.station.v4 ? CFG.station.v4.axesForValuation : null;
+    return `<div class="card" id="modelCard">
+    <h2>이 아파트의 가치는 어떻게 계산했나요?</h2>
+    <p class="hint">점수의 근거를 공개합니다 — 아래 가중치와 점수는 설명용 예시가 아니라 이번 계산에 실제 사용된 값(config)입니다.</p>
+    <p style="font-size:13.5px;color:var(--ink2);line-height:1.75;margin:0 0 12px">이 모델은 현재 가격만 보지 않습니다. 교통·역 가치·직주근접·교육·생활편의·주거환경·단지 규모·연식·브랜드·정비사업 가능성·미래 성장 시나리오를 함께 계산해, 같은 지역·수도권 아파트 대비 <b>상대가치</b>를 평가합니다. 그래서 결과도 하나의 '적정가'가 아니라 <b>시장 기준가 범위 · 금융 지지가치 · 판정 3종</b>으로 제시합니다.</p>
+    <h3 class="mini-h">① 이 단지의 주거가치 ${Math.round(r.scores.living.total)}점은 이렇게 나왔습니다</h3>
+    <div class="tblwrap"><table class="modeltbl"><thead><tr><th>평가항목</th><th>점수</th><th>가중치</th><th>기여도</th><th>평가 이유</th></tr></thead><tbody>${rows}
+      <tr style="font-weight:700;border-top:2px solid var(--line)"><td>주거가치 합계</td><td></td><td></td><td style="text-align:right">${Math.round(r.scores.living.total)}</td><td style="font-weight:400;color:var(--muted)">${renorm ? '미확인 항목은 제외하고 나머지 가중치를 재정규화한 합계' : '가중 평균'}</td></tr></tbody></table></div>
+    <h3 class="mini-h">② 전체 평가 구조 — 실제 가중치</h3>
+    <div class="kv"><span>주거가치</span><span style="text-align:left;flex:2.2">${wline(W)}</span></div>
+    <div class="kv"><span>투자가치</span><span style="text-align:left;flex:2.2">${wline(CFG.scores.invest)}</span></div>
+    <div class="kv"><span>장기 경쟁력</span><span style="text-align:left;flex:2.2">${wline(CFG.structural.weights)}</span></div>
+    <div class="kv"><span>가격 판정</span><span style="text-align:left;flex:2.2">시장 상대평가(기준가 범위 대비) · 금융 지지력(전세·금리 기반) · 미래 기대 반영도(역산 성장률) — 근거는 위 '가격 판정 산출 근거'</span></div>
+    <h3 class="mini-h">③ 각 항목은 어떤 데이터로 계산되나</h3>
+    <ul style="margin:4px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink2);line-height:1.8">
+      <li><b>가격·시장 기준가</b> — 국토교통부 실거래가(매매·전월세 자동수집), 최근 ${mref ? mref.windowDays : 90}일 동일평형 가중중앙값 범위. 이상거래는 자동 저가중.</li>
+      <li><b>교통·역세권</b> — 가장 가까운 역까지 도보시간 × 역 가치(Station Value: 교통·네트워크 30 / 역세권 경제력 35 / 교육·주거 20 / 업무·중심성 15). 환승·급행·복수역 보너스는 '새로 열리는 목적지'가 있을 때만.</li>
+      <li><b>직주근접</b> — 주요 업무지 10곳까지의 체감 이동시간(대기·환승·진입 포함).</li>
+      <li><b>교육</b> — 학교 접근성·학군 선호·학원가 허브 생활권·수요 지속성. 역 가치의 교육 축은 '생활권의 구조적 교육력', 이 항목은 '이 단지에서 실제 이용 가능한 정도'로 역할을 분리합니다.</li>
+      <li><b>단지 경쟁력</b> — 세대수·연식·브랜드·주차·임대비중. 정비사업 가능성은 미래 옵션가치에서 별도 평가.</li>
+      <li><b>미래가치</b> — 수요 지속·공급 희소·교통 변화·교육 선호·정비 옵션 5축 → 성장률 시나리오(g)로 연결.</li>
+    </ul>
+    ${AV ? `<p class="subtle" style="margin-top:8px">중복 계산 방지 — 역 가치의 '역세권 경제력'(주변 실거래)과 '교육' 축은 아파트 평가용 블렌드에서 각 ${Math.round(AV.econ * 100)}%·${Math.round(AV.edu * 100)}%로 축소 반영됩니다. 단지 자체의 시장 기준가·교육점수와 같은 정보가 두 번 들어가지 않게 하기 위한 장치입니다.</p>` : ''}
+    <h3 class="mini-h">④ 이 결과의 한계</h3>
+    <ul style="margin:4px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink2);line-height:1.8">
+      <li>감정평가 가격이 아닙니다 — 공개 데이터 기반의 상대가치 모델입니다.</li>
+      <li>거래량이 적거나 데이터가 부족한 단지·지역은 신뢰도가 낮을 수 있습니다 (아래 신뢰도 표시).</li>
+      <li>개발계획·재건축·정책 변화 등 미래 변수는 실제 결과와 다를 수 있습니다.</li>
+      <li>개별 동·층·향·내부상태는 반영되지 않습니다.</li>
+    </ul>
+    <div class="chips" style="margin-top:10px">
+      <span class="badge ${cBadge}">데이터 신뢰도 ${conf.label} (${conf.score}/100)</span>
+      <span class="badge gray">기준가 거래 ${mref ? mref.n : r.market.compCount}건</span>
+      <span class="badge gray">데이터 충족률 ${(r.fillRate * 100).toFixed(0)}%</span>
+    </div>
+  </div>`; })()}
+
   <div class="card" id="cmpCard">
     <h2>다른 단지와 비교</h2>
     <p class="hint">같은 돈으로 무엇을 사는 것인지 — 상세 프로필 단지와 나란히 봅니다.</p>
@@ -968,7 +1019,21 @@ function renderCompare() {
 }
 
 /* ═══════════════ 역 가치 지도 (Station Intelligence 시각화) ═══════════════ */
-const mapState = { built: false, mode: 'sv', line: null, sel: null, netPct: {} };
+const mapState = { built: false, mode: 'sv', line: null, sel: null, showAll: false };
+
+/* 노선 대표색 (rail_network의 실제 노선색 재사용) · 역의 대표 노선 = 노선 지수 순 */
+const LINE_COLOR = {};
+RAIL_LINES.forEach(l => { const nm = l.name.replace(' 급행', ''); if (!(nm in LINE_COLOR)) LINE_COLOR[nm] = l.color; });
+function repLinesOf(s) {
+  const ord = LINEI.lines.filter(L => (s.lines || []).includes(L.name)).map(L => L.name);
+  for (const n of (s.lines || [])) if (!ord.includes(n)) ord.push(n);
+  return ord;
+}
+/* 원 크기: 점수 구간이 즉시 구분되도록 비선형 곡선 (하위 ~5px → 최상위 22px 상한) */
+function svRadius(v) {
+  const t = Math.max(0, Math.min(1, (v - 24) / 74));
+  return 5 + 17 * Math.pow(t, 1.6);
+}
 
 function openMap(focusStation) {
   document.querySelectorAll('.step').forEach(s => s.dataset.wasHidden = s.hidden ? '1' : '0');
@@ -992,12 +1057,7 @@ function metricOf(s) { return mapState.mode === 'sv' ? s.sv : s.wealth; }
 
 function buildMap() {
   mapState.built = true;
-  // 네트워크 백분위 (교통 대비 가격 콘텐츠용)
-  const entries = Object.entries(STN.stations);
-  const netSorted = entries.slice().sort((a, b) => a[1].comps.net - b[1].comps.net);
-  netSorted.forEach(([n], i) => { mapState.netPct[n] = Math.round((i + 1) / netSorted.length * 100); });
-
-  // 노선 칩 (Golden Corridor 지수순)
+  // 노선 칩 (노선 가치 지수순)
   $('lineChips').innerHTML = `<button class="lchip" data-line="" aria-pressed="true">전체</button>` +
     LINEI.lines.map(l => `<button class="lchip" data-line="${esc(l.name)}" aria-pressed="false"><i style="background:${l.color}"></i>${esc(l.name)} ${l.golden}</button>`).join('');
   $('lineChips').querySelectorAll('.lchip').forEach(b => b.onclick = () => {
@@ -1009,8 +1069,8 @@ function buildMap() {
     mapState.mode = b.dataset.v;
     $('mapMode').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
     $('mapHint').textContent = mapState.mode === 'sv'
-      ? '역 가치(Station Value) — 업무지 접근·목적지·네트워크·경제활동으로 자동 계산. 아파트 교통가치 평가에 쓰이는 지표입니다.'
-      : '역세권 경제력(Station Wealth) — 역 주변 주거 자산 수준의 추정 지표. 참고용 콘텐츠이며 아파트 가치평가에는 사용하지 않습니다.';
+      ? '역 가치(Station Value) — 교통·네트워크 30% · 역세권 경제력 35% · 교육·주거 생활권 20% · 업무·도시 중심성 15%로 자동 계산합니다. 원의 크기 = 역 가치, 원의 색 = 노선.'
+      : '역세권 경제력 — 역 생활권(법정동) 실거래 ㎡당 가격 중앙값의 전 역 대비 백분위입니다. Station Value의 35% 축이며, 아파트 평가에는 축소 반영됩니다.';
     drawMap(); renderRank();
     if (mapState.sel) selectStation(mapState.sel);
   });
@@ -1060,26 +1120,36 @@ function drawMapLeaflet() {
     const all = [...M.lineStations].filter(s => STN.stations[s] && STN.stations[s].c).map(s => STN.stations[s].c);
     if (all.length) M.lmap.fitBounds(L.latLngBounds(all).pad(0.12));
   }
-  // 역 버블
+  // 역 버블 — 크기 = 역 가치(비선형), 색 = 대표 노선색, 이중 테두리 = 환승역
   M.markerLayer.clearLayers();
   M.markers = {};
-  const ac = accentColor();
   const names = Object.keys(STN.stations).filter(n => STN.stations[n].c);
   for (const n of names.sort((a, b) => metricOf(STN.stations[a]) - metricOf(STN.stations[b]))) {
     const s = STN.stations[n];
     const v = metricOf(s);
     const faded = lineOn && !M.lineStations.has(n);
+    const reps = repLinesOf(s);
+    const col = LINE_COLOR[reps[0]] || accentColor();
+    const r = svRadius(v);
+    if (reps.length >= 2 && !faded) {
+      L.circleMarker(s.c, {
+        radius: r + 2.4, color: LINE_COLOR[reps[1]] || '#888', weight: 2.2,
+        fill: false, opacity: 0.9, interactive: false
+      }).addTo(M.markerLayer);
+    }
     const mk = L.circleMarker(s.c, {
-      radius: 3 + Math.pow(v / 100, 2) * 15,
-      color: M.sel === n ? '#111' : '#fff', weight: M.sel === n ? 2 : 0.7,
-      fillColor: ac, fillOpacity: faded ? 0.06 : 0.2 + Math.pow(v / 100, 1.5) * 0.65,
+      radius: r,
+      color: M.sel === n ? '#111' : '#fff', weight: M.sel === n ? 2.5 : 1,
+      fillColor: col, fillOpacity: faded ? 0.07 : 0.85,
       interactive: !faded
     }).addTo(M.markerLayer);
     mk.on('click', () => selectStation(n));
     M.markers[n] = mk;
   }
   renderMapTips();
-  $('mapLegend').innerHTML = `<span>● 크기·진하기 = ${M.mode === 'sv' ? 'Station Value' : 'Station Wealth'}</span><span>확대할수록 더 많은 역 이름·점수가 표시됩니다</span><span>역 ${names.length}개 · 자동 계산 (${esc(STN.meta.updatedAt)})</span>`;
+  const lg = [[50, '중위'], [75, '상위'], [92, '최상위']].map(([v, k]) =>
+    `<span class="lgi"><i class="lgc" style="width:${Math.round(svRadius(v) * 2)}px;height:${Math.round(svRadius(v) * 2)}px"></i>${k} ${v}점</span>`).join('');
+  $('mapLegend').innerHTML = `<span>원 크기 = ${M.mode === 'sv' ? '역 가치' : '역세권 경제력'}</span>${lg}<span>원 색 = 노선 색상 · 겹테두리 = 환승역</span><span>역 ${names.length}개 · 자동 계산 (${esc(STN.meta.updatedAt)})</span>`;
 }
 
 /* 줌 레벨별 라벨 (§66·71 — 숫자 겹침 방지) */
@@ -1135,15 +1205,16 @@ function drawMapSVG() {
     const s = STN.stations[n];
     const v = metricOf(s);
     const x = X(s.c[1]).toFixed(1), y = Y(s.c[0]).toFixed(1);
-    const rr = (2 + Math.pow(v / 100, 1.7) * 10).toFixed(1);
+    const rr = (svRadius(v) * 0.62).toFixed(1);
+    const col = LINE_COLOR[repLinesOf(s)[0]] || 'var(--accent)';
     const dim = lineOn && !lineStations.has(n);
     dots += `<g class="stn ${dim ? 'dim' : ''} ${mapState.sel === n ? 'sel' : ''}" data-st="${esc(n)}">
-      <circle cx="${x}" cy="${y}" r="${rr}" fill="var(--accent)" fill-opacity="${(0.25 + v / 100 * 0.72).toFixed(2)}"></circle>
+      <circle cx="${x}" cy="${y}" r="${rr}" fill="${col}" fill-opacity="0.85" stroke="#fff" stroke-width="0.6"></circle>
       ${labelSet.has(n) && !dim ? `<text class="slabel ${v >= 85 ? 'hi' : ''}" x="${x}" y="${(y - rr - 2.5)}" text-anchor="middle">${esc(n)}${lineOn ? ' ' + Math.round(v) : ''}</text>` : ''}
     </g>`;
   }
   $('mapBox').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="역 가치 지도">${paths}${dots}</svg>`;
-  $('mapLegend').innerHTML = `<span>● 크기·진하기 = ${mapState.mode === 'sv' ? 'Station Value' : 'Station Wealth'}</span><span>오프라인 개념도 모드</span>`;
+  $('mapLegend').innerHTML = `<span>원 크기 = ${mapState.mode === 'sv' ? '역 가치' : '역세권 경제력'} · 원 색 = 노선</span><span>오프라인 개념도 모드</span>`;
   $('mapBox').querySelectorAll('.stn').forEach(g => g.onclick = () => selectStation(g.dataset.st));
 }
 
@@ -1164,30 +1235,35 @@ function selectStation(name) {
     hop += `<h3 class="mini-h">한 정거장의 가치 — ${esc(le.name)}</h3><div class="hopviz">${trio.map(x => { const d = STN.stations[x]; return `<div class="hop ${x === name ? 'cur' : ''}"><div class="hn">${esc(x)}</div><div class="hv">${d ? Math.round(d.sv) : '—'}</div><div class="hs">SV</div></div>`; }).join('')}</div>`;
     if (hop.split('hopviz').length > 2) break;
   }
-  // 교통 대비 상대가치 (§36 — 콘텐츠 전용)
+  // 교통 대비 가격 해석 (콘텐츠)
   let rel = '';
-  if (s.areaPriceLevel != null) {
-    const netP = mapState.netPct[name] ?? 50;
-    const diff = netP - s.areaPriceLevel;
+  {
+    const diff = s.comps.transit - s.comps.econ;
     let msg;
-    if (diff >= 20) msg = '역 네트워크 가치 대비 주변 주택가격 수준이 낮습니다 — 교통 대비 상대적으로 저렴한 생활권입니다.';
-    else if (diff <= -20) msg = '주변 주택가격 수준이 역 네트워크 가치보다 높습니다 — 이 지역의 가격은 교통보다 학군·환경·신축·희소성 등의 영향이 더 큰 것으로 보입니다.';
-    else msg = '역 네트워크 가치와 주변 주택가격 수준이 대체로 부합합니다.';
-    rel = `<h3 class="mini-h">교통 대비 가격 (참고 콘텐츠)</h3>
-      ${sb('역 네트워크 가치', netP)}${sb('주변 주택가격 수준', s.areaPriceLevel)}
-      <p class="subtle">${msg} ※ 실거래 기반 백분위 비교이며 아파트 가치평가에는 사용하지 않습니다.</p>`;
+    if (diff >= 20) msg = '교통·네트워크 가치 대비 주변 주택가격 수준이 낮습니다 — 교통 대비 상대적으로 저렴한 생활권입니다.';
+    else if (diff <= -20) msg = '주변 주택가격 수준이 교통·네트워크 가치보다 높습니다 — 이 생활권의 가격은 교통보다 학군·환경·신축·희소성의 영향이 더 큰 것으로 보입니다.';
+    else msg = '교통·네트워크 가치와 주변 주택가격 수준이 대체로 부합하는 생활권입니다.';
+    rel = `<p class="subtle" style="margin-top:8px">${msg}</p>`;
   }
+  const srcTag = s.econSrc === 'live'
+    ? '<span class="stat ok" style="margin-left:4px">실거래 기반</span>'
+    : '<span class="stat est" style="margin-left:4px">추정(실거래 표본 부족)</span>';
+  const sub = s.sub || {};
   $('stnCard').hidden = false;
   $('stnCard').innerHTML = `
     <div class="stnhead"><b>${esc(name)}</b>
-      <span>${s.lines.map(esc).join(' · ')}${s.express ? ' · 급행/광역' : ''}</span></div>
+      <span>${s.lines.map(l => `<i style="width:9px;height:9px;border-radius:50%;background:${LINE_COLOR[l] || 'var(--muted)'};display:inline-block;margin-right:3px"></i>${esc(l)}`).join(' ')}${s.express ? ' · 급행/광역' : ''}</span></div>
     <div class="tiles3" style="grid-template-columns:1fr 1fr;margin-top:10px">
-      <div class="t3" style="cursor:default"><div class="k">Station Value</div><div class="v g${gradeCls(s.sv)}">${Math.round(s.sv)}<em> /100</em></div><div class="s">수도권 ${total}개 역 중 ${s.rank}위 · 상위 ${s.rankPct}%</div></div>
-      <div class="t3" style="cursor:default"><div class="k">Station Wealth <span class="stat info" style="margin-left:2px">참고용</span></div><div class="v">${s.wealth}<em> /100</em></div><div class="s">역세권 경제력 추정 — 가치평가 미사용</div></div>
+      <div class="t3" style="cursor:default"><div class="k">Station Value</div><div class="v g${gradeCls(s.sv)}">${Math.round(s.sv)}<em> /100</em></div><div class="s">수도권 ${total}개 역 중 <b>${s.rank}위</b> · 상위 ${s.rankPct}%</div></div>
+      <div class="t3" style="cursor:default"><div class="k">역세권 경제력${srcTag}</div><div class="v">${s.wealth}<em> /100</em></div><div class="s">생활권 실거래 ㎡가 백분위 — SV의 35% 축</div></div>
     </div>
-    ${sb('업무지 접근성', s.comps.job)}${sb('네트워크 연결성', s.comps.net)}${sb('목적지가치', s.comps.dest)}${sb('경제활동', s.comps.econ)}
-    <div class="kv"><span>강남 핵심 업무지</span><span>약 ${s.gangnamMin}분</span></div>
-    ${hop}${rel}`;
+    <h3 class="mini-h">점수 구성 — 4축 (전체 역 대비 백분위)</h3>
+    ${sb('교통·네트워크 30%', s.comps.transit)}${sb('역세권 경제력 35%', s.comps.econ)}${sb('교육·주거 생활권 20%', s.comps.edu)}${sb('업무·도시 중심성 15%', s.comps.biz)}
+    <p class="subtle" style="margin-top:6px">교통: 핵심지 체감접근 ${sub.core ?? '—'} · 네트워크 ${sub.net ?? '—'} · 운행편의 ${sub.fric ?? '—'} /
+      교육·주거: 학원가 접근 ${sub.hubEdu ?? '—'}${s.hubName ? ` (${esc(s.hubName)})` : ''} · 단지 밀집 ${sub.density ?? '—'}</p>
+    <div class="kv"><span>강남 핵심 업무지</span><span>약 ${s.gangnamMin}분 (대기·환승 포함 체감시간)</span></div>
+    ${hop}${rel}
+    <p class="subtle">아파트 평가에는 이 역의 교통·업무 축을 중심으로 반영하고, 경제력·교육 축은 축소 반영합니다(중복 계산 방지).</p>`;
   $('stnCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -1196,15 +1272,19 @@ function renderLineCard() {
   if (!nm) { $('lineCard').hidden = true; return; }
   const L = LINEI.lines.find(x => x.name === nm);
   if (!L) { $('lineCard').hidden = true; return; }
+  const B = L.breakdown || {};
   const strengths = [];
+  if (B.topAvg >= 85) strengths.push(`상위 ${B.topN}개 역 평균 ${B.topAvg} — 핵심 생활권 구간이 강함`);
+  if (B.median >= 70) strengths.push(`역 가치 중앙값 ${B.median} — 노선 전반이 고르게 높음`);
+  if (B.coreConnect >= 75) strengths.push(`강남·도심·여의도 핵심지 연결성 ${B.coreConnect}`);
   if (L.centersOnLine.length) strengths.push(`${L.centersOnLine.join('·')} 업무지 직접 연결`);
-  if (L.corridor) strengths.push(`Golden Corridor ${L.corridor.avg} — ${L.corridor.stations.slice(0, 4).join('·')} 고가치 벨트 관통`);
+  if (L.corridor) strengths.push(`Golden Corridor — ${L.corridor.stations.slice(0, 4).join('·')} 고가치 벨트 관통`);
   if (L.friction >= 90) strengths.push('짧은 배차·낮은 이용 마찰 (일상 교통 편의)');
-  if (L.util >= 60) strengths.push('노선 전반의 네트워크 효용 높음');
   const weaknesses = [];
+  if (B.median < 55) weaknesses.push(`역 가치 중앙값 ${B.median} — 외곽·저수요 구간 비중이 큼 (핵심 구간 위주로 볼 것)`);
   if (L.stdev >= 16) weaknesses.push(`전체 역의 가치 편차가 큼(±${L.stdev}) — 같은 노선이라도 역마다 프리미엄이 다름`);
-  if (L.friction < 70) weaknesses.push(`이용 마찰 높음 — 배차 ${L.svc.headway}분${L.svc.fare ? ' · 별도요금' : ''}${L.svc.depth >= 3 ? ' · 깊은 역사(진입시간)' : ''} → 일상 이용 편의 감점`);
-  if (L.avg < 45) weaknesses.push('노선 평균 접근성은 보통 이하 — 핵심 구간 위주로 평가 필요');
+  if (L.friction < 70) weaknesses.push(`이용 마찰 높음 — 배차 ${L.svc.headway}분${L.svc.fare ? ' · 별도요금' : ''}${L.svc.depth >= 3 ? ' · 깊은 역사(진입시간)' : ''} → 역별 교통 축에서 감점`);
+  if (B.coreConnect != null && B.coreConnect < 60) weaknesses.push(`핵심지 연결성 ${B.coreConnect} — 강남·도심·여의도 접근이 상대적으로 약함`);
   if (!weaknesses.length) weaknesses.push('뚜렷한 구조적 약점 없음');
   const corr = new Set((L.corridor && L.corridor.stations) || []);
   const profile = (L.profile || []).map(p => `
@@ -1212,28 +1292,45 @@ function renderLineCard() {
       <div class="pbar"><i style="height:${Math.max(6, p.sv)}%"></i></div>
       <div class="pv">${p.sv}</div><div class="pn">${esc(p.n)}</div>
     </div>`).join('');
+  const tops = (L.topStations || []).map(t => `<span class="badge gray" style="cursor:pointer" data-st="${esc(t.n)}">${esc(t.n)} ${t.sv}</span>`).join(' ');
   $('lineCard').hidden = false;
   $('lineCard').innerHTML = `
-    <h2><i style="width:10px;height:10px;border-radius:50%;background:${L.color};display:inline-block;margin-right:6px"></i>${esc(nm)} — 황금노선 지수 ${L.golden} / 100 <span style="font-size:12px;color:var(--muted)">(${LINEI.lines.findIndex(x => x.name === nm) + 1}위)</span></h2>
-    <p class="hint">Golden Corridor ${L.corridor ? L.corridor.avg : '—'} · 전체 역 평균 ${L.avg} · 운행 편의(배차 ${L.svc.headway}분${L.svc.fare ? '·별도요금' : ''}${L.svc.depth >= 3 ? '·심도 깊음' : ''}) ${L.friction} · ${L.count}개 역 — 역 점수의 합이 아니라, 노선이 관통하는 고가치 벨트 중심으로 계산합니다.</p>
+    <h2><i style="width:10px;height:10px;border-radius:50%;background:${L.color};display:inline-block;margin-right:6px"></i>${esc(nm)} — 노선 가치 ${L.golden} / 100 <span style="font-size:12px;color:var(--muted)">(${LINEI.lines.findIndex(x => x.name === nm) + 1}위)</span></h2>
+    <p class="hint">노선 가치 = 전체 역 중앙값 50% + 상위 25% 역 평균 30% + 핵심지 연결성 20% — 초고가 역 한두 개가 노선을 끌어올리지도, 외곽 구간이 핵심 생활권을 희석하지도 않게 설계했습니다.</p>
+    <div class="kv"><span>산출 근거</span><span style="text-align:left;flex:2">역 가치 중앙값 <b>${B.median ?? '—'}</b> · 상위 25% 역(${B.topN ?? '—'}개) 평균 <b>${B.topAvg ?? '—'}</b> · 핵심지 연결성 <b>${B.coreConnect ?? '—'}</b> · ${L.count}개 역 · 배차 ${L.svc.headway}분${L.svc.fare ? '·별도요금' : ''}</span></div>
+    <div class="chips" style="margin:8px 0 2px"><span style="font-size:12px;color:var(--muted)">대표 고가치 역</span> ${tops}</div>
     <div class="factors">
       <div class="fbox up"><div class="fh">강점</div><ul>${strengths.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
       <div class="fbox down"><div class="fh">약점</div><ul>${weaknesses.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
     </div>
     <h3 class="mini-h">역별 가치 프로필 — <span style="color:var(--accent)">붉은 구간 = Golden Corridor</span> (${esc((L.corridor ? L.corridor.stations : []).slice(0, 3).join('·'))}${L.corridor && L.corridor.stations.length > 3 ? '…' : ''})</h3>
     <div class="profile-strip">${profile}</div>`;
+  $('lineCard').querySelectorAll('.badge[data-st]').forEach(b => b.onclick = () => selectStation(b.dataset.st));
 }
 
 function renderRank() {
   const inLine = mapState.line ? new Set((RAIL_LINES.filter(l => l.name === mapState.line)).flatMap(l => l.stations)) : null;
   const names = Object.keys(STN.stations).filter(n => !inLine || inLine.has(n));
-  const ranked = names.sort((a, b) => metricOf(STN.stations[b]) - metricOf(STN.stations[a])).slice(0, 15);
+  const ranked = names.sort((a, b) => metricOf(STN.stations[b]) - metricOf(STN.stations[a]));
+  const showN = mapState.showAll ? ranked.length : 10;
+  const rows = ranked.slice(0, showN).map((n, i) => {
+    const s = STN.stations[n];
+    const c = s.comps || {};
+    const dot = `<i style="width:8px;height:8px;border-radius:50%;background:${LINE_COLOR[repLinesOf(s)[0]] || 'var(--muted)'};display:inline-block;margin-right:4px;flex:none"></i>`;
+    return `<div class="rankrow" data-st="${esc(n)}" style="cursor:pointer;flex-wrap:wrap">
+      <span class="rk ${i < 3 ? 'top' : ''}">${i + 1}</span>${dot}<span class="nm">${esc(n)}</span>
+      <span class="ln">${s.lines.map(esc).join('·')}</span><span class="sc">${Math.round(metricOf(s))}</span>
+      <span class="rsub">교통 ${c.transit} · 경제력 ${c.econ} · 교육주거 ${c.edu} · 업무 ${c.biz}</span>
+    </div>`;
+  }).join('');
   $('rankCard').innerHTML = `
-    <h2>${mapState.line ? esc(mapState.line) + ' 역 가치 순위' : (mapState.mode === 'sv' ? '수도권 역 가치 TOP 15' : '역세권 경제력 TOP 15')}</h2>
-    <p class="hint">실제 계산 결과로 생성된 순위입니다 — 사전에 고정된 순위가 없습니다.${mapState.mode === 'wealth' ? ' 경제력 지표는 참고용 콘텐츠입니다.' : ''}</p>
-    ${ranked.map((n, i) => { const s = STN.stations[n]; return `<div class="rankrow" data-st="${esc(n)}" style="cursor:pointer"><span class="rk ${i < 3 ? 'top' : ''}">${i + 1}</span><span class="nm">${esc(n)}</span><span class="ln">${s.lines.map(esc).join('·')}</span><span class="sc">${Math.round(metricOf(s))}</span></div>`; }).join('')}
-    <p class="subtle" style="margin-top:10px">황금노선: ${LINEI.lines.slice(0, 5).map(l => `${esc(l.name)} ${l.golden}`).join(' · ')}</p>`;
+    <h2>${mapState.line ? esc(mapState.line) + ' 역 가치 순위' : (mapState.mode === 'sv' ? '수도권 역 가치 TOP 10' : '역세권 경제력 TOP 10')}</h2>
+    <p class="hint">실제 계산 결과로 생성된 순위입니다 — 사전에 고정된 순위가 없습니다. 4개 축(교통·네트워크 / 역세권 경제력 / 교육·주거 / 업무·중심성)은 전체 역 대비 백분위입니다.</p>
+    ${rows}
+    <button class="btn ghost" id="rankMore" style="width:100%;margin-top:10px">${mapState.showAll ? '접기 — TOP 10만 보기' : `전체 역 보기 (${ranked.length}개 · 점수순)`}</button>
+    <p class="subtle" style="margin-top:10px">노선 가치: ${LINEI.lines.slice(0, 5).map(l => `${esc(l.name)} ${l.golden}`).join(' · ')}</p>`;
   $('rankCard').querySelectorAll('.rankrow').forEach(row => row.onclick = () => selectStation(row.dataset.st));
+  $('rankMore').onclick = () => { mapState.showAll = !mapState.showAll; renderRank(); if (mapState.showAll === false) $('rankCard').scrollIntoView({ block: 'start' }); };
 }
 
 /* ── 부팅 ── */

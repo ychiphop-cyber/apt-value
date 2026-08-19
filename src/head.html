@@ -283,6 +283,8 @@ text.slabel.hi{fill:var(--ink);font-weight:700}
 .lpath{fill:none;stroke-width:2;opacity:.25}
 .lpath.hi{opacity:.85;stroke-width:3}
 .maplegend{display:flex;gap:14px;align-items:center;font-size:11px;color:var(--muted);margin-top:8px;flex-wrap:wrap}
+.maplegend .lgi{display:inline-flex;align-items:center;gap:5px}
+.maplegend .lgc{display:inline-block;border-radius:50%;background:var(--muted);opacity:.55;flex:none}
 #stnCard .stnhead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
 #stnCard .stnhead b{font-size:16px}
 .rankrow{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:13px}
@@ -292,6 +294,10 @@ text.slabel.hi{fill:var(--ink);font-weight:700}
 .rankrow .nm{flex:1}
 .rankrow .ln{font-size:11px;color:var(--muted)}
 .rankrow .sc{font-weight:700;font-variant-numeric:tabular-nums}
+.rankrow .rsub{flex-basis:100%;padding-left:48px;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;margin-top:1px}
+.modeltbl th,.modeltbl td{padding:7px 8px;border-bottom:1px solid var(--line);font-size:12.5px;text-align:left;vertical-align:top;line-height:1.55}
+.modeltbl th{color:var(--muted);font-weight:600;white-space:nowrap}
+.modeltbl td:nth-child(2),.modeltbl td:nth-child(3),.modeltbl td:nth-child(4){white-space:nowrap;font-variant-numeric:tabular-nums}
 .hopviz{display:flex;gap:6px;align-items:stretch;margin-top:8px}
 .hop{flex:1;border:1px solid var(--line);border-radius:10px;padding:9px 8px;text-align:center;background:var(--page)}
 .hop.cur{border-color:var(--accent);background:var(--accent-soft)}
@@ -357,7 +363,7 @@ footer#appFooter b{color:var(--ink2)}
         <button data-v="wealth" aria-pressed="false">역세권 경제력</button>
       </div>
     </div>
-    <p class="hint" id="mapHint">모든 역의 가치는 그래프 이동시간과 공개 데이터 기반으로 자동 계산됩니다 — 사전에 정한 순위가 없습니다. 역을 눌러 상세를 확인하세요.</p>
+    <p class="hint" id="mapHint">역 가치 = 교통·네트워크 30% + 역세권 경제력 35% + 교육·주거 생활권 20% + 업무·도시 중심성 15% — 실거래·이동시간 기반 자동 계산이며 사전에 정한 순위가 없습니다. 원의 크기 = 역 가치, 원의 색 = 노선. 역을 눌러 산출 근거를 확인하세요.</p>
     <div class="linechips" id="lineChips"></div>
     <div class="mapbox" id="mapBox"></div>
     <div class="maplegend" id="mapLegend"></div>
