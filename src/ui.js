@@ -296,7 +296,7 @@ function buildAutoComplex() {
     areaKey: state.areaKey, conv: state.ovConv,
     asOf: liveAsOf(), stations: STN, hubs: HUBS,
     dongLink: dongLinkFor(code, entry.dong),
-    kapt: AptEngine.matchKaptInfo(KAPT.shards[code], entry.name),
+    kapt: AptEngine.matchKaptInfo(KAPT.shards[code], entry.name, (ALIASES.aliases || {})[id]),
     liveId: id
   });
 }

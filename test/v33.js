@@ -172,17 +172,46 @@ ok(E.josa('흐름', '이', '가') === '흐름이', 'josa: 흐름+이');
   ok(cxM.households === 4066 && cxM.fieldStatus.households === 'MANUAL', '회귀: 세대수 수동 입력 → MANUAL 표시');
 }
 
-/* ── FR-02 · K-apt 매칭 (모의 데이터 — 승인 전이므로 형식 검증) ── */
+/* ── FR-02 · normNameK 정규화 (파이프라인 normName과 동일해야 함) ── */
+ok(E.normNameK('강동리버스트 8단지') === '강동리버스트8단지', 'normNameK: 공백');
+ok(E.normNameK('고덕센트럴IPARK') === '고덕센트럴아이파크', 'normNameK: 영문 브랜드 한글화');
+ok(E.normNameK('선사현대아파트') === '선사현대', 'normNameK: 아파트 접미어');
+ok(E.normNameK('삼익파크맨션') === '삼익파크', 'normNameK: 맨션 접미어');
+ok(E.normNameK('광남캐스빌(247-0)') === '광남캐스빌', 'normNameK: 괄호 제거');
+
+/* ── FR-02 · K-apt 매칭 (모의 데이터 — 형식 검증) ── */
 {
-  const info = { byName: { '고덕아르테온': { kaptCode: 'A1', households: 4066, parkingRatio: 1.2, asOf: '2026-08-01' } } };
+  const info = { meta: { asOf: '2026-08-19' }, byName: { '고덕아르테온': { kaptCode: 'A1', households: 4066, parkingRatio: 1.2, asOf: '2026-08-01' }, '동명단지': { ambiguous: true, candidates: ['A2', 'A3'] } } };
   const rec = E.matchKaptInfo(info, '고덕아르테온');
   ok(rec && rec.households === 4066, 'FR-02: normName 매칭');
+  ok(E.matchKaptInfo(info, '동명단지') === null, 'FR-02: 동명 복수 후보(ambiguous) → 자동 확정 금지');
   const [code, ...rest] = '11740|상일동|고덕아르테온'.split('|');
   const entry = getShard(code).complexes[rest.join('|')];
   const cx = E.buildAutoComplex(entry, regionOf(code), { edits: {}, areaKey: null, conv: null, asOf, stations: STN, hubs: HUBS, dongLink: dongLinkFor(code, entry.dong), kapt: rec, liveId: 'x' });
   ok(cx.households === 4066 && cx.fieldStatus.households === 'VERIFIED' && cx.householdsSource === 'KAPT', 'FR-02: K-apt 세대수 → VERIFIED 반영');
   ok(cx.parkingRatio === 1.2, 'FR-02: K-apt 주차비율 반영');
   ok(E.matchKaptInfo(null, '고덕아르테온') === null, 'FR-02: 샤드 없음 → null (임의 기본값 없음)');
+}
+
+/* ── FR-02 · K-apt 실수집 샤드 검증 (수집된 경우에만 — 승인·수집 전 클론에서도 테스트 통과) ── */
+{
+  const p = path.join(__dirname, '../data/complex_info/11680.json');
+  if (fs.existsSync(p)) {
+    const info = JSON.parse(fs.readFileSync(p, 'utf8'));
+    const dh = E.matchKaptInfo(info, '디에이치자이개포');
+    ok(dh && dh.households === 1996, `FR-02 실데이터: 디에이치자이개포 1,996세대 (got ${dh && dh.households})`);
+    const info710 = JSON.parse(fs.readFileSync(path.join(__dirname, '../data/complex_info/11710.json'), 'utf8'));
+    ok(E.matchKaptInfo(info710, '파크리오') === null, 'FR-02: 파크리오 직접 매칭은 실패 (K-apt명 "잠실파크리오")');
+    const pr = E.matchKaptInfo(info710, '파크리오', ALIASES.aliases['11710|신천동|파크리오']);
+    ok(pr && pr.households > 6000, `FR-02: 별칭 경유 매칭 → 잠실파크리오 ${pr && pr.households}세대`);
+    // 통합: buildAutoComplex에 K-apt 반영 → households VERIFIED
+    const [code, ...rest] = '11680|일원동|디에이치자이개포'.split('|');
+    const entry = getShard(code).complexes[rest.join('|')];
+    const cx = E.buildAutoComplex(entry, regionOf(code), { edits: {}, areaKey: null, conv: null, asOf, stations: STN, hubs: HUBS, dongLink: dongLinkFor(code, entry.dong), kapt: dh, liveId: 'x' });
+    ok(cx.households === 1996 && cx.fieldStatus.households === 'VERIFIED', 'FR-02 실데이터: 세대수 VERIFIED 반영');
+    const r = E.analyze({ complex: cx, areaKey: '84', asOfYM: asOf, overrides: {}, autoComplex: true }, CFG, HUBS, JOBS, STN);
+    ok(r.currentPrice > 0 && r.dataStatus.VERIFIED >= 3, 'FR-02 실데이터: K-apt 반영 분석 완주 (VERIFIED 증가)');
+  }
 }
 
 /* ── AC-07 · 근거 패널 수치 재계산 일치 ── */

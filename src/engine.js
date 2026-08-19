@@ -956,8 +956,14 @@ const AptEngine = (() => {
     return sorted[0].key;
   }
 
-  /* FR-02 단지명 정규화 (K-apt 매칭·검색 공용): 공백·괄호·'아파트' 접미어 제거 */
-  function normNameK(s) { return String(s || '').replace(/\s|\(.*?\)|아파트$/g, ''); }
+  /* FR-02 단지명 정규화 (K-apt 매칭·검색 공용): 공백·괄호 제거, 영문 브랜드 한글화, 아파트·맨션 접미어 제거
+     — pipeline/complex_info.js normName과 반드시 동일해야 K-apt 매칭이 성립한다 */
+  function normNameK(s) {
+    return String(s || '').toLowerCase()
+      .replace(/\s|\(.*?\)/g, '')
+      .replace(/i-?park/g, '아이파크').replace(/e-?편한세상/g, '이편한세상')
+      .replace(/(아파트|맨션)$/g, '');
+  }
 
   /* FR-01 검색 정규화: 통칭(동이름+단지명)·브랜드 접두어·공백 차이를 흡수.
      entry: {n:단지명, gn:시군구, d:법정동}, opts: {brandPrefixes:[], aliases:[]} */
@@ -999,11 +1005,18 @@ const AptEngine = (() => {
     };
   }
 
-  /* FR-02 K-apt 기본정보 매칭: complex_info 샤드(byName, normName 키)에서 실거래 단지명으로 조회 */
-  function matchKaptInfo(info, entryName) {
+  /* FR-02 K-apt 기본정보 매칭: complex_info 샤드(byName, normName 키)에서 실거래 단지명으로 조회.
+     별칭(aliases — 예: 파크리오의 K-apt명 "잠실파크리오")도 시도. 동명 복수 후보(ambiguous)는
+     자동 확정하지 않고 null(검수 대기). 기준일은 샤드 meta에서 보강. */
+  function matchKaptInfo(info, entryName, aliases) {
     if (!info || !info.byName) return null;
-    const rec = info.byName[normNameK(entryName)];
-    return rec && rec.households > 0 ? rec : null;
+    let rec = null;
+    for (const cand of [entryName, ...(aliases || [])]) {
+      const hit = info.byName[normNameK(cand)];
+      if (hit && !hit.ambiguous && hit.households > 0) { rec = hit; break; }
+    }
+    if (!rec) return null;
+    return rec.asOf || !info.meta ? rec : { ...rec, asOf: info.meta.asOf };
   }
 
   /* 생활권 허브 매칭 (ui에서 이동 — 순수화) */
@@ -1029,9 +1042,12 @@ const AptEngine = (() => {
     const hhManual = e.households > 0;
     const hhKapt = !hhManual && kapt ? kapt.households : null;
     const households = hhManual ? e.households : (hhKapt || null);
+    // 준공연도: 실거래 원자료 우선, 없으면 K-apt 사용승인일(FR-02)
+    const kaptYear = kapt && kapt.usedate ? Number(String(kapt.usedate).slice(0, 4)) || null : null;
+    const builtYear = entry.builtYear || kaptYear || null;
     if (!households) gaps.push('세대수 미확인 (중립 가정)');
     if (!e.redevStage) gaps.push('정비사업 단계 미확인');
-    if (!entry.builtYear) gaps.push('준공연도 미확인');
+    if (!builtYear) gaps.push('준공연도 미확인');
     if (kapt && kapt.parkingRatio != null) gaps.push('브랜드·생활·자연환경 기본값 사용');
     else gaps.push('주차·브랜드·생활·자연환경 기본값 사용');
     if (!hub) gaps.push('교육 상세 미확인 (중립 가정)');
@@ -1056,7 +1072,7 @@ const AptEngine = (() => {
     const fieldStatus = {
       price: o.ovPrice != null ? 'MANUAL' : 'VERIFIED',
       jeonse: o.ovJeonse != null ? 'MANUAL' : (Object.values(entry.areas).some(a => a.jeonse) ? 'VERIFIED' : 'UNKNOWN'),
-      builtYear: entry.builtYear ? 'VERIFIED' : 'UNKNOWN',
+      builtYear: builtYear ? 'VERIFIED' : 'UNKNOWN',
       households: hhManual ? 'MANUAL' : (hhKapt ? 'VERIFIED' : 'UNKNOWN'),
       station: stStatus,
       redev: e.redevStage ? 'MANUAL' : 'UNKNOWN',
@@ -1083,7 +1099,7 @@ const AptEngine = (() => {
     return {
       id: 'live|' + (o.liveId || `${region.code}|${entry.dong}|${entry.name}`), name: entry.name, aptSeq: entry.aptSeq || null,
       city: region.sido, district: region.name, dong: entry.dong,
-      regionTier: region.tier, builtYear: entry.builtYear || null,
+      regionTier: region.tier, builtYear,
       // §10·12: 임의 기본값 폐기 — 미확인은 null로 두고 엔진이 해당 항목을 제외·재정규화한다
       households,
       householdsNote: hhManual ? null : (hhKapt ? `K-apt 확인${kapt.asOf ? ' · ' + kapt.asOf + ' 기준' : ''}` : null),
