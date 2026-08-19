@@ -11,15 +11,18 @@
      단지당 1표 + 중앙값이라 특정 단지(평가 대상 포함)가 역 점수를 좌우하기
      어렵다(순환 방지). 소득·자산 데이터를 추정 생성하지 않는다 — 부족하면 수동 폴백.
 
-   [Line Value V5 — Station Value 평균이 아니다]
-     ① 핵심 생활권 연결력 30% — config/life_hubs.json의 서로 다른 생활권을
-        몇 곳이나 직결하는가 (같은 생활권 역 여러 개 = 1회, Unique Hubs)
-     ② 노선 내 역세권 가치 25% — 환승 감쇄(편승 방지) 적용한 SV의
+   [Line Value V5.1 — Station Value 평균이 아니다. 같은 장점의 중복 보상 금지]
+     ① 노선 내 역세권 가치 30% — 환승 감쇄(편승 방지) 적용한 SV의
         중앙값·상위25%평균·80점 이상 비율 조합 (단순 평균 금지)
-     ③ 도시 횡단·네트워크 20% — 생활권 유형 다양성(주거↔업무↔교육↔관문),
-        타 노선 환승 연결, KTX·공항 관문 (노선 길이 자체엔 점수 없음)
+     ② 핵심 생활권 연결력 25% — config/life_hubs.json의 서로 다른 생활권 직결
+        (같은 생활권 역 여러 개 = 1회, 1역 스침 감쇄, **한계효용 체감** 0.82^i —
+        생활권 개수 누적으로 긴 노선이 과대평가되지 않게)
+     ③ 도시 횡단·네트워크 20% — 환승 네트워크·KTX/공항 관문·동서남북 횡단성만.
+        생활권 축과 중복되는 주거↔업무·주거↔교육 관계는 여기서 재가산하지 않음
      ④ 실제 이동 효율 15% — 배차·표정속도·급행
-     ⑤ 독점성·대체불가능성 10% — 단독 역 비중(SV 가중)·생활권 독점 연결
+     ⑤ 대체불가능성 10% — 노선 제거 시 핵심지 도달시간 증가(그래프 재계산, SV 가중)
+        + 생활권 독점 연결. 단독역 '수'는 사용하지 않음
+     최종 점수는 raw 그대로(재스케일 없음) + Tier(S/A/B/C) 표시
    원칙: 역·노선 점수 하드코딩 금지 / 모든 계수는 config에서만 관리 /
    순위를 만들기 위한 보정 금지. 사용: node pipeline/station_intel.js
    ═══════════════════════════════════════════════════════════════════ */
@@ -365,7 +368,61 @@ function normalizeBy(key, outKey) {
 normalizeBy('svRaw', 'sv');
 normalizeBy('svTRaw', 'svT');
 
-/* ══════════ Line Value V5 — Station Value 평균이 아닌 별도 네트워크 모델 ══════════ */
+/* ══════════ Line Value V5.1 — Station Value 평균이 아닌 별도 네트워크 모델 ══════════ */
+
+/* 대체불가능성(detour) 측정: 특정 노선을 제거한 축소 철도망에서 핵심지(강남·도심·여의도)
+   체감 도달시간을 다시 계산 — "이 노선이 없어지면 얼마나 우회해야 하나"의 직접 근사.
+   단독역 수 같은 proxy를 쓰지 않고 실제 그래프 재계산으로 측정한다. */
+const coreCenters = JOBS.centers.filter(c => c.gangnamCore || c.id === 'CBD' || c.id === 'YBD');
+function reducedCoreTimes(excludeGroup) {
+  const vids2 = new Map(); const vlist2 = []; const adj2 = [];
+  const vid2 = (s, l) => { const k = s + '§' + l; if (!vids2.has(k)) { vids2.set(k, vlist2.length); vlist2.push({ s, l }); adj2.push([]); } return vids2.get(k); };
+  for (const line of NET.lines) {
+    if (line.name.replace(' 급행', '') === excludeGroup) continue;
+    const st = line.stations;
+    for (let i = 0; i < st.length; i++) {
+      vid2(st[i], line.id);
+      if (i > 0) { const a = vid2(st[i - 1], line.id), b = vid2(st[i], line.id); adj2[a].push([b, line.hopMin]); adj2[b].push([a, line.hopMin]); }
+    }
+    if (line.loop) { const a = vid2(st[st.length - 1], line.id), b = vid2(st[0], line.id); adj2[a].push([b, line.hopMin]); adj2[b].push([a, line.hopMin]); }
+  }
+  const byStation2 = new Map();
+  for (let i = 0; i < vlist2.length; i++) {
+    if (!byStation2.has(vlist2[i].s)) byStation2.set(vlist2[i].s, []);
+    byStation2.get(vlist2[i].s).push(i);
+  }
+  for (const arr of byStation2.values())
+    for (const a of arr) for (const b of arr) {
+      if (a !== b) adj2[a].push([b, GEN.transferWalkMin + boardCost(lineById[vlist2[b].l])]);
+    }
+  // 멀티소스: 모든 핵심지 앵커역에서 출발 → 각 역까지 최단 체감시간의 최솟값
+  const dist = new Float64Array(vlist2.length).fill(Infinity);
+  const pq = [];
+  for (const c of coreCenters) for (const cs of c.stations) {
+    for (const v of (byStation2.get(cs) || [])) {
+      const d0 = boardCost(lineById[vlist2[v].l]);
+      if (d0 < dist[v]) { dist[v] = d0; pq.push([d0, v]); }
+    }
+  }
+  while (pq.length) {
+    let bi = 0;
+    for (let i = 1; i < pq.length; i++) if (pq[i][0] < pq[bi][0]) bi = i;
+    const [d, u] = pq.splice(bi, 1)[0];
+    if (d > dist[u]) continue;
+    for (const [v, w] of adj2[u]) {
+      const nd = d + w;
+      if (nd < dist[v] - 1e-9) { dist[v] = nd; pq.push([nd, v]); }
+    }
+  }
+  const out = new Map();
+  for (let i = 0; i < vlist2.length; i++) {
+    const s = vlist2[i].s;
+    const cur = out.get(s);
+    if (cur === undefined || dist[i] < cur) out.set(s, dist[i]);
+  }
+  return out;
+}
+
 const CR = CFG.corridor;
 const lineGroups = new Map();
 for (const line of NET.lines) {
@@ -413,10 +470,10 @@ for (const [nm, g] of lineGroups) {
   }
   const corridorStations = arr.slice(best.from, best.from + wlen);
 
-  /* ① 핵심 생활권 연결력 — 서로 다른 생활권 1회씩 (Unique Hubs). 같은 생활권 역이
-     여러 개라고 반복 가산하지 않되, 역 1개로 스치는지/2~3개 역으로 취급하는지의
-     직결성 차이만 hubDepth(0.7/0.85/1.0 상한)로 반영. §15 환승 편승 방지: 그 생활권을
-     취급하는 역들이 환승역뿐이면(다른 노선의 연결가치에 편승) 감쇄 평균을 곱한다.
+  /* ② 핵심 생활권 연결력 25% — 서로 다른 생활권 1회씩 (Unique Hubs). 같은 생활권 역이
+     여러 개라고 반복 가산하지 않고, 1역 스침은 hubDepthPartial 감쇄, §15 환승 편승 감쇄 적용.
+     V5.1: 한계효용 체감 — 기여도 내림차순 i번째 생활권에 hubDiminish^i 배. 생활권 '개수'의
+     단순 누적(긴 노선 유리)을 막고, 처음 몇 개의 고가치 직결에 가치를 집중한다.
      raw는 전 노선 최대 대비 정규화 */
   const hubStns = new Map();
   for (const s of stArr) { const h = hubOf.get(s); if (h) { if (!hubStns.has(h)) hubStns.set(h, []); hubStns.get(h).push(s); } }
@@ -425,7 +482,9 @@ for (const [nm, g] of lineGroups) {
   const fullServe = h => hubStns.get(h).length >= Math.min(2, h.stations.length);
   const depthCoef = h => fullServe(h) ? 1 : LV5.hubDepthPartial;
   const hubDecay = h => { const a = hubStns.get(h); return a.reduce((x, s) => x + decayOf(s), 0) / a.length; };
-  const hubRaw = hubsServed.reduce((a, h) => a + (LV5.hubTierCoef[String(h.tier)] ?? 0.5) * depthCoef(h) * hubDecay(h), 0);
+  const hubRaw = hubsServed.map(h => (LV5.hubTierCoef[String(h.tier)] ?? 0.5) * depthCoef(h) * hubDecay(h))
+    .sort((a, b) => b - a)
+    .reduce((a, c, i) => a + c * Math.pow(LV5.hubDiminish, i), 0);
 
   /* ② 노선 내 역세권 가치 — 환승 감쇄 SV의 중앙값·상위25%·80점 이상 비율 */
   const dsv = stArr.map(s => rows[s].sv * decayOf(s)).sort((a, b) => a - b);
@@ -436,27 +495,25 @@ for (const [nm, g] of lineGroups) {
   const SS = LV5.stationSub;
   const stationScore = clamp(SS.median * medD + SS.topQuartile * topAvgD + SS.share80 * share80 * 100, 0, 100);
 
-  /* ③ 도시 횡단·네트워크 — 서로 다른 기능의 생활권을 잇는 '관계' 4종 + 타 노선 환승
-     + 광역 관문. 노선 길이 자체에는 점수를 주지 않는다 */
-  // 관계 판정에는 '취급'(fullServe) 생활권만 인정 — 역 1개 스침으로 관계를 주장하지 못한다(§11)
-  const served = hubsServed.filter(fullServe);
-  const attrsOf = h => h.attrs || ({ res: ['res'], edu: ['res', 'edu'], biz: ['biz'], mixed: ['res', 'biz'], transport: ['gw'] }[h.type] || []);
-  const resHubs = served.filter(h => attrsOf(h).includes('res'));
-  const bizHubs = served.filter(h => attrsOf(h).includes('biz'));
-  const rel = [
-    resHubs.some(r => bizHubs.some(b => b !== r)),                    // ① 주거권 ↔ 업무권 직결
-    served.some(h => attrsOf(h).includes('edu')) && resHubs.length >= 2, // ② 주거권 ↔ 교육권 직결
-    bizHubs.length >= 2,                                               // ③ 서로 다른 업무권 간 직결
-    stArr.some(s => gateways.has(s))                                   // ④ 광역 관문 연결
-  ].filter(Boolean).length / 4;
-  const typeCount = new Set(hubsServed.map(h => h.type)).size;
+  /* ③ 도시 횡단·네트워크 20% — 환승 네트워크 + 광역 관문 + 동서·남북 횡단성만.
+     생활권 연결력 축과 중복되는 주거↔업무·주거↔교육 관계는 여기서 다시 가산하지 않는다(V5.1).
+     횡단성은 시청 반경 내 구간의 스팬만 계산 — 수도권 외곽 연장은 횡단이 아니며 길이 무가산 */
   const otherLines = [...lineGroups.keys()].filter(o => o !== nm && [...lineGroups.get(o).st].some(s => g.st.has(s))).length;
   const gwServed = stArr.filter(s => gateways.has(s));
+  const CITY = [37.566, 126.978];   // 서울시청
+  const inSeoul = stArr.map(s => rows[s].c).filter(c => c && havKm(c, CITY) <= LV5.crossSeoulRadiusKm);
+  let ewKm = 0, nsKm = 0;
+  if (inSeoul.length >= 2) {
+    const lats = inSeoul.map(c => c[0]), lons = inSeoul.map(c => c[1]);
+    ewKm = (Math.max(...lons) - Math.min(...lons)) * 111.32 * Math.cos(37.55 * Math.PI / 180);
+    nsKm = (Math.max(...lats) - Math.min(...lats)) * 110.95;
+  }
+  const crossing = 0.5 * Math.min(1, ewKm / LV5.crossSpanRefKm) + 0.5 * Math.min(1, nsKm / LV5.crossSpanRefKm);
   const NS = LV5.networkSub;
   const networkScore = clamp(100 * (
-    NS.diversity * rel +
     NS.transfer * Math.min(1, otherLines / LV5.transferLineRef) +
-    NS.intercity * Math.min(1, gwServed.length / LV5.intercityRef)), 0, 100);
+    NS.intercity * Math.min(1, gwServed.length / LV5.intercityRef) +
+    NS.crossing * crossing), 0, 100);
 
   /* ④ 실제 이동 효율 — 배차 + 표정속도(역간거리/역간시간) + 급행 */
   const headway = Math.min(...g.entries.filter(e => e.svc).map(e => e.svc.headway));
@@ -478,14 +535,23 @@ for (const [nm, g] of lineGroups) {
     ES.speed * (kmh != null ? interp(kmh, spCurve) : 50) +
     ES.express * (express ? LV5.expressScore.yes : LV5.expressScore.no), 0, 100);
 
-  /* ⑤ 독점성·대체불가능성 — 단독 취급 역 비중(SV 가중) + 생활권 독점 연결 */
-  const svSum = stArr.reduce((a, s) => a + rows[s].sv, 0);
-  const soloShare = svSum > 0 ? stArr.reduce((a, s) => a + rows[s].sv / lineCountOf(s), 0) / svSum : 0;
+  /* ⑤ 대체불가능성 10% (V5.1) — 단독역 수(soloShare)는 쓰지 않는다. 이 노선을 철도망에서
+     제거하고 핵심지(강남·도심·여의도) 체감 도달시간을 재계산 — 소속 역들의 시간 증가분
+     (SV 가중 평균, detourCapMin 포화) = "없어지면 얼마나 우회하나". + 생활권 독점 연결 */
+  const reduced = reducedCoreTimes(nm);
+  let dSum = 0, wSum = 0;
+  for (const s of stArr) {
+    const t0 = Math.min(...coreCenters.map(c => (raws[s].jm[c.id] ?? CFG.maxTravelMin)));
+    const t1 = Math.min(reduced.get(s) ?? Infinity, CFG.maxTravelMin);
+    const delta = clamp((t1 - t0) / LV5.detourCapMin, 0, 1);
+    dSum += rows[s].sv * delta; wSum += rows[s].sv;
+  }
+  const detour = wSum > 0 ? dSum / wSum : 0;
   const hubExShare = hubsServed.length
     ? hubsServed.filter(h => (hubLineNames.get(h.name) || new Set()).size <= LV5.hubExclusiveMaxLines).length / hubsServed.length
     : 0;
   const US = LV5.uniquenessSub;
-  const uniqScore = clamp(100 * (US.soloShare * soloShare + US.hubExclusive * hubExShare), 0, 100);
+  const uniqScore = clamp(100 * (US.detour * detour + US.hubExclusive * hubExShare), 0, 100);
 
   const friction = clamp(FR.base - Math.max(0, headway - FR.headwayRef) * FR.perHeadwayMin - fare * FR.perFareStep - (depth - 1) * FR.perDepthStep, FR.floor, 100);
   const svsAsc = stArr.map(s => rows[s].sv).sort((a, b) => a - b);
@@ -500,7 +566,9 @@ for (const [nm, g] of lineGroups) {
       station: Math.round(stationScore), network: Math.round(networkScore),
       efficiency: Math.round(effScore), uniqueness: Math.round(uniqScore),
       medianDecayed: Math.round(medD), topAvgDecayed: Math.round(topAvgD), topN,
-      share80: Math.round(share80 * 100), typeCount, otherLines, relations: Math.round(rel * 4),
+      share80: Math.round(share80 * 100), otherLines,
+      ewKm: Math.round(ewKm), nsKm: Math.round(nsKm),
+      detour: Math.round(detour * 100), hubEx: Math.round(hubExShare * 100),
       gateways: gwServed, kmh: kmh != null ? Math.round(kmh) : null,
       hubs: hubsServed.sort((a, b) => a.tier - b.tier || hubStns.get(b).length - hubStns.get(a).length).map(h => ({ n: h.name, t: h.type, tier: h.tier, cnt: hubStns.get(h).length, ex: (hubLineNames.get(h.name) || new Set()).size <= LV5.hubExclusiveMaxLines }))
     },
@@ -512,40 +580,44 @@ for (const [nm, g] of lineGroups) {
     centersOnLine: JOBS.centers.filter(c => c.stations.some(cs => g.st.has(cs))).map(c => c.name)
   });
 }
-/* 허브 축 정규화(전 노선 최대 대비) → 5축 가중합 → 표시 스케일 */
+/* 허브 축 정규화(전 노선 최대 대비 0~100) → 5축 가중합.
+   V5.1: 최종 점수는 raw 그대로 표시 — 작은 실제 차이를 화면에서 압도적 격차로 벌리는
+   재스케일(minmax 22~98)을 제거한다. Tier(S/A/B/C)로 근접 점수의 과잉 서열화를 방지 */
 const hubMax = Math.max(...linesOut.map(l => l._hubRaw), 0.001);
 const LA = LV5.axes;
 for (const l of linesOut) {
   const hubScore = clamp(100 * l._hubRaw / hubMax, 0, 100);
   l.breakdown.hub = Math.round(hubScore);
-  l.goldenRaw = LA.hub * hubScore + LA.station * l._station + LA.network * l._network + LA.efficiency * l._eff + LA.uniqueness * l._uniq;
+  l.goldenRaw = LA.station * l._station + LA.hub * hubScore + LA.network * l._network + LA.efficiency * l._eff + LA.uniqueness * l._uniq;
   delete l._hubRaw; delete l._station; delete l._network; delete l._eff; delete l._uniq;
+  l.golden = Math.round(l.goldenRaw * 10) / 10;
+  l.goldenRaw = l.golden;
 }
-const gMin = Math.min(...linesOut.map(l => l.goldenRaw)), gMax = Math.max(...linesOut.map(l => l.goldenRaw));
-for (const l of linesOut) {
-  l.golden = Math.round(LV5.displayMin + (l.goldenRaw - gMin) / (gMax - gMin) * (LV5.displayMax - LV5.displayMin));
-  l.goldenRaw = Math.round(l.goldenRaw * 10) / 10;
+linesOut.sort((a, b) => b.golden - a.golden);
+{
+  const top = linesOut[0] ? linesOut[0].golden : 0;
+  const [s, a, b] = LV5.tierBands;
+  for (const l of linesOut) l.tier = l.golden >= top - s ? 'S' : l.golden >= top - a ? 'A' : l.golden >= top - b ? 'B' : 'C';
 }
-linesOut.sort((a, b) => b.golden - a.golden || b.goldenRaw - a.goldenRaw);
 
 /* ── 저장 — station·line 파일은 반드시 같은 meta(버전·생성시각)로 함께 생성된다 ── */
 const meta = {
   updatedAt: NET.meta.asOf, version: 5, generatedAt: new Date().toISOString(),
-  method: 'V5 — Station Value 4축(교통30/경제력35/교육주거20/업무15, 경제력은 단지 대표가 도보가중 중앙값) · Line Value 5축(생활권 연결력30/역세권 가치25/도시 네트워크20/이동 효율15/독점성10, 환승 감쇄) — 역·노선 점수 하드코딩 없음',
+  method: 'V5.1 — Station Value 4축(교통30/경제력35/교육주거20/업무15, 경제력은 단지 대표가 도보가중 중앙값) · Line Value 5축(역세권 가치30/생활권 연결력25 한계효용 체감/도시 네트워크20 환승·관문·횡단성만/이동 효율15/대체불가능성10 우회시간, 환승 감쇄·raw 표시) — 역·노선 점수 하드코딩 없음',
   status: 'ESTIMATED', stationCount: allStations.length,
   econLiveCount: [...stationPpm.keys()].length,
-  note: '경제력 축: 거래→평형(중앙값·이상거래 필터)→단지 대표 ㎡가(단지당 1표)→도보시간 가중 중앙값→winsorize 백분위. Line Value는 Station Value 평균이 아님'
+  note: '경제력 축: 거래→평형(중앙값·이상거래 필터)→단지 대표 ㎡가(단지당 1표)→도보시간 가중 중앙값→winsorize 백분위. Line Value는 Station Value 평균이 아니며 같은 장점을 여러 축에서 중복 보상하지 않음'
 };
 fs.writeFileSync(path.join(ROOT, 'data', 'station_intelligence.json'), JSON.stringify({ meta, stations: rows }));
 fs.writeFileSync(path.join(ROOT, 'data', 'line_intelligence.json'), JSON.stringify({ meta, lines: linesOut }));
 
 const sorted = allStations.slice().sort((a, b) => rows[b].sv - rows[a].sv);
-console.log(`역 ${allStations.length}개 · 노선 ${linesOut.length}개 (V5) · 경제력 실거래 기반 ${meta.econLiveCount}개 역`);
+console.log(`역 ${allStations.length}개 · 노선 ${linesOut.length}개 (V5.1) · 경제력 실거래 기반 ${meta.econLiveCount}개 역`);
 console.log('TOP 12:', sorted.slice(0, 12).map(s => `${s} ${Math.round(rows[s].sv)}`).join(' / '));
-console.log('노선:', linesOut.map(l => `${l.name} ${l.golden}`).join(' / '));
+console.log('노선:', linesOut.map(l => `${l.name} ${l.golden}(${l.tier})`).join(' / '));
 for (const l of linesOut) {
   const B = l.breakdown;
-  console.log(`  ${l.name}: 생활권 ${B.hub} · 역세권 ${B.station}(중앙 ${B.medianDecayed}/상위 ${B.topAvgDecayed}/80+ ${B.share80}%) · 네트워크 ${B.network}(유형 ${B.typeCount}·환승 ${B.otherLines}·관문 ${B.gateways.length}) · 효율 ${B.efficiency}(${B.kmh}km/h) · 독점 ${B.uniqueness} → ${l.golden}  [${B.hubs.map(h => h.n).join(', ')}]`);
+  console.log(`  ${l.name}: 역세권 ${B.station}(중앙 ${B.medianDecayed}/상위 ${B.topAvgDecayed}/80+ ${B.share80}%) · 생활권 ${B.hub}(${B.hubs.length}곳) · 네트워크 ${B.network}(환승 ${B.otherLines}·관문 ${B.gateways.length}·횡단 ${B.ewKm}×${B.nsKm}km) · 효율 ${B.efficiency}(${B.kmh}km/h) · 대체불가 ${B.uniqueness}(우회 ${B.detour}) → ${l.golden} ${l.tier}  [${B.hubs.map(h => h.n).join(', ')}]`);
 }
 const probe = ['압구정', '대치', '잠실', '잠실새내', '신사', '여의도', '광화문', '공덕', '목동', '오목교', '올림픽공원', '둔촌동', '고덕', '강남', '종로3가', '녹번', '중계', '평촌', '수내', '동탄', '성수', '서울역'];
 for (const s of probe) if (rows[s]) {

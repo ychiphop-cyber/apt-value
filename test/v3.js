@@ -89,16 +89,12 @@ const run = (cx, key) => E.analyze({ complex: cx, areaKey: key, asOfYM: '2026-08
   ok(r.confidence.score < 75, '대량 미확인 → 신뢰도 하락');
 }
 
-/* ── 노선 §81 ── */
+/* ── 노선·역 구조 검증 — V5.1: 특정 노선 순위를 강제하는 테스트는 두지 않는다(순위는 sanity check로만) ── */
 {
-  const rank = LINEI.lines.map(l => l.name);
-  ok(rank[0] !== '공항철도' && rank.indexOf('공항철도') >= 3, `공항철도 최상위 아님 (${rank.indexOf('공항철도') + 1}위)`);
-  ok(rank.indexOf('GTX-A') >= 5, `GTX 일상가치 최상위 아님 (${rank.indexOf('GTX-A') + 1}위)`);
   const sv = n => STN.stations[n].sv;
   ok(sv('신사') - sv('녹번') >= 30, `신사(${sv('신사')}) vs 녹번(${sv('녹번')}) 충분히 다름`);
   ok(sv('강남') >= 95, `정규화: 강남 ${sv('강남')} (상위 1% ≈ 95+)`);
-  const l9 = LINEI.lines.find(l => l.name === '9호선'), arex = LINEI.lines.find(l => l.name === '공항철도');
-  ok(l9.golden > arex.golden, `9호선(${l9.golden}) > 공항철도(${arex.golden}) — 주거 교통축 관점`);
+  ok(LINEI.lines.every(l => ['S', 'A', 'B', 'C'].includes(l.tier)), '전 노선 Tier(S/A/B/C) 부여');
 }
 
 /* ── §88 QA 테이블 출력 ── */

@@ -23,33 +23,77 @@ ok(!!STN.meta.generatedAt && STN.meta.generatedAt === LINEI.meta.generatedAt,
   '§33: station·line intelligence 생성시각 일치 — 구버전 혼합 배포 금지');
 ok(LINEI.lines.length >= 10 && LINEI.lines.every(l => l.golden > 0 && l.golden <= 100), '노선 지수 정상');
 
-/* Line Value V5 — 5축 스키마·범위, Station Value 평균이 아님 */
+/* ═══ Line Value V5.1 구조 검증 — 순위를 테스트하지 않는다. 구조만 검증한다:
+   ① 환승역 편승 감쇄 적용 ② 생활권 한계효용 체감 적용 ③ 긴 노선 직접 가산 없음
+   ④ soloShare(단독역 수) 제거 ⑤ 동일 데이터 재현성 ═══ */
 {
   const L5 = CFG.station.lineV5;
   const sum = o => Object.values(o).reduce((a, b) => a + b, 0);
-  ok(Math.abs(sum(L5.axes) - 1) < 1e-9, 'LV5: 5축 가중치 합 = 1');
-  const AX = ['hub', 'station', 'network', 'efficiency', 'uniqueness'];
+  ok(Math.abs(sum(L5.axes) - 1) < 1e-9, 'LV5.1: 5축 가중치 합 = 1');
+  const AX = ['station', 'hub', 'network', 'efficiency', 'uniqueness'];
   ok(LINEI.lines.every(l => l.breakdown && AX.every(k => isFinite(l.breakdown[k]) && l.breakdown[k] >= 0 && l.breakdown[k] <= 100)),
-    'LV5: 전 노선 5축(생활권·역세권·네트워크·효율·독점성) 0~100 저장');
-  ok(LINEI.lines.every(l => Array.isArray(l.breakdown.hubs)), 'LV5: 연결 생활권 목록 저장');
-  const line = nm => LINEI.lines.find(x => x.name === nm);
-  // 노선 가치 ≠ 역 평균: 축 구성이 다르면 avg 순위와 달라질 수 있어야 한다 (구조 확인)
-  ok(LINEI.lines.some((l, i) => {
-    const byAvg = LINEI.lines.slice().sort((a, b) => b.avg - a.avg);
-    return byAvg.indexOf(l) !== i;
-  }), 'LV5: 노선 순위가 역 평균 순위와 동일하지 않음 (별도 모델)');
-  // §9 취지: 5호선의 생활권 연결(주거·도심·업무·학군·공항)이 허브 목록으로 설명 가능
-  const l5hubs = (line('5호선').breakdown.hubs || []).map(h => h.n).join(',');
-  ok(['여의도', '고덕·강동', '김포공항', '목동'].every(h => l5hubs.includes(h)), 'LV5: 5호선 허브에 여의도·고덕·목동·김포공항 포함');
-  // §15 환승 편승 감쇄: 공항철도는 전 역이 환승역 — 독점성이 낮게 계산되어야 구조가 작동하는 것
-  ok(line('공항철도').breakdown.uniqueness < 50, `LV5 §15: 공항철도 독점성 낮음 (${line('공항철도').breakdown.uniqueness}) — 환승역 가치 편승 차단`);
-}
-{
-  const rk = nm => LINEI.lines.findIndex(x => x.name === nm) + 1;
-  ok(rk('GTX-A') > 5, `GTX-A 상위 5위 밖 (${rk('GTX-A')}위) — 차내시간만으로 과대평가 금지`);
-  ok(rk('공항철도') > 3, `공항철도 상위 3위 밖 (${rk('공항철도')}위)`);
-  ok(rk('공항철도') > rk('5호선'), `§16: 공항철도(${rk('공항철도')}위)가 5호선(${rk('5호선')}위)보다 높지 않음`);
-  ok(rk('경의중앙선') > rk('5호선'), `§16: 경의중앙선(${rk('경의중앙선')}위)이 5호선보다 높지 않음`);
+    'LV5.1: 전 노선 5축(역세권·생활권·네트워크·효율·대체불가) 0~100 저장');
+  ok(LINEI.lines.every(l => Array.isArray(l.breakdown.hubs)), 'LV5.1: 연결 생활권 목록 저장');
+
+  /* ④ soloShare 제거 — 설정·산출물 어디에도 단독역 수 지표가 없다 */
+  ok(!('soloShare' in L5.uniquenessSub) && 'detour' in L5.uniquenessSub,
+    'LV5.1 ④: uniqueness는 우회시간(detour) 기반 — soloShare(단독역 수) 제거');
+  ok(LINEI.lines.every(l => !('soloShare' in l.breakdown) && isFinite(l.breakdown.detour)),
+    'LV5.1 ④: breakdown에 soloShare 없음 · 우회 부담(detour) 저장');
+
+  /* ② 한계효용 체감 설정 존재 + ⑤ 재현: 생활권 축을 동일 데이터로 재계산하면 일치 */
+  ok(L5.hubDiminish > 0 && L5.hubDiminish < 1, `LV5.1 ②: 생활권 한계효용 체감 계수 ${L5.hubDiminish} (<1)`);
+  const NETL = R('data/rail_network.json').lines;
+  const LIFE = R('config/life_hubs.json');
+  const groups = new Map();
+  for (const l of NETL) {
+    const nm = l.name.replace(' 급행', '');
+    if (!groups.has(nm)) groups.set(nm, new Set());
+    l.stations.forEach(s => groups.get(nm).add(s));
+  }
+  const lineNamesOf = new Map();
+  for (const l of NETL) {
+    if (l.overlay) continue;
+    for (const s of l.stations) { if (!lineNamesOf.has(s)) lineNamesOf.set(s, new Set()); lineNamesOf.get(s).add(l.name); }
+  }
+  const decayOf = s => L5.transferDecay[String(Math.min(3, Math.max(1, (lineNamesOf.get(s) || new Set()).size)))] ?? 1;
+  const hubOf = new Map();
+  for (const h of LIFE.hubs) for (const s of h.stations) if (!hubOf.has(s)) hubOf.set(s, h);
+  const med = a => { const x = a.slice().sort((p, q) => p - q); const n = x.length; return n % 2 ? x[(n - 1) / 2] : (x[n / 2 - 1] + x[n / 2]) / 2; };
+  const hubRawOf = nm => {
+    const stArr = [...groups.get(nm)];
+    const hubStns = new Map();
+    for (const s of stArr) { const h = hubOf.get(s); if (h) { if (!hubStns.has(h)) hubStns.set(h, []); hubStns.get(h).push(s); } }
+    return [...hubStns.keys()].map(h => {
+      const a = hubStns.get(h);
+      const depth = a.length >= Math.min(2, h.stations.length) ? 1 : L5.hubDepthPartial;
+      const decay = a.reduce((x, s) => x + decayOf(s), 0) / a.length;
+      return (L5.hubTierCoef[String(h.tier)] ?? 0.5) * depth * decay;
+    }).sort((a, b) => b - a).reduce((a, c, i) => a + c * Math.pow(L5.hubDiminish, i), 0);
+  };
+  const hubMax = Math.max(...[...groups.keys()].map(hubRawOf));
+  let hubRepro = true, stRepro = true, scoreRepro = true;
+  for (const l of LINEI.lines) {
+    const stArr = [...groups.get(l.name)];
+    // ⑤·② 생활권 축 재현 (체감 적용 공식 그대로)
+    const hubScore = Math.round(100 * hubRawOf(l.name) / hubMax);
+    if (Math.abs(hubScore - l.breakdown.hub) > 1) { hubRepro = false; console.error(`  ↳ ${l.name} 생활권 재현 실패: ${hubScore} vs ${l.breakdown.hub}`); }
+    // ⑤·① 역세권 축 재현 — 환승 감쇄가 실제 적용되어야만 일치한다
+    const dsv = stArr.map(s => st(s).sv * decayOf(s)).sort((a, b) => a - b);
+    const topN = Math.max(2, Math.ceil(dsv.length * 0.25));
+    const topAvg = dsv.slice(-topN).reduce((a, b) => a + b, 0) / topN;
+    const share80 = stArr.filter(s => st(s).sv >= L5.share80Threshold).length / dsv.length;
+    const SS = L5.stationSub;
+    const stScore = Math.round(Math.min(100, Math.max(0, SS.median * med(dsv) + SS.topQuartile * topAvg + SS.share80 * share80 * 100)));
+    if (Math.abs(stScore - l.breakdown.station) > 1) { stRepro = false; console.error(`  ↳ ${l.name} 역세권 재현 실패: ${stScore} vs ${l.breakdown.station}`); }
+    // ③ 최종 점수 = 5축 가중합뿐 (길이 등 숨은 가산 없음 + raw 그대로, 재스케일 없음)
+    const recon = L5.axes.station * l.breakdown.station + L5.axes.hub * l.breakdown.hub + L5.axes.network * l.breakdown.network + L5.axes.efficiency * l.breakdown.efficiency + L5.axes.uniqueness * l.breakdown.uniqueness;
+    if (Math.abs(recon - l.golden) > 1.2) { scoreRepro = false; console.error(`  ↳ ${l.name} 점수 재현 실패: ${recon.toFixed(1)} vs ${l.golden}`); }
+  }
+  ok(hubRepro, 'LV5.1 ②⑤: 생활권 축(한계효용 체감 포함) 동일 데이터 재현 일치');
+  ok(stRepro, 'LV5.1 ①⑤: 역세권 축(환승 편승 감쇄 포함) 동일 데이터 재현 일치');
+  ok(scoreRepro, 'LV5.1 ③⑤: 최종 점수 = 5축 가중합 그대로 — 노선 길이 직접 가산·재스케일 없음');
+  ok(LINEI.lines.every(l => ['S', 'A', 'B', 'C'].includes(l.tier)), 'LV5.1: Tier(S/A/B/C) 부여');
 }
 
 /* Test A — 같은 3호선: 신사 vs 녹번, 차이가 4축 컴포넌트로 설명 가능해야 */

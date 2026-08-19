@@ -5,7 +5,7 @@
    단지 소스 3종: ① 상세 프로필 샘플(DATA) ② 실거래 자동수집(data/live/*)
                  ③ 직접 입력
    ═══════════════════════════════════════════════════════════════════ */
-const APP_VERSION = '3.2.0';
+const APP_VERSION = '3.2.1';
 const DEBUG_MODE = /[?&]debug=true/.test(location.search);
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -673,7 +673,7 @@ function renderReport(r) {
   ${r.transit ? (() => {
     const t = r.transit, p = t.primary;
     const totalStn = Object.keys(STN.stations).length;
-    const goldenRows = p.lines.map(ln => { const L = LINEI.lines.find(x => x.name === ln); return L ? `<span class="badge gray" style="border-color:${L.color};color:var(--ink)"><i style="width:8px;height:8px;border-radius:50%;background:${L.color};display:inline-block"></i>${esc(ln)} 노선 가치 ${L.golden}</span>` : ''; }).join(' ');
+    const goldenRows = p.lines.map(ln => { const L = LINEI.lines.find(x => x.name === ln); return L ? `<span class="badge gray" style="border-color:${L.color};color:var(--ink)"><i style="width:8px;height:8px;border-radius:50%;background:${L.color};display:inline-block"></i>${esc(ln)} 노선 가치 ${L.golden}${L.tier ? ' · ' + L.tier : ''}</span>` : ''; }).join(' ');
     let hopViz = '';
     for (const ln of p.lines) {
       const le = RAIL_LINES.find(x => x.name === ln && !x.overlay && x.stations.includes(p.st));
@@ -1087,7 +1087,7 @@ function buildMap() {
   mapState.built = true;
   // 노선 칩 (노선 가치 지수순)
   $('lineChips').innerHTML = `<button class="lchip" data-line="" aria-pressed="true">전체</button>` +
-    LINEI.lines.map(l => `<button class="lchip" data-line="${esc(l.name)}" aria-pressed="false"><i style="background:${l.color}"></i>${esc(l.name)} ${l.golden}</button>`).join('');
+    LINEI.lines.map(l => `<button class="lchip" data-line="${esc(l.name)}" aria-pressed="false"><i style="background:${l.color}"></i>${esc(l.name)} ${l.golden}${l.tier ? ` <b>${l.tier}</b>` : ''}</button>`).join('');
   $('lineChips').querySelectorAll('.lchip').forEach(b => b.onclick = () => {
     mapState.line = b.dataset.line || null;
     $('lineChips').querySelectorAll('.lchip').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
@@ -1301,23 +1301,23 @@ function renderLineCard() {
   if (!L) { $('lineCard').hidden = true; return; }
   const B = L.breakdown || {};
   const hubs = B.hubs || [];
-  const AXES = [['hub', '핵심 생활권 연결력', '30%'], ['station', '노선 내 역세권 가치', '25%'], ['network', '도시 횡단·네트워크', '20%'], ['efficiency', '실제 이동 효율', '15%'], ['uniqueness', '독점성·대체불가능성', '10%']];
+  const AXES = [['station', '노선 내 역세권 가치', '30%'], ['hub', '핵심 생활권 연결력', '25%'], ['network', '도시 횡단·네트워크', '20%'], ['efficiency', '실제 이동 효율', '15%'], ['uniqueness', '대체불가능성', '10%']];
   const axBars = AXES.map(([k, lb, w]) => `<div class="sb"><div class="k">${lb} ${w}</div><div class="sbar"><i style="width:${Math.round(B[k] ?? 0)}%"></i></div><div class="v">${B[k] ?? '—'}</div></div>`).join('');
   const strengths = [];
-  if ((B.hub ?? 0) >= 80) strengths.push(`서로 다른 핵심 생활권 ${hubs.length}곳 직결 — ${hubs.slice(0, 5).map(h => h.n).join('·')}${hubs.length > 5 ? ' 등' : ''}`);
   if ((B.station ?? 0) >= 68) strengths.push(`역세권 가치 상위 — 환승 감쇄 후 중앙값 ${B.medianDecayed} · 80점 이상 역 ${B.share80}%`);
-  if ((B.network ?? 0) >= 75) strengths.push(`도시 네트워크 — 서로 다른 기능의 생활권 연결 관계 ${B.relations ?? '—'}/4종 · 환승 ${B.otherLines}개 노선${B.gateways && B.gateways.length ? ` · ${B.gateways.join('·')} 관문` : ''}`);
+  if ((B.hub ?? 0) >= 80) strengths.push(`서로 다른 핵심 생활권 ${hubs.length}곳 직결 — ${hubs.slice(0, 5).map(h => h.n).join('·')}${hubs.length > 5 ? ' 등' : ''} (추가 생활권은 한계효용 체감)`);
+  if ((B.network ?? 0) >= 75) strengths.push(`도시 네트워크 — 환승 ${B.otherLines}개 노선${B.gateways && B.gateways.length ? ` · ${B.gateways.join('·')} 관문` : ''}${(B.ewKm >= 18 || B.nsKm >= 18) ? ' · 서울 횡단축' : ''}`);
   if ((B.efficiency ?? 0) >= 72) strengths.push(`이동 효율 — 배차 ${L.svc.headway}분${L.express ? ' · 급행 운행' : ''}${B.kmh ? ` · 표정속도 약 ${B.kmh}km/h` : ''}`);
-  if ((B.uniqueness ?? 0) >= 70) strengths.push(`대체 불가 — 이 노선이 유일하게 취급하는 역·생활권 비중이 큼`);
+  if ((B.uniqueness ?? 0) >= 65) strengths.push(`대체 불가 — 이 노선이 없어지면 소속 역의 핵심지 도달시간이 크게 늘어남 (우회 부담 ${B.detour}/100)`);
   const exHubs = hubs.filter(h => h.ex).map(h => h.n);
   if (exHubs.length >= 2) strengths.push(`${exHubs.slice(0, 4).join('·')}${exHubs.length > 4 ? ' 등' : ''}은 사실상 이 노선(±1개)만 연결`);
   if (!strengths.length) strengths.push('구조적 강점이 뚜렷하지 않음 — 세부 축 점수를 확인하세요');
   const weaknesses = [];
   if ((B.station ?? 0) < 55) weaknesses.push(`역세권 가치 ${B.station} — 외곽·저수요 구간 비중이 큼 (중앙값 ${B.medianDecayed})`);
   if ((B.hub ?? 0) < 55) weaknesses.push(`핵심 생활권 연결 ${B.hub} — 직결하는 고가치 생활권이 적음`);
-  if ((B.network ?? 0) < 55) weaknesses.push(`연결 다양성 낮음 — 관계 ${B.relations ?? 0}/4종 (주거↔업무 / 주거↔교육 / 업무권간 / 광역 관문)`);
+  if ((B.network ?? 0) < 55) weaknesses.push(`네트워크 축 낮음 — 환승 ${B.otherLines}개 노선${B.gateways && B.gateways.length ? '' : ' · KTX/공항 관문 없음'}${(B.ewKm < 10 && B.nsKm < 10) ? ' · 도심 횡단축 아님' : ''}`);
   if ((B.efficiency ?? 0) < 55) weaknesses.push(`이동 효율 — 배차 ${L.svc.headway}분${L.svc.fare ? ' · 별도요금' : ''}${L.svc.depth >= 3 ? ' · 깊은 역사' : ''}`);
-  if ((B.uniqueness ?? 0) < 40) weaknesses.push('독점성 낮음 — 주요 역 가치가 다른 노선과 공유되거나 대체 경로가 있음 (환승 편승 감쇄 적용됨)');
+  if ((B.uniqueness ?? 0) < 40) weaknesses.push(`대체 경로 많음 — 이 노선이 없어도 소속 역 대부분이 다른 노선으로 비슷하게 이동 가능 (우회 부담 ${B.detour}/100)`);
   if (L.stdev >= 16) weaknesses.push(`역별 편차 큼(±${L.stdev}) — 같은 노선이라도 역마다 프리미엄이 다름`);
   if (!weaknesses.length) weaknesses.push('뚜렷한 구조적 약점 없음');
   const hubChips = hubs.map(h => `<span class="badge gray" title="${esc(h.n)} — ${h.cnt}개 역${h.ex ? ' · 사실상 독점 연결' : ''}">${esc(h.n)}${h.tier === 1 ? ' ★' : ''}${h.ex ? ' ◆' : ''}</span>`).join(' ');
@@ -1330,8 +1330,8 @@ function renderLineCard() {
   const tops = (L.topStations || []).map(t => `<span class="badge gray" style="cursor:pointer" data-st="${esc(t.n)}">${esc(t.n)} ${t.sv}</span>`).join(' ');
   $('lineCard').hidden = false;
   $('lineCard').innerHTML = `
-    <h2><i style="width:10px;height:10px;border-radius:50%;background:${L.color};display:inline-block;margin-right:6px"></i>${esc(nm)} — 노선 가치 ${L.golden} / 100 <span style="font-size:12px;color:var(--muted)">(${LINEI.lines.findIndex(x => x.name === nm) + 1}위)</span></h2>
-    <p class="hint"><b>노선 가치는 역 평균이 아닙니다.</b> 이 노선이 수도권의 서로 다른 핵심 생활권을 얼마나 유용하게 연결하는지를 — 생활권 연결력 30% + 역세권 가치 25%(환승역 편승 감쇄) + 도시 횡단·네트워크 20% + 이동 효율 15% + 독점성 10%로 평가합니다.</p>
+    <h2><i style="width:10px;height:10px;border-radius:50%;background:${L.color};display:inline-block;margin-right:6px"></i>${esc(nm)} — 노선 가치 ${L.golden} / 100${L.tier ? ` <span class="badge ${L.tier === 'S' ? 'green' : L.tier === 'A' ? 'blue' : 'gray'}" style="vertical-align:2px">${L.tier} Tier</span>` : ''} <span style="font-size:12px;color:var(--muted)">(${LINEI.lines.findIndex(x => x.name === nm) + 1}위)</span></h2>
+    <p class="hint"><b>노선 가치는 역 평균이 아닙니다.</b> 역세권 가치 30%(환승역 편승 감쇄) + 핵심 생활권 연결력 25%(추가 생활권은 한계효용 체감) + 도시 횡단·네트워크 20%(환승·관문·횡단성만 — 생활권과 중복 가산 없음) + 이동 효율 15% + 대체불가능성 10%(노선 제거 시 우회 시간 실측)로 평가하며, 점수는 계산값 그대로입니다(순위 강제 확대 없음). 점수차가 작은 노선은 같은 Tier로 묶입니다.</p>
     ${axBars}
     <div class="chips" style="margin:10px 0 2px"><span style="font-size:12px;color:var(--muted)">주요 연결 생활권 (★ 최상위 ◆ 독점)</span> ${hubChips || '<span class="badge gray">—</span>'}</div>
     <div class="kv"><span>역세권 가치 산출</span><span style="text-align:left;flex:2">환승 감쇄 SV 중앙값 <b>${B.medianDecayed ?? '—'}</b> · 상위 25%(${B.topN}개 역) <b>${B.topAvgDecayed ?? '—'}</b> · SV 80+ 역 비율 <b>${B.share80}%</b> · ${L.count}개 역</span></div>
@@ -1380,7 +1380,7 @@ function renderRank() {
     <p class="hint">실제 계산 결과로 생성된 순위입니다 — 사전에 고정된 순위가 없습니다. ${catNote} 위 탭으로 기준을 바꾸면 지도 원 크기와 순위가 함께 바뀝니다.</p>
     ${rows}
     <button class="btn ghost" id="rankMore" style="width:100%;margin-top:10px">${mapState.showAll ? '접기 — TOP 10만 보기' : `전체 역 보기 (${ranked.length}개 · ${CAT[m].short} 점수순)`}</button>
-    <p class="subtle" style="margin-top:10px">노선 가치: ${LINEI.lines.slice(0, 5).map(l => `${esc(l.name)} ${l.golden}`).join(' · ')} — 노선 가치는 역 평균이 아닌 별도 모델입니다 (노선 칩을 눌러 근거 확인)</p>`;
+    <p class="subtle" style="margin-top:10px">노선 가치: ${LINEI.lines.slice(0, 5).map(l => `${esc(l.name)} ${l.golden}${l.tier ? '(' + l.tier + ')' : ''}`).join(' · ')} — 역 평균이 아닌 별도 모델이며, 점수차가 작은 노선은 같은 Tier입니다 (노선 칩을 눌러 근거 확인)</p>`;
   $('rankCard').querySelectorAll('.rankrow').forEach(row => row.onclick = () => selectStation(row.dataset.st));
   $('rankMore').onclick = () => { mapState.showAll = !mapState.showAll; renderRank(); if (mapState.showAll === false) $('rankCard').scrollIntoView({ block: 'start' }); };
 }
