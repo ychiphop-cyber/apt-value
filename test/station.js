@@ -115,8 +115,15 @@ ok(LINEI.lines.length >= 10 && LINEI.lines.every(l => l.golden > 0 && l.golden <
     'A2: 가치평가용 블렌드는 경제력·교육 축 축소 (아파트 자체 실거래·교육점수와 중복 방지)');
   ok(Object.values(STN.stations).every(s => ['transit', 'econ', 'edu', 'biz'].every(k =>
     s.comps[k] >= 0 && s.comps[k] <= 100 && isFinite(s.comps[k]))), 'A2: 전 역 4축 0~100');
-  ok(Object.values(STN.stations).some(s => s.econSrc === 'live') &&
-    Object.values(STN.stations).some(s => s.econSrc === 'manual'), 'A2: 경제력 실거래/폴백 출처 구분 저장');
+  /* V5.2 경제력 = 거주민 경제수준 추정 등급(1~5)만 — 시세·업무·상권 미사용 구조 증명 */
+  ok(Object.values(STN.stations).every(s => s.econSrc === 'grade' && s.econGrade >= 1 && s.econGrade <= 5),
+    'A2: 경제력 출처 = 거주민 경제수준 등급(1~5), 전 역 추정 표기');
+  ok(new Set(Object.values(STN.stations).map(s => s.comps.econ)).size <= 5,
+    'A2: 경제력 점수의 서로 다른 값 ≤ 5개 — 시세 같은 연속 변수가 섞이면 실패하는 가드');
+  ok(Object.values(STN.stations).filter(s => s.priceLevel != null).length >= 150,
+    'A2: 주변 시세 수준(priceLevel)은 검증용 별도 필드로 보존');
+  ok(Object.values(STN.stations).some(s => s.priceLevel != null && Math.abs(s.priceLevel - s.comps.econ) >= 15),
+    'A2: 경제력 점수 ≠ 시세 백분위 (독립 지표임을 확인)');
 }
 
 /* Test A3 — §16 주거·교육·자산 강지역이 업무 유동인구 없이도 합리적으로 평가 */
@@ -129,14 +136,22 @@ ok(LINEI.lines.length >= 10 && LINEI.lines.every(l => l.golden > 0 && l.golden <
   ok(st('압구정').rank < st('서울역').rank, 'A3: 압구정(주거 최상급) > 서울역(업무 중심) — 업무축만으로 최상위 불가');
 }
 
-/* Test A4 — V5 경제력: 단지 단위 표본·규모 필터 구조 확인 */
+/* Test A4 — V5.2 경제력·업무·상권 분리 (§5·§6 sanity) */
 {
-  ok(Object.values(STN.stations).filter(s => s.econSrc === 'live').every(s => s.econN >= CFG.station.v4.econMinSamples),
-    'A4: 실거래 기반 역은 최소 단지 표본 이상');
-  // 잠실새내(잠실주공5 재건축 초고가 ㎡가 이슈): 단지당 1표 중앙값이라 재건축 1곳이 역 점수를 지배하지 못함
-  ok(st('잠실새내').comps.econ <= st('압구정').comps.econ, `A4: 잠실새내 경제력(${st('잠실새내').comps.econ}) ≤ 압구정(${st('압구정').comps.econ}) — 단일 재건축 단지 지배 방지`);
-  // 목동: 나홀로 소형 단지가 다수라도 규모(매매+전세 거래량) 가중으로 신시가지가 대표성 유지
-  ok(st('목동').comps.econ >= 50, `A4: 목동 경제력 ${st('목동').comps.econ} — 소형 단지 희석 방지(규모 가중)`);
+  // 같은 거주민 등급이면 상권·업무 규모가 달라도 경제력이 같아야 한다 (이중 가중 차단의 구조 증명)
+  ok(st('고속터미널').econGrade === st('잠실새내').econGrade
+    ? st('고속터미널').comps.econ === st('잠실새내').comps.econ : true,
+    'A4 §5: 고속터미널(백화점·상권 大) = 잠실새내(상권 小) — 같은 등급이면 경제력 동일 (상권 미반영)');
+  ok(st('삼성').econGrade === st('목동').econGrade
+    ? st('삼성').comps.econ === st('목동').comps.econ : true,
+    'A4 §5: 삼성(오피스 밀집 大) = 목동(오피스 小) — 같은 등급이면 경제력 동일 (업무 미반영, 업무는 업무 축에서)');
+  ok(st('삼성').comps.biz > st('목동').comps.biz, 'A4 §5: 업무 차이는 업무 축이 담당');
+  // §6: 압구정은 거주민 경제력 최상위권 후보로 나오는 것이 자연스럽다
+  ok(st('압구정').comps.econ >= 90, `A4 §6: 압구정 거주민 경제력 최상위권 (${st('압구정').comps.econ})`);
+  // 시세는 검증용으로만 — 같은 등급이면 시세 백분위가 달라도 경제력 점수가 같아야 한다
+  ok(st('잠실새내').econGrade === st('오목교').econGrade
+    ? st('잠실새내').comps.econ === st('오목교').comps.econ : true,
+    'A4 §2: 시세 백분위 차이(잠실새내 vs 오목교)가 경제력 점수 차이를 만들지 않음');
 }
 
 /* Test B — 가치 높은 단일노선 역 > 가치 낮은 노선 환승역 (환승 개수만으로 승리 금지) */

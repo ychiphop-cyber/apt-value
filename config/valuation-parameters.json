@@ -56,16 +56,15 @@
       "eduSub": { "hub": 0.55, "density": 0.45 },
       "hubDecayKm": 1.1,
       "hubTierCoef": { "1": 1.0, "2": 0.82, "3": 0.62, "4": 0.45 },
+      "econNote": "V5.2 경제력 축 = 거주민 경제수준(소득·소비) 추정 등급 w(1~5, rail_network, ESTIMATED)의 전 역 백분위. 아파트 시세는 순환참조(집값→역 가치→아파트 가치), 업무·상권·유동인구는 업무 축과 이중 가중이라 입력에서 완전히 제외. 역세권 단위 소득·자산 정밀 데이터가 없으므로 등급 추정임을 표시하고 임의 정밀값을 만들지 않는다. 아래 price* 파라미터는 '주변 시세 수준(priceLevel)' — 점수에 미반영, 결과 검증·참고 표시 전용",
       "econWinsorPct": [2, 98],
       "econMinSamples": 3,
-      "econNote": "V5: 거래→평형(최근 중앙값, 이상거래 필터)→단지 대표 ㎡가(평형 중앙값, 단지당 1표)→역세권 도보시간×규모(거래량 proxy) 가중 중앙값. econMinSamples = 최소 단지 수",
       "econTradeBand": [0.6, 1.6],
       "econTradeBandMinTrades": 3,
       "econWalkCurve": [ { "min": 5, "w": 1.0 }, { "min": 9, "w": 0.8 }, { "min": 12, "w": 0.55 }, { "min": 15, "w": 0.35 }, { "min": 20, "w": 0.2 } ],
       "econSizeCap": 40,
       "econComplexMinObs": 2,
-      "econSizeNote": "단지 가중치 = min(매매+전세 거래건수, cap) — 세대수 데이터가 없어 거래량을 단지 규모 proxy로 사용(전세 포함: 매매가 거래허가제 등으로 억제된 대단지의 규모가 지워지지 않게). 나홀로 소형 단지 1곳이 대단지와 같은 발언권을 갖지 않게 하되, cap으로 초대형 단지의 역세권 독점도 막는다. 관측 2건 미만 단지는 대표성 부족으로 제외",
-      "wealthFallbackScore": [null, 15, 35, 55, 78, 93],
+      "econSizeNote": "priceLevel(검증용) 계산: 단지 가중치 = min(매매+전세 거래건수, cap) — 세대수 데이터가 없어 거래량을 단지 규모 proxy로 사용. 관측 2건 미만 단지는 제외",
       "densityLogRef": 40
     },
     "lineV5": {

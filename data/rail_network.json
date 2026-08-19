@@ -3,7 +3,7 @@
   "note": "수도권 철도망 그래프 — 공식 노선 체계 기반 수작업 구축(2026-08 운행 기준). 좌표는 지도 표시용 근사값(ESTIMATED). 역별 점수는 절대 저장하지 않는다 — station_intel.js가 계산한다.",
   "asOf": "2026-08",
   "coordStatus": "ESTIMATED",
-  "destStatus": "ESTIMATED — 목적지 속성(고용·상업·문화·의료·관광 1~5)과 자산수준(w 1~5)은 전문가 추정 초기값. 향후 승하차·카드소비 데이터로 보정",
+  "destStatus": "ESTIMATED — 목적지 속성 d(고용·상업·문화·의료·관광 1~5)는 업무·중심성 축 전용, w(1~5)는 역세권 거주민 경제수준(소득·소비) 추정 등급으로 경제력 축 전용 — 서로 섞지 않는다. 모두 전문가 추정 초기값(ESTIMATED), 향후 카드소비·통계 데이터로 보정",
   "svcNote": "svc: 평시 배차간격(분)·추가요금 단계·역사 심도(진입시간 proxy) — Generalized Travel Time과 Service Friction에 사용 (추정 초기값)"
  },
  "defaults": {

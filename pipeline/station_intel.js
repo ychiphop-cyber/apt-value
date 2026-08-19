@@ -3,13 +3,15 @@
    Station Intelligence V5 빌더 — Station Value(역 생활권 가치)와
    Line Value(노선 네트워크 가치)를 서로 다른 모델로 분리한다.
 
-   [Station Value — 4축, V4 유지 + 경제력 계산 개선]
+   [Station Value — 4축, V4 유지 + 경제력 정의 수정(V5.2)]
      ① 교통·네트워크 30% ② 역세권 경제력 35% ③ 교육·주거 20% ④ 업무·중심성 15%
-     경제력(V5): 거래 → 평형(최근 거래 중앙값, 이상거래 필터) → 단지 대표 ㎡가
-     (평형별 값의 중앙값, 단지당 1표) → 역세권 도보시간 가중 중앙값.
-     법정동 전체 가격 일괄 귀속·최신 1건 표본·평형 수 편중을 제거했고,
-     단지당 1표 + 중앙값이라 특정 단지(평가 대상 포함)가 역 점수를 좌우하기
-     어렵다(순환 방지). 소득·자산 데이터를 추정 생성하지 않는다 — 부족하면 수동 폴백.
+     경제력(V5.2) = 그 역 생활권에 "거주하는 주민들의 경제 수준(소득·소비)"만 평가.
+     입력은 역세권 거주민 경제수준 추정 등급 w(1~5, rail_network 전문가 추정,
+     ESTIMATED)뿐이다. 아파트 실거래가·시세는 입력에서 완전히 제외(집값→역 가치
+     →아파트 가치 순환참조 차단), 업무지·상권·유동인구도 제외(업무 축과 이중
+     가중 방지 — 업무는 d.emp 등에서 별도 평가). 역세권 단위 소득·자산 정밀
+     데이터가 없으므로 등급 추정임을 숨기지 않는다(임의 정밀값 생성 금지).
+     주변 시세는 priceLevel(검증용 참고 지표)로만 별도 저장하고 점수에 쓰지 않는다.
 
    [Line Value V5.1 — Station Value 평균이 아니다. 같은 장점의 중복 보상 금지]
      ① 노선 내 역세권 가치 30% — 환승 감쇄(편승 방지) 적용한 SV의
@@ -278,9 +280,9 @@ for (const s of allStations) {
   const TS = V4.transitSub;
   const transitRaw = TS.core * core + TS.network * network + TS.friction * fric;
 
-  /* ② 역세권 경제력 — 실거래 기반, 없으면 수동 wealth 폴백 (추정 생성 금지) */
+  /* ② 역세권 경제력 — 거주민 경제수준(소득·소비) 추정 등급 w(1~5)만 사용.
+     시세·업무·상권은 입력에서 제외. 시세는 검증용 priceLevel로만 별도 저장 */
   const ppm = stationPpm.get(s);
-  const econManual = V4.wealthFallbackScore[wl] ?? 55;
 
   /* ③ 교육·주거 생활권 — 학원가 허브 접근 + 단지 밀집도 */
   let hubEdu = 0, hubName = null;
@@ -303,13 +305,13 @@ for (const s of allStations) {
   const bizRaw = clamp(100 * (DW.emp * d.emp + DW.comm * d.comm + DW.cult * d.cult + DW.med * d.med + DW.tour * d.tour) / 5, 0, 100);
 
   rows[s] = {
-    _t: transitRaw, _e: ppm != null ? null : econManual, _ppm: ppm ?? null, _edu: eduRaw, _b: bizRaw,
+    _t: transitRaw, _w: wl, _ppm: ppm ?? null, _edu: eduRaw, _b: bizRaw,
     sub: { core: Math.round(core), net: Math.round(network), fric: Math.round(fric), hubEdu: Math.round(hubEdu), density: density != null ? Math.round(density) : null, dest: Math.round(bizRaw) },
     hubName,
     jobAccess: Math.round(clamp(100 * jobRaw / jobRawMax, 0, 100)),
     gangnamMin, jobMinutes: jm, lines: [...(stationLines.get(s) || [])], express,
-    econSrc: ppm != null ? 'live' : 'manual',
-    econN: stationEconN.get(s) ?? null,   // 경제력 표본(단지 수) — 신뢰도 표시용
+    econSrc: 'grade', econGrade: wl,       // 거주민 경제수준 추정 등급 (1~5, ESTIMATED)
+    priceN: stationEconN.get(s) ?? null,   // 주변 시세(검증용) 표본 단지 수
     c: info.c || null
   };
 }
@@ -331,8 +333,10 @@ function pctRank(getter, setter) {
 pctRank(r => r._t, (r, v) => { r.comps = r.comps || {}; r.comps.transit = v; });
 pctRank(r => r._edu, (r, v) => { r.comps.edu = v; });
 pctRank(r => r._b, (r, v) => { r.comps.biz = v; });
-/* 경제력: 실거래 보유 역은 ㎡가 백분위(동률 = 평균 순위 — winsorize 상한 동률 구간이
-   임의 순서로 100·99…를 나눠 갖지 않게 한다), 미보유 역은 수동 폴백 점수 사용 */
+/* 경제력: 거주민 경제수준 추정 등급 w(1~5)의 전 역 백분위 (동률 = 평균 순위).
+   시세·업무·상권 미사용 — 등급이 같으면 상권 규모나 집값이 달라도 같은 점수다 */
+pctRank(r => r._w, (r, v) => { r.comps.econ = v; });
+/* 주변 시세 수준 — 검증용 참고 지표(Station Value에 미반영). 실거래 보유 역만 백분위 */
 {
   const live = allStations.filter(s => rows[s]._ppm != null);
   const arr = live.map(s => [s, rows[s]._ppm]).sort((a, b) => b[1] - a[1]);
@@ -342,10 +346,10 @@ pctRank(r => r._b, (r, v) => { r.comps.biz = v; });
     let j = i;
     while (j + 1 < n && arr[j + 1][1] === arr[i][1]) j++;
     const v = Math.round(100 * (1 - (n === 1 ? 0 : ((i + j) / 2) / (n - 1))));
-    for (let k = i; k <= j; k++) { rows[arr[k][0]].comps.econ = v; rows[arr[k][0]].areaPriceLevel = v; }
+    for (let k = i; k <= j; k++) rows[arr[k][0]].priceLevel = v;
     i = j + 1;
   }
-  for (const s of allStations) if (rows[s]._ppm == null) rows[s].comps.econ = Math.round(rows[s]._e);
+  for (const s of allStations) if (rows[s]._ppm == null) rows[s].priceLevel = null;
 }
 
 /* ── Station Value: 4축 가중합 → 표시 정규화 (상위 1% ≈ 95~100) ── */
@@ -354,7 +358,7 @@ for (const s of allStations) {
   rows[s].svRaw = Math.round((A.transit * c.transit + A.econ * c.econ + A.edu * c.edu + A.biz * c.biz) * 10) / 10;
   rows[s].svTRaw = Math.round((AV.transit * c.transit + AV.econ * c.econ + AV.edu * c.edu + AV.biz * c.biz) * 10) / 10;
   rows[s].wealth = c.econ;   // 역세권 경제력 축 (실거래 기반 백분위 or 수동 폴백)
-  delete rows[s]._t; delete rows[s]._e; delete rows[s]._ppm; delete rows[s]._edu; delete rows[s]._b;
+  delete rows[s]._t; delete rows[s]._w; delete rows[s]._ppm; delete rows[s]._edu; delete rows[s]._b;
 }
 const curve = CFG.displayCurve.map(p => [p.p, p.s]);
 function normalizeBy(key, outKey) {
@@ -603,17 +607,25 @@ linesOut.sort((a, b) => b.golden - a.golden);
 /* ── 저장 — station·line 파일은 반드시 같은 meta(버전·생성시각)로 함께 생성된다 ── */
 const meta = {
   updatedAt: NET.meta.asOf, version: 5, generatedAt: new Date().toISOString(),
-  method: 'V5.1 — Station Value 4축(교통30/경제력35/교육주거20/업무15, 경제력은 단지 대표가 도보가중 중앙값) · Line Value 5축(역세권 가치30/생활권 연결력25 한계효용 체감/도시 네트워크20 환승·관문·횡단성만/이동 효율15/대체불가능성10 우회시간, 환승 감쇄·raw 표시) — 역·노선 점수 하드코딩 없음',
+  method: 'V5.2 — Station Value 4축(교통30/경제력35/교육주거20/업무15). 경제력 = 거주민 경제수준(소득·소비) 추정 등급 w(1~5) 백분위 — 아파트 시세·업무·상권 미사용(순환·이중가중 차단), 시세는 priceLevel(검증용)로만 저장 · Line Value 5축(역세권30/생활권25 한계효용/네트워크20/효율15/대체불가10, 환승 감쇄·raw 표시) — 역·노선 점수 하드코딩 없음',
   status: 'ESTIMATED', stationCount: allStations.length,
-  econLiveCount: [...stationPpm.keys()].length,
-  note: '경제력 축: 거래→평형(중앙값·이상거래 필터)→단지 대표 ㎡가(단지당 1표)→도보시간 가중 중앙값→winsorize 백분위. Line Value는 Station Value 평균이 아니며 같은 장점을 여러 축에서 중복 보상하지 않음'
+  priceLevelCount: [...stationPpm.keys()].length,
+  note: '경제력 축은 5단계 추정 등급(ESTIMATED — 역세권 단위 소득·자산 정밀 데이터 미확보, 임의 정밀값 생성 금지). Line Value는 Station Value 평균이 아니며 같은 장점을 여러 축에서 중복 보상하지 않음'
 };
 fs.writeFileSync(path.join(ROOT, 'data', 'station_intelligence.json'), JSON.stringify({ meta, stations: rows }));
 fs.writeFileSync(path.join(ROOT, 'data', 'line_intelligence.json'), JSON.stringify({ meta, lines: linesOut }));
 
 const sorted = allStations.slice().sort((a, b) => rows[b].sv - rows[a].sv);
-console.log(`역 ${allStations.length}개 · 노선 ${linesOut.length}개 (V5.1) · 경제력 실거래 기반 ${meta.econLiveCount}개 역`);
+console.log(`역 ${allStations.length}개 · 노선 ${linesOut.length}개 (V5.2) · 시세 검증지표 보유 ${meta.priceLevelCount}개 역`);
 console.log('TOP 12:', sorted.slice(0, 12).map(s => `${s} ${Math.round(rows[s].sv)}`).join(' / '));
+/* §2 검증용: 경제력(거주민 등급) vs 주변 시세 수준 괴리 상위 — 시세가 등급 대비 크게
+   높거나 낮은 역은 등급 데이터 재검토 후보 (점수에는 미반영, 리포트 전용) */
+{
+  const gap = allStations.filter(s => rows[s].priceLevel != null)
+    .map(s => [s, rows[s].priceLevel - rows[s].comps.econ])
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 8);
+  console.log('검증(점수 미반영) 경제력 등급 vs 시세 괴리 상위:', gap.map(([s, d]) => `${s} ${d > 0 ? '+' : ''}${d}`).join(' / '));
+}
 console.log('노선:', linesOut.map(l => `${l.name} ${l.golden}(${l.tier})`).join(' / '));
 for (const l of linesOut) {
   const B = l.breakdown;
@@ -622,5 +634,5 @@ for (const l of linesOut) {
 const probe = ['압구정', '대치', '잠실', '잠실새내', '신사', '여의도', '광화문', '공덕', '목동', '오목교', '올림픽공원', '둔촌동', '고덕', '강남', '종로3가', '녹번', '중계', '평촌', '수내', '동탄', '성수', '서울역'];
 for (const s of probe) if (rows[s]) {
   const c = rows[s].comps;
-  console.log(`  ${s}: SV ${rows[s].sv} (${rows[s].rank}위) 교통 ${c.transit} 경제력 ${c.econ}(${rows[s].econSrc}${rows[s].econN ? ' n=' + rows[s].econN : ''}) 교육주거 ${c.edu} 업무 ${c.biz}`);
+  console.log(`  ${s}: SV ${rows[s].sv} (${rows[s].rank}위) 교통 ${c.transit} 경제력 ${c.econ}(등급 ${rows[s].econGrade}) 교육주거 ${c.edu} 업무 ${c.biz}${rows[s].priceLevel != null ? ` [시세참고 ${rows[s].priceLevel}]` : ''}`);
 }

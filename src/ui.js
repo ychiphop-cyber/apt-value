@@ -5,7 +5,7 @@
    단지 소스 3종: ① 상세 프로필 샘플(DATA) ② 실거래 자동수집(data/live/*)
                  ③ 직접 입력
    ═══════════════════════════════════════════════════════════════════ */
-const APP_VERSION = '3.2.1';
+const APP_VERSION = '3.2.2';
 const DEBUG_MODE = /[?&]debug=true/.test(location.search);
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -706,7 +706,7 @@ function renderReport(r) {
     ${hopViz}
     <div class="op" style="margin-top:14px"><div class="ot">분석</div><p>${sentence}</p></div>
     <button class="btn ghost" id="openMapFromResult" style="width:100%;margin-top:8px">🚇 역 가치 지도에서 ${esc(p.st)}역 보기</button>
-    <p class="subtle" style="margin-top:8px">역 가치는 그래프 이동시간·실거래·공개 데이터 기반 자동 계산(추정 포함)이며, 기존 교통점수를 대체할 뿐 별도 가산되지 않습니다. 아파트 평가에 쓰는 블렌드(svT)는 역의 경제력·교육 축을 각 ${Math.round(CFG.station.v4.axesForValuation.econ * 100)}%·${Math.round(CFG.station.v4.axesForValuation.edu * 100)}%로 축소해, 단지 자체의 실거래 기준가·교육점수와 같은 정보가 두 번 계산되지 않게 합니다.</p>
+    <p class="subtle" style="margin-top:8px">역 가치는 그래프 이동시간·공개 데이터 기반 자동 계산(추정 포함)이며, 기존 교통점수를 대체할 뿐 별도 가산되지 않습니다. 역의 경제력 축은 거주민 소득·소비 수준 추정 등급(5단계)만 사용하고 아파트 시세는 쓰지 않습니다(순환 참조 차단). 아파트 평가에 쓰는 블렌드(svT)는 경제력·교육 축을 각 ${Math.round(CFG.station.v4.axesForValuation.econ * 100)}%·${Math.round(CFG.station.v4.axesForValuation.edu * 100)}%로 축소해, 추정 등급의 불확실성과 단지 교육점수와의 중복을 줄입니다.</p>
   </div>`; })() : ''}
 
   <div class="card">
@@ -870,13 +870,13 @@ function renderReport(r) {
     <h3 class="mini-h">③ 각 항목은 어떤 데이터로 계산되나</h3>
     <ul style="margin:4px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink2);line-height:1.8">
       <li><b>가격·시장 기준가</b> — 국토교통부 실거래가(매매·전월세 자동수집), 최근 ${mref ? mref.windowDays : 90}일 동일평형 가중중앙값 범위. 이상거래는 자동 저가중. 직전 거래가 시세 대비 이상 저가(특수거래 의심)면 현재가는 최근 3개월 최고가로 표기합니다.</li>
-      <li><b>교통·역세권</b> — 가장 가까운 역까지 도보시간 × 역 가치(Station Value: 교통·네트워크 30 / 역세권 경제력 35 / 교육·주거 20 / 업무·중심성 15). 환승·급행·복수역 보너스는 '새로 열리는 목적지'가 있을 때만.</li>
+      <li><b>교통·역세권</b> — 가장 가까운 역까지 도보시간 × 역 가치(Station Value: 교통·네트워크 30 / 역세권 경제력 35 / 교육·주거 20 / 업무·중심성 15). 역 경제력은 거주민 소득·소비 수준 추정 등급(5단계)이며 아파트 시세·업무·상권을 쓰지 않습니다. 환승·급행·복수역 보너스는 '새로 열리는 목적지'가 있을 때만.</li>
       <li><b>직주근접</b> — 주요 업무지 10곳까지의 체감 이동시간(대기·환승·진입 포함).</li>
       <li><b>교육</b> — 학교 접근성·학군 선호·학원가 허브 생활권·수요 지속성. 역 가치의 교육 축은 '생활권의 구조적 교육력', 이 항목은 '이 단지에서 실제 이용 가능한 정도'로 역할을 분리합니다.</li>
       <li><b>단지 경쟁력</b> — 세대수·연식·브랜드·주차·임대비중. 정비사업 가능성은 미래 옵션가치에서 별도 평가.</li>
       <li><b>미래가치</b> — 수요 지속·공급 희소·교통 변화·교육 선호·정비 옵션 5축 → 성장률 시나리오(g)로 연결.</li>
     </ul>
-    ${AV ? `<p class="subtle" style="margin-top:8px">중복 계산 방지 — 역 가치의 '역세권 경제력'(주변 실거래)과 '교육' 축은 아파트 평가용 블렌드에서 각 ${Math.round(AV.econ * 100)}%·${Math.round(AV.edu * 100)}%로 축소 반영됩니다. 단지 자체의 시장 기준가·교육점수와 같은 정보가 두 번 들어가지 않게 하기 위한 장치입니다.</p>` : ''}
+    ${AV ? `<p class="subtle" style="margin-top:8px">순환·중복 방지 — 역 경제력은 거주민 경제수준 추정 등급만 쓰고 아파트 시세를 쓰지 않아 '집값→역 가치→아파트 가치' 순환이 없습니다. 평가용 블렌드에서 경제력·교육 축은 각 ${Math.round(AV.econ * 100)}%·${Math.round(AV.edu * 100)}%로 축소 반영됩니다(추정 등급의 불확실성·단지 교육점수와의 중복 방지).</p>` : ''}
     <h3 class="mini-h">④ 이 결과의 한계</h3>
     <ul style="margin:4px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink2);line-height:1.8">
       <li>감정평가 가격이 아닙니다 — 공개 데이터 기반의 상대가치 모델입니다.</li>
@@ -1064,7 +1064,7 @@ $('mapBack').onclick = closeMap;
 const CAT = {
   sv: { short: '종합', label: '종합 역 가치', hint: '역 가치(Station Value) — 교통·네트워크 30% · 역세권 경제력 35% · 교육·주거 생활권 20% · 업무·도시 중심성 15%로 자동 계산합니다. 원의 크기 = 역 가치, 원의 색 = 노선.' },
   transit: { short: '교통', label: '교통·네트워크', hint: '교통·네트워크 — 강남·도심·여의도 체감 이동시간(대기·환승 포함), 환승 노선 수, 급행, 배차·심도. 전체 역 대비 백분위입니다. 원의 크기 = 교통 점수.' },
-  econ: { short: '경제력', label: '역세권 경제력', hint: '역세권 경제력 — 역 생활권 단지들의 실거래 ㎡당 대표가격(단지당 1표, 도보시간·규모 가중 중앙값) 백분위입니다. 실거래 표본이 부족한 역은 추정 폴백이며 별도 표시합니다. 원의 크기 = 경제력 점수.' },
+  econ: { short: '경제력', label: '역세권 경제력', hint: '역세권 경제력 — 그 역 생활권에 거주하는 주민들의 경제 수준(소득·소비) 추정 등급(5단계)의 백분위입니다. 아파트 시세·업무지·상권·유동인구는 반영하지 않습니다(업무는 "업무" 탭, 시세는 검증용 참고로만 표시). 원의 크기 = 경제력 점수.' },
   edu: { short: '교육·주거', label: '교육·주거 생활권', hint: '교육·주거 생활권 — 대표 학원가 접근(거리감쇠)과 아파트 단지 밀집도. 대치·목동·중계·평촌 같은 학군·주거 지역이 여기서 높습니다. 원의 크기 = 교육·주거 점수.' },
   biz: { short: '업무', label: '업무·도시 중심성', hint: '업무·도시 중심성 — 업무·상업·문화 시설과 도시 중심성. 업무가 강한 역과 종합 부동산 가치가 높은 역을 구분해 보세요. 원의 크기 = 업무 점수.' }
 };
@@ -1262,19 +1262,18 @@ function selectStation(name) {
     hop += `<h3 class="mini-h">한 정거장의 가치 — ${esc(le.name)}</h3><div class="hopviz">${trio.map(x => { const d = STN.stations[x]; return `<div class="hop ${x === name ? 'cur' : ''}"><div class="hn">${esc(x)}</div><div class="hv">${d ? Math.round(d.sv) : '—'}</div><div class="hs">SV</div></div>`; }).join('')}</div>`;
     if (hop.split('hopviz').length > 2) break;
   }
-  // 교통 대비 가격 해석 (콘텐츠)
+  // 교통 대비 거주민 경제수준 해석 (콘텐츠)
   let rel = '';
   {
     const diff = s.comps.transit - s.comps.econ;
     let msg;
-    if (diff >= 20) msg = '교통·네트워크 가치 대비 주변 주택가격 수준이 낮습니다 — 교통 대비 상대적으로 저렴한 생활권입니다.';
-    else if (diff <= -20) msg = '주변 주택가격 수준이 교통·네트워크 가치보다 높습니다 — 이 생활권의 가격은 교통보다 학군·환경·신축·희소성의 영향이 더 큰 것으로 보입니다.';
-    else msg = '교통·네트워크 가치와 주변 주택가격 수준이 대체로 부합하는 생활권입니다.';
+    if (diff >= 20) msg = '교통·네트워크 가치 대비 거주민 경제수준 등급이 낮습니다 — 교통 인프라에 비해 주거지 프리미엄이 아직 낮은 생활권입니다.';
+    else if (diff <= -20) msg = '거주민 경제수준이 교통·네트워크 가치보다 높습니다 — 교통보다 학군·환경·선호도가 만드는 주거 프리미엄 생활권입니다.';
+    else msg = '교통·네트워크 가치와 거주민 경제수준이 대체로 부합하는 생활권입니다.';
     rel = `<p class="subtle" style="margin-top:8px">${msg}</p>`;
   }
-  const srcTag = s.econSrc === 'live'
-    ? '<span class="stat ok" style="margin-left:4px">실거래 기반</span>'
-    : '<span class="stat est" style="margin-left:4px">추정(실거래 표본 부족)</span>';
+  const GRADE_LABEL = [null, '최저권', '낮은 편', '중간권', '상위권', '최상위권'];
+  const srcTag = '<span class="stat est" style="margin-left:4px">5단계 추정</span>';
   const sub = s.sub || {};
   $('stnCard').hidden = false;
   $('stnCard').innerHTML = `
@@ -1282,7 +1281,7 @@ function selectStation(name) {
       <span>${s.lines.map(l => `<i style="width:9px;height:9px;border-radius:50%;background:${LINE_COLOR[l] || 'var(--muted)'};display:inline-block;margin-right:3px"></i>${esc(l)}`).join(' ')}${s.express ? ' · 급행/광역' : ''}</span></div>
     <div class="tiles3" style="grid-template-columns:1fr 1fr;margin-top:10px">
       <div class="t3" style="cursor:default"><div class="k">Station Value</div><div class="v g${gradeCls(s.sv)}">${Math.round(s.sv)}<em> /100</em></div><div class="s">수도권 ${total}개 역 중 <b>${s.rank}위</b> · 상위 ${s.rankPct}%${mapState.mode !== 'sv' ? `<br>현재 선택 <b>${CAT[mapState.mode].short}</b> 기준 <b>${catRankOf(name)}위</b>` : ''}</div></div>
-      <div class="t3" style="cursor:default"><div class="k">역세권 경제력${srcTag}</div><div class="v">${s.wealth}<em> /100</em></div><div class="s">단지 실거래 대표가(도보·규모 가중) 백분위 — SV의 35% 축${s.econN ? ` · 표본 ${s.econN}개 단지` : ''}</div></div>
+      <div class="t3" style="cursor:default"><div class="k">역세권 경제력${srcTag}</div><div class="v">${s.wealth}<em> /100</em></div><div class="s">근거: 거주민 소득·소비 수준 <b>${GRADE_LABEL[s.econGrade] || '중간권'}</b> (등급 ${s.econGrade ?? 3}/5) — 시세·업무·상권 미반영${s.priceLevel != null ? `<br>참고: 주변 시세 백분위 ${s.priceLevel}${s.priceN ? ` · ${s.priceN}개 단지` : ''} (평가 미반영 · 검증용)` : ''}</div></div>
     </div>
     <h3 class="mini-h">점수 구성 — 4축 (전체 역 대비 백분위)</h3>
     ${sb('교통·네트워크 30%', s.comps.transit)}${sb('역세권 경제력 35%', s.comps.econ)}${sb('교육·주거 생활권 20%', s.comps.edu)}${sb('업무·도시 중심성 15%', s.comps.biz)}
@@ -1358,7 +1357,7 @@ function renderRank() {
     const s = STN.stations[n];
     const c = s.comps || {};
     const dot = `<i style="width:8px;height:8px;border-radius:50%;background:${LINE_COLOR[repLinesOf(s)[0]] || 'var(--muted)'};display:inline-block;margin-right:4px;flex:none"></i>`;
-    const lowN = m === 'econ' && s.econSrc === 'manual' ? ' <span class="stat est">추정</span>' : '';
+    const lowN = m === 'econ' && s.econGrade ? ` <span class="stat est">등급 ${s.econGrade}/5</span>` : '';
     const sub = m === 'sv'
       ? `교통 ${c.transit} · 경제력 ${c.econ} · 교육주거 ${c.edu} · 업무 ${c.biz}`
       : `종합 ${Math.round(s.sv)} (전체 ${s.rank}위) · ${['transit', 'econ', 'edu', 'biz'].filter(k => k !== m).map(k => `${CAT[k].short} ${c[k]}`).join(' · ')}`;
@@ -1371,7 +1370,7 @@ function renderRank() {
   const catNote = {
     sv: '4개 축(교통·네트워크 30% / 역세권 경제력 35% / 교육·주거 20% / 업무·중심성 15%)의 가중합입니다.',
     transit: '강남·도심·여의도 체감 이동시간과 환승·급행·배차 기준 — 종합 순위와 다를 수 있습니다.',
-    econ: '역 생활권 단지들의 실거래 ㎡당 대표가격 기준. 표본 부족 역은 "추정"으로 표시됩니다.',
+    econ: '거주민 소득·소비 수준 추정 등급(5단계) 기준 — 시세·업무·상권 미반영이라 같은 등급은 동률입니다. 정밀 소득 데이터 미확보(전 역 추정).',
     edu: '학원가 접근성과 단지 밀집도 기준 — 학군·주거 지역이 업무지역보다 높게 나올 수 있습니다.',
     biz: '업무·상업·문화 시설 기준 — "업무가 강한 역"과 "종합 부동산 가치가 높은 역"은 다릅니다.'
   }[m];
