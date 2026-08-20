@@ -235,7 +235,7 @@ ok(E.normNameK('광남캐스빌(247-0)') === '광남캐스빌', 'normNameK: 괄�
   // ④ 브리지: vMktAdj = vM×(1+hRes+supAdj), center 결합 재계산
   const co = r.combineOut, vM = r.market.value;
   ok(Math.abs(vM * (1 + co.hRes + r.supplyE.adj) - co.vMktAdj) < 1e-9, 'AC-07: 조정 후 시장경로 = 앵커×(1+잔차+수급)');
-  if (!co.marketOnly && !co.anchorClamped) {
+  if (!co.marketOnly && !co.extremeGuarded) {
     ok(Math.abs(co.wm * co.vMktAdj + co.wf * co.vFundEff - co.center) < 1e-9, 'AC-07: 결합 중심 = 가중합');
   }
   ok(Math.abs(co.center * (1 - r.range.spread) - r.range.low) < 1e-9 && Math.abs(co.center * (1 + r.range.spread) - r.range.high) < 1e-9, 'AC-07: 범위 = 중심×(1∓spread)');

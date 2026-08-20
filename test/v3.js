@@ -84,8 +84,8 @@ const run = (cx, key) => E.analyze({ complex: cx, areaKey: key, asOfYM: '2026-08
   const r = run(cx, '84');
   ok(r.hedonic.subs.product == null || isFinite(r.hedonic.subs.product), '상품가치: 세대수·브랜드·주차 미확인 처리');
   ok(r.hedonic.subs.education === null && r.hedonic.subs.life === null && r.hedonic.subs.nature === null, '교육·생활·자연 미확인 → 제외(null)');
-  ok(r.structural.excluded.length >= 3, `장기경쟁력: 미확인 ${r.structural.excluded.length}개 축 제외·재정규화`);
-  ok(isFinite(r.scores.living.total) && isFinite(r.structural.score), '제외 후에도 전체 분석 정상 완주');
+  ok(r.structural.excluded.includes('living'), `구조 경쟁력 V2: 교육·생활·자연 전체 미확인 → 주거 그룹 제외·재정규화 (제외 ${r.structural.excluded.join(',') || '없음'})`);
+  ok(isFinite(r.scores.living.total) && (r.structural.score == null || isFinite(r.structural.score)), '제외 후에도 전체 분석 정상 완주');
   ok(r.confidence.score < 75, '대량 미확인 → 신뢰도 하락');
 }
 

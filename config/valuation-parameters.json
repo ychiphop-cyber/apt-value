@@ -2,167 +2,596 @@
   "version": "1.0.0",
   "asOf": "2026-08-18",
   "note": "모든 계수는 이 파일에서만 관리한다. 코드 하드코딩 금지. 실거래 백테스트로 보정 예정(Phase 2).",
-
   "market": {
     "compHalfLifeMonths": 9,
     "maxCompAgeMonths": 24,
     "areaElasticity": 0.88,
-    "tierSimilarity": { "sameComplexSameArea": 1.0, "sameComplexOtherArea": 0.72, "nearbyComplex": 0.5 },
+    "tierSimilarity": {
+      "sameComplexSameArea": 1.0,
+      "sameComplexOtherArea": 0.72,
+      "nearbyComplex": 0.5
+    },
     "featureAdjCapPerFactor": 0.06,
     "featureAdjCapTotal": 0.15,
     "minCompsForAnchor": 2
   },
-
   "financial": {
-    "baseRate": { "value": 0.025, "label": "한국은행 기준금리", "asOf": "2026-07" },
-    "mortgageRate": { "value": 0.039, "label": "주담대 평균금리", "asOf": "2026-07" },
+    "baseRate": {
+      "value": 0.025,
+      "label": "한국은행 기준금리",
+      "asOf": "2026-07"
+    },
+    "mortgageRate": {
+      "value": 0.039,
+      "label": "주담대 평균금리",
+      "asOf": "2026-07"
+    },
     "altReturn": 0.031,
-    "liquidityPremium": 0.010,
+    "liquidityPremium": 0.01,
     "assetRiskPremium": 0.007,
-    "regionRiskPremium": { "서울핵심": 0.0, "서울": 0.002, "수도권핵심": 0.003, "수도권": 0.006, "지방광역": 0.009, "기타": 0.013 },
-    "longTermRentGrowth": { "서울핵심": 0.018, "서울": 0.016, "수도권핵심": 0.015, "수도권": 0.012, "지방광역": 0.009, "기타": 0.006 },
+    "regionRiskPremium": {
+      "서울핵심": 0.0,
+      "서울": 0.002,
+      "수도권핵심": 0.003,
+      "수도권": 0.006,
+      "지방광역": 0.009,
+      "기타": 0.013
+    },
+    "longTermRentGrowth": {
+      "서울핵심": 0.018,
+      "서울": 0.016,
+      "수도권핵심": 0.015,
+      "수도권": 0.012,
+      "지방광역": 0.009,
+      "기타": 0.006
+    },
     "defaultConversionRate": 0.047,
     "minSpread": 0.008,
     "dcfYears": 40,
     "impliedGrowthConcernOver": 0.022
   },
-
   "jeonseSupport": {
-    "ratioBands": [0.62, 0.54, 0.46, 0.38],
-    "gradeLabels": ["강함", "양호", "중립", "약함", "매우 약함"],
-    "trendAdj": { "up": 1, "stable": 0, "down": -1 },
-    "listingsAdj": { "1": 1, "2": 1, "3": 0, "4": -1, "5": -1 },
+    "ratioBands": [
+      0.62,
+      0.54,
+      0.46,
+      0.38
+    ],
+    "gradeLabels": [
+      "강함",
+      "양호",
+      "중립",
+      "약함",
+      "매우 약함"
+    ],
+    "trendAdj": {
+      "up": 1,
+      "stable": 0,
+      "down": -1
+    },
+    "listingsAdj": {
+      "1": 1,
+      "2": 1,
+      "3": 0,
+      "4": -1,
+      "5": -1
+    },
     "supplyBurdenAdjOver": 1.3
   },
-
   "hedonic": {
     "baselineScore": 60,
     "scoreToAdjDivisor": 40,
-    "categoryCaps": { "transport": 0.05, "job": 0.05, "education": 0.06, "life": 0.03, "nature": 0.04, "product": 0.05 },
+    "categoryCaps": {
+      "transport": 0.05,
+      "job": 0.05,
+      "education": 0.06,
+      "life": 0.03,
+      "nature": 0.04,
+      "product": 0.05
+    },
     "totalCap": 0.12,
     "jobDecayTau": 42,
     "jobRefAccess": 1.75
   },
-
   "station": {
     "note": "Station Intelligence Engine — 역별 점수 하드코딩 금지, 전 계수는 여기서만 관리",
     "v4": {
       "note": "Station Value V4 — 4축(교통·네트워크 / 역세권 경제력 / 교육·주거 생활권 / 업무·도시 중심성). 각 축은 전 역 백분위 정규화 후 가중합 — 한 변수의 지배 방지",
-      "axes": { "transit": 0.30, "econ": 0.35, "edu": 0.20, "biz": 0.15 },
-      "axesForValuation": { "transit": 0.55, "econ": 0.10, "edu": 0.10, "biz": 0.25 },
+      "axes": {
+        "transit": 0.3,
+        "econ": 0.35,
+        "edu": 0.2,
+        "biz": 0.15
+      },
+      "axesForValuation": {
+        "transit": 0.55,
+        "econ": 0.1,
+        "edu": 0.1,
+        "biz": 0.25
+      },
       "valuationNote": "아파트 가치평가용 블렌드(svT)는 경제력·교육 축을 축소 — 단지 자체의 시장기준가(실거래)·교육점수와의 중복 계상(순환참조) 방지",
-      "transitSub": { "core": 0.50, "network": 0.35, "friction": 0.15 },
-      "coreWeights": { "gangnam": 0.50, "cbd": 0.30, "ybd": 0.20 },
-      "eduSub": { "hub": 0.55, "density": 0.45 },
+      "transitSub": {
+        "core": 0.5,
+        "network": 0.35,
+        "friction": 0.15
+      },
+      "coreWeights": {
+        "gangnam": 0.5,
+        "cbd": 0.3,
+        "ybd": 0.2
+      },
+      "eduSub": {
+        "hub": 0.55,
+        "density": 0.45
+      },
       "hubDecayKm": 1.1,
-      "hubTierCoef": { "1": 1.0, "2": 0.82, "3": 0.62, "4": 0.45 },
+      "hubTierCoef": {
+        "1": 1.0,
+        "2": 0.82,
+        "3": 0.62,
+        "4": 0.45
+      },
       "econNote": "V5.2 경제력 축 = 거주민 경제수준(소득·소비) 추정 등급 w(1~5, rail_network, ESTIMATED)의 전 역 백분위. 아파트 시세는 순환참조(집값→역 가치→아파트 가치), 업무·상권·유동인구는 업무 축과 이중 가중이라 입력에서 완전히 제외. 역세권 단위 소득·자산 정밀 데이터가 없으므로 등급 추정임을 표시하고 임의 정밀값을 만들지 않는다. 아래 price* 파라미터는 '주변 시세 수준(priceLevel)' — 점수에 미반영, 결과 검증·참고 표시 전용",
-      "econWinsorPct": [2, 98],
+      "econWinsorPct": [
+        2,
+        98
+      ],
       "econMinSamples": 3,
-      "econTradeBand": [0.6, 1.6],
+      "econTradeBand": [
+        0.6,
+        1.6
+      ],
       "econTradeBandMinTrades": 3,
-      "econWalkCurve": [ { "min": 5, "w": 1.0 }, { "min": 9, "w": 0.8 }, { "min": 12, "w": 0.55 }, { "min": 15, "w": 0.35 }, { "min": 20, "w": 0.2 } ],
+      "econWalkCurve": [
+        {
+          "min": 5,
+          "w": 1.0
+        },
+        {
+          "min": 9,
+          "w": 0.8
+        },
+        {
+          "min": 12,
+          "w": 0.55
+        },
+        {
+          "min": 15,
+          "w": 0.35
+        },
+        {
+          "min": 20,
+          "w": 0.2
+        }
+      ],
       "econSizeCap": 40,
       "econComplexMinObs": 2,
       "econSizeNote": "priceLevel(검증용) 계산: 단지 가중치 = min(매매+전세 거래건수, cap) — 세대수 데이터가 없어 거래량을 단지 규모 proxy로 사용. 관측 2건 미만 단지는 제외",
-      "densityLogRef": 40
+      "densityLogRef": 40,
+      "tierBands": [
+        93,
+        85,
+        75
+      ],
+      "tierLabels": [
+        "S",
+        "A",
+        "B",
+        "C"
+      ],
+      "reasonAxisHigh": 85
     },
     "lineV5": {
       "note": "Line Value V5.1 — Station Value 평균이 아닌 별도 네트워크 모델. 5축: 노선 내 역세권 가치 30 / 핵심 생활권 연결력 25(한계효용 체감) / 도시 횡단·네트워크 20(환승·관문·횡단성만 — 생활권 중복 가산 금지) / 실제 이동 효율 15 / 대체불가능성 10(우회 시간 proxy). 최종 점수는 raw 그대로 표시(재스케일 없음). 특정 노선 순위를 만들기 위한 조정 금지",
-      "axes": { "station": 0.30, "hub": 0.25, "network": 0.20, "efficiency": 0.15, "uniqueness": 0.10 },
-      "hubTierCoef": { "1": 1.0, "2": 0.75, "3": 0.5 },
+      "axes": {
+        "station": 0.3,
+        "hub": 0.25,
+        "network": 0.2,
+        "efficiency": 0.15,
+        "uniqueness": 0.1
+      },
+      "hubTierCoef": {
+        "1": 1.0,
+        "2": 0.75,
+        "3": 0.5
+      },
       "hubDepthPartial": 0.65,
       "hubDepthNote": "같은 생활권은 1회만 인정하되, 생활권을 '취급'하는 기준(역 2개 이상, 단일역 생활권은 그 역)을 채우지 못하고 1개 역으로 스치는 노선은 0.65로 감쇄 — §11 짧은 스침 과대평가 방지",
       "hubDiminish": 0.82,
       "hubDiminishNote": "생활권 연결의 한계효용 체감 — 기여도 내림차순으로 i번째 생활권에 0.82^i 배. 처음 몇 개의 고가치 연결이 크고, 생활권 수 누적 자체는 점점 덜 보상 (긴 노선 과대평가 방지)",
-      "stationSub": { "median": 0.45, "topQuartile": 0.35, "share80": 0.20 },
+      "stationSub": {
+        "median": 0.45,
+        "topQuartile": 0.35,
+        "share80": 0.2
+      },
       "share80Threshold": 80,
-      "transferDecay": { "1": 1.0, "2": 0.85, "3": 0.72 },
+      "transferDecay": {
+        "1": 1.0,
+        "2": 0.85,
+        "3": 0.72
+      },
       "transferDecayNote": "환승역 편승 방지 — 역 가치를 노선 가치에 넣을 때 소속 노선 수에 따라 감쇄 (3 = 3개 이상)",
-      "networkSub": { "transfer": 0.45, "intercity": 0.25, "crossing": 0.30 },
+      "networkSub": {
+        "transfer": 0.45,
+        "intercity": 0.25,
+        "crossing": 0.3
+      },
       "networkNote": "생활권 연결력과 중복되는 주거↔업무·주거↔교육 관계는 여기서 다시 가산하지 않는다 — 환승 네트워크 / 광역 관문(KTX·공항) / 동서·남북 횡단성만 평가",
       "transferLineRef": 12,
       "intercityRef": 2,
       "crossSeoulRadiusKm": 16,
       "crossSpanRefKm": 18,
       "crossingNote": "횡단성 = 시청 반경 16km 내 구간의 동서·남북 스팬(각 18km에서 포화) — 수도권 외곽 연장은 횡단성으로 치지 않는다(길이 무가산)",
-      "efficiencySub": { "headway": 0.35, "speed": 0.35, "express": 0.30 },
-      "headwayCurve": [ { "min": 4, "s": 100 }, { "min": 5, "s": 90 }, { "min": 6, "s": 80 }, { "min": 8, "s": 60 }, { "min": 10, "s": 45 }, { "min": 15, "s": 25 } ],
-      "speedCurve": [ { "kmh": 25, "s": 35 }, { "kmh": 30, "s": 50 }, { "kmh": 36, "s": 62 }, { "kmh": 45, "s": 78 }, { "kmh": 55, "s": 88 }, { "kmh": 70, "s": 96 }, { "kmh": 100, "s": 100 } ],
-      "expressScore": { "yes": 100, "no": 40 },
-      "uniquenessSub": { "detour": 0.60, "hubExclusive": 0.40 },
+      "efficiencySub": {
+        "headway": 0.35,
+        "speed": 0.35,
+        "express": 0.3
+      },
+      "headwayCurve": [
+        {
+          "min": 4,
+          "s": 100
+        },
+        {
+          "min": 5,
+          "s": 90
+        },
+        {
+          "min": 6,
+          "s": 80
+        },
+        {
+          "min": 8,
+          "s": 60
+        },
+        {
+          "min": 10,
+          "s": 45
+        },
+        {
+          "min": 15,
+          "s": 25
+        }
+      ],
+      "speedCurve": [
+        {
+          "kmh": 25,
+          "s": 35
+        },
+        {
+          "kmh": 30,
+          "s": 50
+        },
+        {
+          "kmh": 36,
+          "s": 62
+        },
+        {
+          "kmh": 45,
+          "s": 78
+        },
+        {
+          "kmh": 55,
+          "s": 88
+        },
+        {
+          "kmh": 70,
+          "s": 96
+        },
+        {
+          "kmh": 100,
+          "s": 100
+        }
+      ],
+      "expressScore": {
+        "yes": 100,
+        "no": 40
+      },
+      "uniquenessSub": {
+        "detour": 0.6,
+        "hubExclusive": 0.4
+      },
       "uniquenessNote": "단독역 수(soloShare)는 사용하지 않는다. detour = 이 노선을 철도망에서 제거했을 때 소속 역들의 강남·도심·여의도 체감 도달시간 증가분(SV 가중 평균, detourCapMin에서 포화) — '없어지면 얼마나 우회하나'의 직접 근사",
       "detourCapMin": 20,
       "hubExclusiveMaxLines": 2,
-      "tierBands": [4, 12, 24],
+      "tierBands": [
+        4,
+        12,
+        24
+      ],
       "tierNote": "점수차가 작은 노선을 절대순위처럼 보이지 않게 S/A/B/C 표시 — 최고점 대비 4/12/24점 이내"
     },
-    "transportBlend": { "svT": 0.6, "gangnam": 0.4 },
-    "futureTransitBonus": { "confirmed": 4, "planned": 1 },
+    "transportBlend": {
+      "svT": 0.6,
+      "gangnam": 0.4
+    },
+    "futureTransitBonus": {
+      "confirmed": 4,
+      "planned": 1
+    },
     "transferPenaltyMin": 4,
     "jobDecayTauMin": 28,
-    "gangnamCurve": [ { "min": 8, "score": 99 }, { "min": 15, "score": 92 }, { "min": 25, "score": 82 }, { "min": 35, "score": 70 }, { "min": 45, "score": 58 }, { "min": 60, "score": 42 }, { "min": 90, "score": 22 } ],
-    "destWeights": { "emp": 0.38, "comm": 0.28, "cult": 0.14, "med": 0.12, "tour": 0.08 },
+    "gangnamCurve": [
+      {
+        "min": 8,
+        "score": 99
+      },
+      {
+        "min": 15,
+        "score": 92
+      },
+      {
+        "min": 25,
+        "score": 82
+      },
+      {
+        "min": 35,
+        "score": 70
+      },
+      {
+        "min": 45,
+        "score": 58
+      },
+      {
+        "min": 60,
+        "score": 42
+      },
+      {
+        "min": 90,
+        "score": 22
+      }
+    ],
+    "destWeights": {
+      "emp": 0.38,
+      "comm": 0.28,
+      "cult": 0.14,
+      "med": 0.12,
+      "tour": 0.08
+    },
     "network": {
-      "directReachMin": 36, "reachMin": 50,
-      "weights": { "directJobCoverage": 0.45, "hubProximity": 0.30, "lineCount": 0.15, "express": 0.10 },
-      "lineCountScore": { "1": 55, "2": 78, "3": 90, "4": 96 },
+      "directReachMin": 36,
+      "reachMin": 50,
+      "weights": {
+        "directJobCoverage": 0.45,
+        "hubProximity": 0.3,
+        "lineCount": 0.15,
+        "express": 0.1
+      },
+      "lineCountScore": {
+        "1": 55,
+        "2": 78,
+        "3": 90,
+        "4": 96
+      },
       "hubProximityTau": 22
     },
-    "distanceDecay": [ { "min": 3, "f": 1.0 }, { "min": 6, "f": 0.95 }, { "min": 10, "f": 0.85 }, { "min": 15, "f": 0.68 }, { "min": 22, "f": 0.5 }, { "min": 30, "f": 0.32 } ],
-    "multiStation": { "secondMax": 0.25, "thirdMax": 0.10, "totalBonusCap": 0.30, "newDestReachMin": 36 },
+    "distanceDecay": [
+      {
+        "min": 3,
+        "f": 1.0
+      },
+      {
+        "min": 6,
+        "f": 0.95
+      },
+      {
+        "min": 10,
+        "f": 0.85
+      },
+      {
+        "min": 15,
+        "f": 0.68
+      },
+      {
+        "min": 22,
+        "f": 0.5
+      },
+      {
+        "min": 30,
+        "f": 0.32
+      }
+    ],
+    "multiStation": {
+      "secondMax": 0.25,
+      "thirdMax": 0.1,
+      "totalBonusCap": 0.3,
+      "newDestReachMin": 36
+    },
     "generalized": {
       "note": "체감 이동시간 = 차내시간 + 대기(배차/2×가중) + 환승도보 + 진입시간 — GTX·공항철도가 차내시간만으로 과대평가되는 것 방지",
-      "waitWeight": 0.6, "transferWalkMin": 3, "depthEntryMin": [1.5, 3, 5]
+      "waitWeight": 0.6,
+      "transferWalkMin": 3,
+      "depthEntryMin": [
+        1.5,
+        3,
+        5
+      ]
     },
-    "friction": { "base": 100, "headwayRef": 4, "perHeadwayMin": 5, "perFareStep": 12, "perDepthStep": 8, "floor": 20 },
-    "displayCurve": [ { "p": 1, "s": 98 }, { "p": 3, "s": 95 }, { "p": 5, "s": 93 }, { "p": 10, "s": 88 }, { "p": 20, "s": 80 }, { "p": 35, "s": 70 }, { "p": 50, "s": 60 }, { "p": 70, "s": 47 }, { "p": 85, "s": 36 }, { "p": 100, "s": 24 } ],
-    "corridor": { "svWeight": 0.7, "wealthWeight": 0.3, "windowShare": 0.25, "windowMinLen": 4 },
+    "friction": {
+      "base": 100,
+      "headwayRef": 4,
+      "perHeadwayMin": 5,
+      "perFareStep": 12,
+      "perDepthStep": 8,
+      "floor": 20
+    },
+    "displayCurve": [
+      {
+        "p": 1,
+        "s": 98
+      },
+      {
+        "p": 3,
+        "s": 95
+      },
+      {
+        "p": 5,
+        "s": 93
+      },
+      {
+        "p": 10,
+        "s": 88
+      },
+      {
+        "p": 20,
+        "s": 80
+      },
+      {
+        "p": 35,
+        "s": 70
+      },
+      {
+        "p": 50,
+        "s": 60
+      },
+      {
+        "p": 70,
+        "s": 47
+      },
+      {
+        "p": 85,
+        "s": 36
+      },
+      {
+        "p": 100,
+        "s": 24
+      }
+    ],
+    "corridor": {
+      "svWeight": 0.7,
+      "wealthWeight": 0.3,
+      "windowShare": 0.25,
+      "windowMinLen": 4
+    },
     "wealthNote": "역세권 경제력은 주변 실거래가 백분위(winsorize·중앙값) — SV의 35% 축이며, 아파트 가치평가용 svT에서는 10%로 축소(중복 계상 방지)",
     "unknownTransportScore": 55,
     "maxTravelMin": 120
   },
-
   "education": {
-    "subWeights": { "school": 0.30, "academy": 0.30, "access": 0.20, "demand": 0.20 },
-    "coefficientByTier": { "1": 1.2, "2": 1.0, "3": 0.8, "4": 0.55 },
-    "accessDecay": [ { "maxMin": 15, "factor": 1.0 }, { "maxMin": 30, "factor": 0.75 }, { "maxMin": 45, "factor": 0.5 }, { "maxMin": 999, "factor": 0.25 } ],
-    "localAcademyScore": { "1": 35, "2": 50, "3": 62, "4": 74, "5": 85 }
+    "subWeights": {
+      "school": 0.3,
+      "academy": 0.3,
+      "access": 0.2,
+      "demand": 0.2
+    },
+    "coefficientByTier": {
+      "1": 1.2,
+      "2": 1.0,
+      "3": 0.8,
+      "4": 0.55
+    },
+    "accessDecay": [
+      {
+        "maxMin": 15,
+        "factor": 1.0
+      },
+      {
+        "maxMin": 30,
+        "factor": 0.75
+      },
+      {
+        "maxMin": 45,
+        "factor": 0.5
+      },
+      {
+        "maxMin": 999,
+        "factor": 0.25
+      }
+    ],
+    "localAcademyScore": {
+      "1": 35,
+      "2": 50,
+      "3": 62,
+      "4": 74,
+      "5": 85
+    }
   },
-
   "supply": {
     "demandRate": 0.005,
     "demandRateLabel": "간이 수요추정치 = 지역 인구 × 0.5% (관행적 근사치, 절대수요 아님)",
-    "burdenBands": [0.7, 1.0, 1.3, 1.7],
-    "burdenLabels": ["공급 부족", "양호", "균형", "공급 부담", "공급 과다 가능성"],
-    "zoneWeights": { "local": 0.5, "adjacent": 0.3, "metro": 0.2 },
-    "priceAdjByGrade": [0.02, 0.01, 0.0, -0.015, -0.03],
-    "unsoldExtraAdj": { "4": -0.005, "5": -0.01 },
+    "burdenBands": [
+      0.7,
+      1.0,
+      1.3,
+      1.7
+    ],
+    "burdenLabels": [
+      "공급 부족",
+      "양호",
+      "균형",
+      "공급 부담",
+      "공급 과다 가능성"
+    ],
+    "zoneWeights": {
+      "local": 0.5,
+      "adjacent": 0.3,
+      "metro": 0.2
+    },
+    "priceAdjByGrade": [
+      0.02,
+      0.01,
+      0.0,
+      -0.015,
+      -0.03
+    ],
+    "unsoldExtraAdj": {
+      "4": -0.005,
+      "5": -0.01
+    },
     "priceAdjCap": 0.03,
     "regulationAdjCap": 0.015
   },
-
   "option": {
     "stageProbabilities": {
-      "none": 0, "potential": 0.05, "remodel_review": 0.15, "recon_review": 0.10,
-      "safety_check": 0.25, "zone_designated": 0.35, "committee": 0.45, "union": 0.58,
-      "biz_approval": 0.72, "mgmt_approval": 0.85, "moving": 0.92, "construction": 0.97
+      "none": 0,
+      "potential": 0.05,
+      "remodel_review": 0.15,
+      "recon_review": 0.1,
+      "safety_check": 0.25,
+      "zone_designated": 0.35,
+      "committee": 0.45,
+      "union": 0.58,
+      "biz_approval": 0.72,
+      "mgmt_approval": 0.85,
+      "moving": 0.92,
+      "construction": 0.97
     },
     "stageLabels": {
-      "none": "해당 없음", "potential": "잠재 후보(연식·용적률상 가능성)", "remodel_review": "리모델링 추진",
-      "recon_review": "재건축 초기검토", "safety_check": "안전진단", "zone_designated": "정비구역 지정",
-      "committee": "추진위원회", "union": "조합설립", "biz_approval": "사업시행인가",
-      "mgmt_approval": "관리처분인가", "moving": "이주", "construction": "착공"
+      "none": "해당 없음",
+      "potential": "잠재 후보(연식·용적률상 가능성)",
+      "remodel_review": "리모델링 추진",
+      "recon_review": "재건축 초기검토",
+      "safety_check": "안전진단",
+      "zone_designated": "정비구역 지정",
+      "committee": "추진위원회",
+      "union": "조합설립",
+      "biz_approval": "사업시행인가",
+      "mgmt_approval": "관리처분인가",
+      "moving": "이주",
+      "construction": "착공"
     },
     "maxOptionPremium": 0.18,
     "headroomRef": 1.2,
-    "gradeBands": [0.55, 0.3, 0.08],
-    "gradeLabels": ["높음", "중상", "중립", "낮음"]
+    "gradeBands": [
+      0.55,
+      0.3,
+      0.08
+    ],
+    "gradeLabels": [
+      "높음",
+      "중상",
+      "중립",
+      "낮음"
+    ],
+    "confirmedMinProb": 0.7
   },
-
   "marketRef": {
     "note": "시장 기준가 — 최근 실거래 1건이 아니라 기간창 가중중앙값 (V3 §7~9)",
-    "windowsDays": [90, 180, 365],
+    "windowsDays": [
+      90,
+      180,
+      365
+    ],
     "minComps": 3,
     "recencyHalfLifeDays": 90,
     "outlierWeight": 0.2,
@@ -176,59 +605,210 @@
       "minPeers": 2
     }
   },
-
   "future": {
     "note": "미래가치 5축 (V3 §24) — 결과로 장기 주거가치 성장률 g 시나리오를 산출",
-    "weights": { "demand": 0.25, "scarcity": 0.25, "transitChange": 0.20, "eduPref": 0.15, "redevOption": 0.15 },
-    "tierPrior": { "서울핵심": 85, "서울": 74, "수도권핵심": 68, "수도권": 56, "지방광역": 48, "기타": 42 },
-    "jeonseTrendScore": { "up": 85, "stable": 62, "down": 40 },
-    "scarcityCurve": [ { "x": 0.6, "s": 90 }, { "x": 0.9, "s": 76 }, { "x": 1.2, "s": 62 }, { "x": 1.6, "s": 44 }, { "x": 2.2, "s": 28 } ],
-    "transitStages": [ { "re": "개통", "s": 88 }, { "re": "공사|착공", "s": 78 }, { "re": "확정", "s": 72 }, { "re": "계획|예정|추진", "s": 55 } ],
+    "weights": {
+      "demand": 0.25,
+      "scarcity": 0.25,
+      "transitChange": 0.2,
+      "eduPref": 0.15,
+      "redevOption": 0.15
+    },
+    "tierPrior": {
+      "서울핵심": 85,
+      "서울": 74,
+      "수도권핵심": 68,
+      "수도권": 56,
+      "지방광역": 48,
+      "기타": 42
+    },
+    "jeonseTrendScore": {
+      "up": 85,
+      "stable": 62,
+      "down": 40
+    },
+    "scarcityCurve": [
+      {
+        "x": 0.6,
+        "s": 90
+      },
+      {
+        "x": 0.9,
+        "s": 76
+      },
+      {
+        "x": 1.2,
+        "s": 62
+      },
+      {
+        "x": 1.6,
+        "s": 44
+      },
+      {
+        "x": 2.2,
+        "s": 28
+      }
+    ],
+    "transitStages": [
+      {
+        "re": "개통",
+        "s": 88,
+        "kind": "confirmed"
+      },
+      {
+        "re": "공사|착공",
+        "s": 78,
+        "kind": "confirmed"
+      },
+      {
+        "re": "확정",
+        "s": 72,
+        "kind": "confirmed"
+      },
+      {
+        "re": "계획|예정|추진",
+        "s": 55,
+        "kind": "optional"
+      }
+    ],
     "transitNoneScore": 50,
-    "optionGradeScore": [88, 74, 58, 45],
+    "optionGradeScore": [
+      88,
+      74,
+      58,
+      45
+    ],
     "gSwing": 0.004,
     "gBandDown": 0.006,
     "gBandUp": 0.005
   },
-
   "financialGrade": {
     "note": "금융 지지력 = 금융지지가치(기준 시나리오) ÷ 현재가",
-    "bands": [0.88, 0.72, 0.58],
-    "labels": ["강함", "양호", "보통", "약함"]
+    "bands": [
+      0.88,
+      0.72,
+      0.58
+    ],
+    "labels": [
+      "강함",
+      "양호",
+      "보통",
+      "약함"
+    ]
   },
-
   "verdicts": {
     "marketTolerance": 0.005,
-    "marketLabels": ["할인", "적정", "프리미엄"],
-    "expectationLabels": ["낮음", "보통", "높음", "매우 높음"],
+    "marketLabels": [
+      "할인",
+      "적정",
+      "프리미엄"
+    ],
+    "expectationLabels": [
+      "낮음",
+      "보통",
+      "높음",
+      "매우 높음"
+    ],
     "heldLabel": "분석 보류"
   },
-
   "search": {
     "note": "FR-01 검색 정규화 — 통칭(동이름+단지명) 자동 흡수 + 브랜드 접두어 제거 재시도. FR-04 대표평형 우선순위.",
     "brandPrefixes": [
-      "e편한세상", "이편한세상", "래미안", "자이", "푸르지오", "힐스테이트", "아이파크", "더샵",
-      "롯데캐슬", "아크로", "디에이치", "SK뷰", "에스케이뷰", "포레나", "한화포레나", "데시앙",
-      "호반써밋", "베르디움", "센트레빌", "스위첸", "어울림", "금호어울림", "리슈빌", "하늘채",
-      "코오롱하늘채", "아너스빌", "한신더휴", "파밀리에", "유보라", "제일풍경채", "중흥S클래스",
-      "서희스타힐스", "동문굿모닝힐", "우미린", "모아엘가", "칸타빌", "해링턴플레이스", "루센티아"
+      "e편한세상",
+      "이편한세상",
+      "래미안",
+      "자이",
+      "푸르지오",
+      "힐스테이트",
+      "아이파크",
+      "더샵",
+      "롯데캐슬",
+      "아크로",
+      "디에이치",
+      "SK뷰",
+      "에스케이뷰",
+      "포레나",
+      "한화포레나",
+      "데시앙",
+      "호반써밋",
+      "베르디움",
+      "센트레빌",
+      "스위첸",
+      "어울림",
+      "금호어울림",
+      "리슈빌",
+      "하늘채",
+      "코오롱하늘채",
+      "아너스빌",
+      "한신더휴",
+      "파밀리에",
+      "유보라",
+      "제일풍경채",
+      "중흥S클래스",
+      "서희스타힐스",
+      "동문굿모닝힐",
+      "우미린",
+      "모아엘가",
+      "칸타빌",
+      "해링턴플레이스",
+      "루센티아"
     ],
-    "defaultAreaPrefs": [84, 59]
+    "defaultAreaPrefs": [
+      84,
+      59
+    ]
   },
-
   "structural": {
     "note": "장기 경쟁력 Score — 미확인 카테고리는 제외하고 가중치 재정규화 (§12·19)",
-    "weights": { "transit": 0.20, "job": 0.12, "education": 0.16, "product": 0.15, "nature": 0.07, "life": 0.05, "scarcity": 0.13, "future": 0.12 },
-    "bands": [ { "min": 85, "label": "최상위권" }, { "min": 72, "label": "상위권" }, { "min": 58, "label": "중상위권" }, { "min": 45, "label": "중위권" }, { "min": 0, "label": "하위권" } ]
+    "weights": {
+      "transit": 0.2,
+      "job": 0.12,
+      "education": 0.16,
+      "product": 0.15,
+      "nature": 0.07,
+      "life": 0.05,
+      "scarcity": 0.13,
+      "future": 0.12
+    },
+    "bands": [
+      {
+        "min": 85,
+        "label": "최상위권"
+      },
+      {
+        "min": 72,
+        "label": "상위권"
+      },
+      {
+        "min": 58,
+        "label": "중상위권"
+      },
+      {
+        "min": 45,
+        "label": "중위권"
+      },
+      {
+        "min": 0,
+        "label": "하위권"
+      }
+    ]
   },
-
   "final": {
-    "weightsDisplay": { "market": 0.60, "financial": 0.20, "hedonic": 0.15, "supplyRisk": 0.05 },
-    "corePair": { "market": 0.75, "financial": 0.25 },
+    "weightsDisplay": {
+      "market": 0.6,
+      "financial": 0.2,
+      "hedonic": 0.15,
+      "supplyRisk": 0.05
+    },
+    "corePair": {
+      "market": 0.75,
+      "financial": 0.25
+    },
     "fundWeightFloor": 0.35,
-    "anchorClamp": 0.12
+    "note": "V2 §11 — 1차 결과는 제한 없이 계산, 시장가와 괴리가 divergenceNoteOver 초과면 표시·설명. extremeGuard는 비정상 폭주 방지 최종 안전장치.",
+    "extremeGuard": 0.3,
+    "divergenceNoteOver": 0.12
   },
-
   "range": {
     "minSpread": 0.045,
     "maxSpread": 0.12,
@@ -236,39 +816,258 @@
     "disagreementWeight": 0.12,
     "dataGapWeight": 0.04
   },
-
   "scores": {
-    "living": { "transport": 0.22, "job": 0.20, "education": 0.22, "life": 0.12, "nature": 0.10, "product": 0.14 },
-    "invest": { "jeonseSupport": 0.22, "supplyDemand": 0.20, "scarcity": 0.13, "future": 0.15, "location": 0.20, "liquidity": 0.10 },
+    "living": {
+      "transport": 0.22,
+      "job": 0.2,
+      "education": 0.22,
+      "life": 0.12,
+      "nature": 0.1,
+      "product": 0.14
+    },
+    "invest": {
+      "jeonseSupport": 0.22,
+      "supplyDemand": 0.2,
+      "scarcity": 0.13,
+      "future": 0.15,
+      "location": 0.2,
+      "liquidity": 0.1
+    },
     "priceAttractCurve": [
-      { "premium": -0.18, "score": 93 }, { "premium": -0.10, "score": 84 }, { "premium": -0.05, "score": 74 },
-      { "premium": 0.0, "score": 62 }, { "premium": 0.05, "score": 50 }, { "premium": 0.10, "score": 38 },
-      { "premium": 0.18, "score": 24 }
+      {
+        "premium": -0.18,
+        "score": 93
+      },
+      {
+        "premium": -0.1,
+        "score": 84
+      },
+      {
+        "premium": -0.05,
+        "score": 74
+      },
+      {
+        "premium": 0.0,
+        "score": 62
+      },
+      {
+        "premium": 0.05,
+        "score": 50
+      },
+      {
+        "premium": 0.1,
+        "score": 38
+      },
+      {
+        "premium": 0.18,
+        "score": 24
+      }
     ],
-    "priceAttractClamp": [15, 95],
-    "gradeBands": { "high": 75, "mid": 55 }
+    "priceAttractClamp": [
+      15,
+      95
+    ],
+    "gradeBands": {
+      "high": 75,
+      "mid": 55
+    },
+    "attractBands": {
+      "high": 70,
+      "mid": 55,
+      "low": 40
+    },
+    "structuralHigh": 72,
+    "structuralMid": 58
   },
-
   "confidence": {
     "penalties": {
-      "compsUnder3": 22, "compsUnder6": 10, "latestOver6mo": 10, "latestOver12mo": 20,
-      "tier3Only": 15, "perManualOverride": 5, "manualOverrideMax": 15,
-      "disagreementOver": 0.35, "disagreementPenalty": 12, "dataGapFactor": 30,
+      "compsUnder3": 22,
+      "compsUnder6": 10,
+      "latestOver6mo": 10,
+      "latestOver12mo": 20,
+      "tier3Only": 15,
+      "disagreementOver": 0.35,
+      "disagreementPenalty": 12,
+      "dataGapFactor": 30,
       "jeonseMissing": 8
     },
-    "bands": { "high": 80, "mid": 58 },
-    "labels": ["높음", "보통", "낮음"]
+    "bands": {
+      "high": 80,
+      "mid": 58
+    },
+    "labels": [
+      "높음",
+      "보통",
+      "낮음"
+    ]
   },
-
   "stress": {
     "presets": [
-      { "id": "rate_up", "label": "금리 +1%p", "apply": { "rateDelta": 0.01 } },
-      { "id": "jeonse_down", "label": "전세 -10%", "apply": { "jeonseMul": 0.9 }, "excludes": ["jeonse_up"] },
-      { "id": "jeonse_up", "label": "전세 +10%", "apply": { "jeonseMul": 1.1 }, "excludes": ["jeonse_down"] },
-      { "id": "supply_x2", "label": "향후 공급 2배", "apply": { "supplyMul": 2.0 }, "excludes": ["supply_half"] },
-      { "id": "supply_half", "label": "공급 50% 감소", "apply": { "supplyMul": 0.5 }, "excludes": ["supply_x2"] },
-      { "id": "price_down", "label": "가격 -10%", "apply": { "priceMul": 0.9 }, "excludes": ["price_up"] },
-      { "id": "price_up", "label": "가격 +10%", "apply": { "priceMul": 1.1 }, "excludes": ["price_down"] }
+      {
+        "id": "rate_up",
+        "label": "금리 +1%p",
+        "apply": {
+          "rateDelta": 0.01
+        }
+      },
+      {
+        "id": "jeonse_down",
+        "label": "전세 -10%",
+        "apply": {
+          "jeonseMul": 0.9
+        },
+        "excludes": [
+          "jeonse_up"
+        ]
+      },
+      {
+        "id": "jeonse_up",
+        "label": "전세 +10%",
+        "apply": {
+          "jeonseMul": 1.1
+        },
+        "excludes": [
+          "jeonse_down"
+        ]
+      },
+      {
+        "id": "supply_x2",
+        "label": "향후 공급 2배",
+        "apply": {
+          "supplyMul": 2.0
+        },
+        "excludes": [
+          "supply_half"
+        ]
+      },
+      {
+        "id": "supply_half",
+        "label": "공급 50% 감소",
+        "apply": {
+          "supplyMul": 0.5
+        },
+        "excludes": [
+          "supply_x2"
+        ]
+      },
+      {
+        "id": "price_down",
+        "label": "가격 -10%",
+        "apply": {
+          "priceMul": 0.9
+        },
+        "excludes": [
+          "price_up"
+        ]
+      },
+      {
+        "id": "price_up",
+        "label": "가격 +10%",
+        "apply": {
+          "priceMul": 1.1
+        },
+        "excludes": [
+          "price_down"
+        ]
+      }
     ]
+  },
+  "structuralV2": {
+    "note": "V2 구조 경쟁력 — 입지·주거·상품·희소성 (미래 기대 제외, §33 단기 가격변화와 분리)",
+    "weights": {
+      "location": 0.35,
+      "living": 0.25,
+      "product": 0.25,
+      "scarcity": 0.15
+    },
+    "locationMix": {
+      "transport": 0.55,
+      "job": 0.45
+    },
+    "livingMix": {
+      "education": 0.5,
+      "life": 0.25,
+      "nature": 0.25
+    },
+    "minFulfillForScore": 0.6,
+    "bands": [
+      {
+        "min": 85,
+        "label": "최상위권"
+      },
+      {
+        "min": 72,
+        "label": "상위권"
+      },
+      {
+        "min": 58,
+        "label": "중상위권"
+      },
+      {
+        "min": 45,
+        "label": "중위권"
+      },
+      {
+        "min": 0,
+        "label": "하위권"
+      }
+    ]
+  },
+  "fulfillment": {
+    "note": "V2 §13 — 카테고리별 데이터 충족도. 신뢰도 헤드라인 = 가중 합. UNKNOWN=0 (임의 중립값 금지)",
+    "weights": {
+      "trades": 0.2,
+      "jeonse": 0.15,
+      "location": 0.2,
+      "education": 0.15,
+      "product": 0.15,
+      "redev": 0.05,
+      "supply": 0.1
+    },
+    "labels": {
+      "trades": "실거래",
+      "jeonse": "전세",
+      "location": "입지·교통",
+      "education": "교육",
+      "product": "상품 정보",
+      "redev": "정비사업",
+      "supply": "공급"
+    },
+    "bands": {
+      "high": 80,
+      "mid": 60
+    },
+    "tradesFullAt": 5,
+    "jeonseFullAt": 3
+  },
+  "userEdit": {
+    "note": "V2 §15 — USER_VERIFIED: 합리성 검증 통과 시 신뢰도 감점 없음. 범위 밖이면 unusual 플래그+감점",
+    "bounds": {
+      "stationMin": [
+        1,
+        40
+      ],
+      "households": [
+        50,
+        30000
+      ],
+      "supplyNext3yAvg": [
+        0,
+        100000
+      ],
+      "priceVsCenter": [
+        0.45,
+        2.2
+      ],
+      "jeonseVsPrice": [
+        0.05,
+        1.2
+      ],
+      "conv": [
+        0.02,
+        0.12
+      ]
+    },
+    "invalidPenalty": 6
   }
 }

@@ -21,7 +21,8 @@ for (const cx of DATA.complexes) {
       const checks = [
         [finite(r.currentPrice) && r.currentPrice > 0, '현재가'],
         [finite(r.range.low) && r.range.low > 0 && r.range.low < r.range.high, '범위'],
-        [Math.abs(r.combineOut.center / r.market.value - 1) <= CFG.final.anchorClamp + 1e-9, '앵커클램프'],
+        [Math.abs(r.combineOut.center / r.market.value - 1) <= CFG.final.extremeGuard + 1e-9, 'Extreme Guard'],
+        [typeof r.combineOut.divergence === 'number' && isFinite(r.combineOut.divergence), '괴리 지표'],
         [r.scores.living.total >= 30 && r.scores.living.total <= 100, '주거가치 정상범위'],
         [r.scores.invest.total >= 20 && r.scores.invest.total <= 100, '투자가치 정상범위'],
         [r.scores.attract.score >= 15 && r.scores.attract.score <= 95, '가격매력도 정상범위'],
