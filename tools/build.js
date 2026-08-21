@@ -11,6 +11,7 @@ const ui = R('src/ui.js');
 const consts = [
   `const CFG=${JSON.stringify(JSON.parse(R('config/valuation-parameters.json')))};`,
   `const HUBS=${JSON.stringify(JSON.parse(R('config/education_hubs.json')))};`,
+  `const ANCH=${JSON.stringify(JSON.parse(R('config/anchor_academies.json')))};`,
   `const JOBS=${JSON.stringify(JSON.parse(R('config/job_centers.json')))};`,
   `const DATA=${JSON.stringify(JSON.parse(R('data/apartments.json')))};`,
   `const REGIONS=${JSON.stringify(JSON.parse(R('pipeline/regions.json')))};`,

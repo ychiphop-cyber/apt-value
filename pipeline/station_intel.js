@@ -36,8 +36,13 @@ const R = p => JSON.parse(fs.readFileSync(path.join(ROOT, p), 'utf8'));
 const NET = R('data/rail_network.json');
 const JOBS = R('config/job_centers.json');
 const HUBS = R('config/education_hubs.json');
+const ANCH = R('config/anchor_academies.json');
 const LIFE = R('config/life_hubs.json');
-const CFG = R('config/valuation-parameters.json').station;
+const FULLCFG = R('config/valuation-parameters.json');
+const AptEngine = require('../src/engine.js');
+const CFG = FULLCFG.station;
+/* 교육 V2(§11): 존 점수는 사전 Tier가 아니라 구성요소에서 계산 — 엔진과 동일 스코어러 사용 */
+const zoneScoreOf = z => { const s = AptEngine.eduZoneScore(z, FULLCFG.education, ANCH); return s ? s.score : 0; };
 const GEN = CFG.generalized;
 const V4 = CFG.v4;
 const LV5 = CFG.lineV5;
@@ -284,14 +289,14 @@ for (const s of allStations) {
      시세·업무·상권은 입력에서 제외. 시세는 검증용 priceLevel로만 별도 저장 */
   const ppm = stationPpm.get(s);
 
-  /* ③ 교육·주거 생활권 — 학원가 허브 접근 + 단지 밀집도 */
+  /* ③ 교육·주거 생활권 — 교육생활권(zone) 접근 + 단지 밀집도.
+     존 강도 = 구성요소 계산 점수(§11 데이터→점수 — 사전 Tier 계수 폐기) × 거리 감쇄 */
   let hubEdu = 0, hubName = null;
   if (info.c) {
-    for (const h of HUBS.hubs) {
-      const dist = havKm(info.c, [h.latitude, h.longitude]);
-      const coef = V4.hubTierCoef[String(h.tier)] ?? 0.45;
-      const sig = 100 * coef * Math.exp(-Math.max(0, dist - h.radius_km) / V4.hubDecayKm);
-      if (sig > hubEdu) { hubEdu = sig; hubName = sig > 25 ? h.hub_name : hubName; }
+    for (const z of HUBS.zones) {
+      const dist = havKm(info.c, [z.latitude, z.longitude]);
+      const sig = zoneScoreOf(z) * Math.exp(-Math.max(0, dist - z.radius_km) / V4.hubDecayKm);
+      if (sig > hubEdu) { hubEdu = sig; hubName = sig > 25 ? z.name : hubName; }
     }
   }
   hubEdu = clamp(hubEdu, 0, 100);
@@ -374,10 +379,12 @@ normalizeBy('svTRaw', 'svT');
 
 /* ══════════ Line Value V5.1 — Station Value 평균이 아닌 별도 네트워크 모델 ══════════ */
 
-/* 대체불가능성(detour) 측정: 특정 노선을 제거한 축소 철도망에서 핵심지(강남·도심·여의도)
-   체감 도달시간을 다시 계산 — "이 노선이 없어지면 얼마나 우회해야 하나"의 직접 근사.
+/* 대체불가능성(detour) 측정: 특정 노선을 제거한 축소 철도망에서 핵심지 체감 도달시간을
+   다시 계산 — "이 노선이 없어지면 얼마나 우회해야 하나"의 직접 근사.
+   §21: 핵심지는 강남·도심·여의도 하드코딩이 아니라 importance ≥ coreCenterMinImportance인
+   다핵 업무지 전체(잠실·삼성·판교 등 포함) — 8호선의 잠실 대체불가성 같은 기능이 반영된다.
    단독역 수 같은 proxy를 쓰지 않고 실제 그래프 재계산으로 측정한다. */
-const coreCenters = JOBS.centers.filter(c => c.gangnamCore || c.id === 'CBD' || c.id === 'YBD');
+const coreCenters = JOBS.centers.filter(c => c.importance >= (LV5.coreCenterMinImportance ?? 0.4));
 function reducedCoreTimes(excludeGroup) {
   const vids2 = new Map(); const vlist2 = []; const adj2 = [];
   const vid2 = (s, l) => { const k = s + '§' + l; if (!vids2.has(k)) { vids2.set(k, vlist2.length); vlist2.push({ s, l }); adj2.push([]); } return vids2.get(k); };

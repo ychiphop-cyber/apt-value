@@ -5,7 +5,8 @@
    단지 소스 3종: ① 상세 프로필 샘플(DATA) ② 실거래 자동수집(data/live/*)
                  ③ 직접 입력
    ═══════════════════════════════════════════════════════════════════ */
-const APP_VERSION = '4.0.0';
+const APP_VERSION = '4.1.0';
+if (typeof ANCH !== 'undefined') HUBS.anchors = ANCH;   // Anchor Academy Index (§6) — 엔진에서 참조
 const DEBUG_MODE = /[?&]debug=true/.test(location.search);
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -382,7 +383,7 @@ function buildManualComplex() {
     tags: ['직접 입력'],
     areas: [{ key: 'M', label: `전용 ${v.m2 || 84}㎡`, m2: v.m2 || 84, jeonse: v.jeonse, trades: [{ ym: DATA.meta.asOf, price: v.price }] }],
     location: { subwayMin: v.subwayMin || 10, lines: [], transfer: false, express: false, futureTransit: null, jobMinutes: { GBD: v.gbd || 45, CBD: 50, YBD: 55, PANGYO: 45 } },
-    education: { elemM: 500, chopuma: false, middlePref: v.middlePref || 3, hubId: null, inHub: false, localAcademyLevel: v.acadLevel || 3, hubAccess: [], age3049: 0.30, studentTrend: 'stable' },
+    education: { zoneId: null, elemM: 500, chopuma: false, middlePref: v.middlePref || 3, localAcademyLevel: v.acadLevel || 3, age3049: 0.30, studentTrend: 'stable' },
     life: { martMin: 10, deptMin: 20, hospitalMin: 15, streetLevel: 3 },
     nature: { parkMin: 10, bigPark: false, riverMin: 30, hanRiver: false, hanRiverView: null, forest: false },
     supply: { pop: (v.popMan || 40) * 10000, next3yAvg: v.supply ?? 2000, adjacentRatio: 1.0, metroRatio: 1.0, unsoldLevel: 2, txVolumeLevel: 3, jeonseListingsLevel: 3, jeonseTrend: 'stable', regulated: false }
@@ -542,10 +543,14 @@ function runAnalysis() {
   go(3);
   $('report').innerHTML = ''; $('loading').style.display = 'block';
   state.stress = new Set();
+  state.cmpRef = null; state.cmpPrep = null;
   setTimeout(() => {
     try {
       state.baseInput = buildInput();
       state.result = AptEngine.analyze(state.baseInput, CFG, HUBS, JOBS, STN);
+      // §23-26: 가격 기여도 — 요소 중립화 실제 재계산 (실패해도 본 분석은 유지)
+      try { state.contrib = AptEngine.priceContributions(state.baseInput, CFG, HUBS, JOBS, STN); }
+      catch (e) { state.contrib = null; console.error('[apt-value] 기여도 계산 실패:', e); }
       $('loading').style.display = 'none';
       renderReport(state.result);
     } catch (e) {
@@ -688,10 +693,12 @@ function renderReport(r) {
 
   const fin = r.financial, sup = r.supplyE, opt = r.option, hd = r.hedonic, ed = hd.eduDetail;
 
-  const srcRows = isLive
+  const srcCommon = `<div class="kv"><span>교육생활권·Anchor 학원군 (공개 학교·학원 정보 큐레이션)</span><span>${esc(HUBS.asOf || '')} 기준</span></div>
+       <div class="kv"><span>수도권 철도망·역 가치 (Station Intelligence)</span><span>${esc(STN.meta.updatedAt)} 기준</span></div>`;
+  const srcRows = (isLive
     ? `<div class="kv"><span>국토교통부 실거래가 공개 API (매매·전월세 자동수집)</span><span>${esc(liveAsOf())} 기준</span></div>
        <div class="kv"><span>입지·수급 간이 기본값 (pipeline/regions.json)</span><span>${esc(REGIONS.asOf)} 기준</span></div>`
-    : Object.values(S).map(s => `<div class="kv"><span>${esc(s.src)}</span><span>${esc(s.asOf)} 기준</span></div>`).join('');
+    : Object.values(S).map(s => `<div class="kv"><span>${esc(s.src)}</span><span>${esc(s.asOf)} 기준</span></div>`).join('')) + srcCommon;
 
   /* ═══ V2 화면 준비 ═══ */
   const ful = r.fulfillment, pv = r.explain.priceView;
@@ -733,6 +740,36 @@ function renderReport(r) {
     <button class="btn ghost" id="whyJump" style="width:100%;margin-top:12px">왜 이렇게 판단했나요? ↓</button>
   </div>
 
+  ${(() => {
+    /* ═══ §23-26 왜 이 가격인가 — 요소별 기여를 실제 재계산으로 금액 표시 ═══ */
+    const cb = state.contrib;
+    if (!cb || !cb.items.length) return '';
+    const fmtAmt = v => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(v >= 0.995 || v <= -0.995 ? 1 : 2)}억`;
+    const upNames = cb.up.map(i => i.label.split('(')[0].trim());
+    const downNames = cb.down.map(i => i.label.split('(')[0].trim());
+    const lead = mref
+      ? `최근 ${mref.windowDays}일 동일면적 실거래 ${mref.n}건의 가중중앙값 <b>${fmtEokW(mref.med)}</b>을 기준으로 계산했습니다.`
+      : `비교거래 앵커 <b>${fmtEokW(r.market.value)}</b>을 기준으로 계산했습니다.`;
+    const story = upNames.length
+      ? ` ${AptEngine.josa(upNames.slice(0, 2).join('과 '), '이', '가')} 가격을 가장 크게 끌어올렸고${downNames.length ? `, ${AptEngine.josa(downNames.join('·'), '은', '는')} 할인요인으로 작용했습니다` : ', 뚜렷한 할인요인은 없습니다'}.`
+      : downNames.length ? ` ${AptEngine.josa(downNames.join('·'), '이', '가')} 할인요인으로 작용했습니다.` : '';
+    const maxAbs = Math.max(...cb.items.map(i => Math.abs(i.amt)), 0.01);
+    const rowOf = i => `<div class="cr"><div class="ck">${esc(i.label)}</div>
+      <div class="cbar"><span class="mid"></span><i class="${i.amt >= 0 ? 'pos' : 'neg'}" style="width:${Math.min(50, Math.abs(i.amt) / maxAbs * 50)}%"></i></div>
+      <div class="cv">${fmtAmt(i.amt)}</div></div>`;
+    return `<div class="card" id="whyContribCard">
+      <h2>왜 이 가격인가?</h2>
+      <p style="font-size:13.5px;line-height:1.75;color:var(--ink2);margin:0 0 12px">${lead}${story}</p>
+      <div class="factors">
+        <div class="fbox up"><div class="fh">가격 상승 요인</div><ul>${cb.up.map(i => `<li>${esc(i.label)} <b>${fmtAmt(i.amt)}</b></li>`).join('') || '<li>뚜렷한 상승 기여 없음</li>'}</ul></div>
+        <div class="fbox down"><div class="fh">가격 하락 요인</div><ul>${cb.down.map(i => `<li>${esc(i.label)} <b>${fmtAmt(i.amt)}</b></li>`).join('') || '<li>뚜렷한 하락 기여 없음</li>'}</ul></div>
+      </div>
+      <div style="margin-top:12px">${cb.items.map(rowOf).join('')}</div>
+      <div class="kv" style="margin-top:10px"><span>모델 해석 범위</span><span class="strong">${fmtEok(r.range.low)} ~ ${fmtEokW(r.range.high)} · 중심 ${fmtEok(r.combineOut.center)}</span></div>
+      <p class="subtle" style="margin-top:8px">${esc(cb.note)} 평균적 단지(기준점) 대비 반영분 추정이며, 세부 계산은 아래 '상세 계산 근거 보기'에서 공개합니다.</p>
+    </div>`;
+  })()}
+
   <div class="card" id="scr2">
     <h2>${circled[0]} 이 아파트는 좋은 아파트인가? <span style="font-size:14px;color:var(--accent)">${ST.score == null ? '판단 보류' : lowFul ? `${esc(ST.band)} 추정` : `구조 경쟁력 ${ST.score} / 100`}</span></h2>
     <p class="hint">구조 경쟁력 = 입지·교육주거·상품·희소성. 미래 기대는 넣지 않습니다 — 한 달 시세가 움직여도 이 값은 흔들리지 않습니다.</p>
@@ -745,6 +782,16 @@ function renderReport(r) {
     ${ST.comps.living != null ? sbRow('교육·주거 환경', ST.comps.living) : '<div class="sb"><div class="k">교육·주거</div><div style="font-size:11px;color:var(--muted)">미확인 — 제외</div><div class="v">—</div></div>'}
     ${ST.comps.product != null ? sbRow('상품성', ST.comps.product) : '<div class="sb"><div class="k">상품성</div><div style="font-size:11px;color:var(--muted)">미확인 — 제외</div><div class="v">—</div></div>'}
     ${ST.comps.scarcity != null ? sbRow('희소성', ST.comps.scarcity) : '<div class="sb"><div class="k">희소성</div><div style="font-size:11px;color:var(--muted)">미확인 — 제외</div><div class="v">—</div></div>'}
+    ${ed ? `<details class="acc" style="margin-top:10px"><summary><span class="sumleft">🎓 교육 ${ed.score}점 · ${esc(ed.tier)}등급${ed.zoneName ? ` — ${esc(ed.zoneName)}${ed.adjacent ? ' 인접' : ''}` : ''}</span><span class="sumr">${'★'.repeat(ed.stars)}${'☆'.repeat(5 - ed.stars)}</span></summary><div class="detail-body">
+      ${Object.entries(ed.comps).map(([k, v]) => sbRow(ed.labels[k], v)).join('')}
+      ${ed.missing.length ? `<p class="subtle">미확보 데이터 제외: ${ed.missing.map(k => esc(ed.labels[k])).join(' · ')} — 추정값으로 채우지 않고 나머지 가중치로 재계산했습니다.</p>` : ''}
+      ${ed.anchorBonus > 0 ? `<div class="kv"><span>Anchor 학원군 (대표 학원 카테고리 ${ed.anchorsCovered}/${ed.anchorsTotal})</span><span>보조 +${ed.anchorBonus}점</span></div>` : ''}
+      ${ed.relative ? `<div class="kv"><span>상대 위치</span><span class="strong">수도권 교육생활권 ${ed.relative.n}곳 중 상위 ${ed.relative.pctile}%</span></div>` : ''}
+      <div class="kv"><span>데이터 신뢰도</span><span>${'★'.repeat(ed.stars)}${'☆'.repeat(5 - ed.stars)} · ${esc(ed.covLabel)}</span></div>
+      <div class="op" style="margin-top:8px"><div class="ot">왜 이 점수인가</div><p>${esc(ed.why)}</p></div>
+      <div class="op"><div class="ot">아쉬운 점</div><p>${esc(ed.weak)}</p></div>
+      <p class="subtle">등급은 지역 이름이 아니라 구성요소 점수에서 계산됩니다 (데이터 → 점수 → 등급). 생활권 매칭은 법정동·좌표 기준 — 행정동 표기가 달라도 실제 생활권이 같으면 같이 평가합니다.</p>
+    </div></details>` : ''}
     <p class="subtle">데이터 충족 ${ful.overall}%${ST.excluded.length ? ` · 미확인 그룹(${ST.excluded.length}) 제외 후 재정규화` : ''} — 좋은 아파트와 좋은 가격은 다른 질문입니다. 가격은 아래에서.</p>
   </div>
 
@@ -924,8 +971,8 @@ function renderReport(r) {
 
     <details class="acc" id="accC"><summary><span class="sumleft">주거·입지·상품가치</span><span class="sumr">주거가치 ${Math.round(r.scores.living.total)}점</span></summary><div class="detail-body">
       ${sbRow('교통', hd.subs.transport)}${sbRow('직주근접', hd.subs.job)}${sbRow('교육', hd.subs.education)}${sbRow('생활편의', hd.subs.life)}${sbRow('자연환경', hd.subs.nature)}${sbRow('상품성', hd.subs.product)}
-      <h3 class="mini-h">교육가치 상세</h3>
-      ${sbRow('학교환경', ed.school)}${sbRow('학원가', ed.academy)}${sbRow('교육접근성', ed.access)}${sbRow('수요 지속성', ed.demand)}
+      <h3 class="mini-h">교육가치 상세 (V2 — 생활권 구성요소)</h3>
+      ${ed ? Object.entries(ed.comps).map(([k, v]) => sbRow(ed.labels[k], v)).join('') : '<p class="subtle">교육 정보 미확인 — 평가 제외</p>'}
       <p class="subtle">${esc(hd.notes.education.join(' / '))}</p>
       <h3 class="mini-h">근거 메모</h3>
       <ul style="margin:4px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink2);line-height:1.7">
@@ -1052,11 +1099,13 @@ function renderReport(r) {
 
   <div class="card" id="cmpCard">
     <h2>다른 단지와 비교</h2>
-    <p class="hint">같은 돈으로 무엇을 사는 것인지 — 상세 프로필 단지와 나란히 봅니다.</p>
+    <p class="hint">같은 돈으로 무엇을 사는 것인지 — 비교 단지도 메인 분석과 완전히 동일한 데이터 경로(최신 실거래 병합 → 동일 필터 → 동일 기준일)로 계산합니다.</p>
     <div class="grid2">
-      <div><label class="mini">비교 단지<select id="cmpSel"><option value="">선택하세요</option>${DATA.complexes.filter(c => c.id !== cx.id).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label></div>
+      <div><label class="mini">상세 프로필 단지<select id="cmpSel"><option value="">선택하세요</option>${DATA.complexes.filter(c => c.id !== cx.id).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label></div>
       <div><label class="mini">평형<select id="cmpArea" disabled></select></label></div>
     </div>
+    ${LIVE.status === 'ready' ? `<label class="mini" style="display:block;margin-top:8px">또는 전체 단지 검색 (실거래 자동수집)<input type="text" class="box" id="cmpQ" placeholder="예: 고덕아르테온, 래미안대치팰리스"></label>
+    <div id="cmpQOut"></div>` : ''}
     <div id="cmpOut"></div>
   </div>
 
@@ -1111,14 +1160,82 @@ function renderReport(r) {
     renderStress();
   };
 
-  $('cmpSel').onchange = () => {
-    const c2 = DATA.complexes.find(c => c.id === $('cmpSel').value);
-    const sel = $('cmpArea');
-    if (!c2) { sel.innerHTML = ''; sel.disabled = true; $('cmpOut').innerHTML = ''; return; }
-    sel.innerHTML = c2.areas.map(a => `<option value="${a.key}">${esc(a.label)}</option>`).join('');
-    sel.disabled = false; renderCompare();
+  $('cmpSel').onchange = async () => {
+    const id = $('cmpSel').value;
+    if (!id) { $('cmpArea').innerHTML = ''; $('cmpArea').disabled = true; $('cmpOut').innerHTML = ''; state.cmpRef = null; return; }
+    const q = $('cmpQ'); if (q) { q.value = ''; $('cmpQOut').innerHTML = ''; }
+    await setCompareTarget({ kind: 'sample', id });
   };
-  $('cmpArea').onchange = renderCompare;
+  $('cmpArea').onchange = () => renderCompare();
+  const cq = $('cmpQ');
+  if (cq) cq.addEventListener('input', () => {
+    const q = cq.value.trim();
+    if (!q) { $('cmpQOut').innerHTML = ''; return; }
+    const brandPrefixes = (CFG.search && CFG.search.brandPrefixes) || [];
+    const aliasMap = (typeof ALIASES !== 'undefined' && ALIASES.aliases) || {};
+    const curId = state.liveSel ? state.liveSel.id : null;
+    const hits = LIVE.index.complexes
+      .filter(e => e.id !== curId && AptEngine.liveSearchMatch(q, e, { brandPrefixes, aliases: aliasMap[e.id] }))
+      .slice(0, 6);
+    $('cmpQOut').innerHTML = hits.map(e => `
+      <button class="apt" data-cmplive="${esc(e.id)}" style="margin-top:6px">
+        <b>${esc(e.n)}</b><span class="l1">${esc(e.gn)} ${esc(e.d)} · 최근 2년 매매 ${e.t}건 · ${e.a.map(a => a + '㎡').join('·')}</span>
+      </button>`).join('') || '<p class="subtle">검색 결과 없음</p>';
+    $('cmpQOut').querySelectorAll('[data-cmplive]').forEach(b => b.onclick = async () => {
+      $('cmpSel').value = '';
+      b.querySelector('b').textContent = '불러오는 중…';
+      await setCompareTarget({ kind: 'live', id: b.dataset.cmplive });
+      $('cmpQOut').innerHTML = '';
+    });
+  });
+}
+
+/* ═══ §1 비교 데이터 파이프라인 통일 — 메인·비교·향후 확장 모두 이 함수 하나를 쓴다.
+   단지 참조 → live shard 조회 → 최신 실거래 병합 → (샘플이면 프로필 유지+가격만 교체,
+   자동수집이면 buildAutoComplex) — 메인 분석과 완전히 동일한 전처리 함수를 공유한다.
+   DATA.complexes → analyze() 직행 금지. ═══ */
+async function prepareComplexForAnalysis(ref) {
+  if (ref.kind === 'sample') {
+    const cx0 = DATA.complexes.find(c => c.id === ref.id);
+    if (!cx0) throw new Error('단지 없음');
+    if (cx0.regionCode && LIVE.status === 'ready' && !LIVE.shards[cx0.regionCode]) {
+      try { await getShard(cx0.regionCode); } catch (e) {}
+    }
+    const cx = mergeSampleWithLive(cx0);
+    return { cx, live: !!cx.liveLinked, fallback: !cx.liveLinked };
+  }
+  // 자동수집(live) 단지 — 메인 선택(selectLive)과 동일한 조회·빌드 경로 (수정값 없이 원데이터)
+  const e = LIVE.index.complexes.find(x => x.id === ref.id);
+  if (!e) throw new Error('단지 없음');
+  const shard = await getShard(e.g);
+  const key = ref.id.split('|').slice(1).join('|');
+  const entry = shard.complexes[key];
+  if (!entry) throw new Error('단지 데이터 없음');
+  await getKaptInfo(e.g);
+  const cx = AptEngine.buildAutoComplex(entry, regionOf(e.g), {
+    edits: {}, ovPrice: null, ovJeonse: null, areaKey: null, conv: null,
+    asOf: liveAsOf(), stations: STN, hubs: HUBS,
+    dongLink: dongLinkFor(e.g, entry.dong),
+    kapt: AptEngine.matchKaptInfo(KAPT.shards[e.g], entry.name, ((typeof ALIASES !== 'undefined' && ALIASES.aliases) || {})[ref.id]),
+    liveId: ref.id
+  });
+  return { cx, live: true, fallback: false };
+}
+
+async function setCompareTarget(ref) {
+  try {
+    const prep = await prepareComplexForAnalysis(ref);
+    state.cmpRef = ref; state.cmpPrep = prep;
+    const sel = $('cmpArea');
+    const traded = prep.cx.areas;
+    sel.innerHTML = traded.map(a => `<option value="${a.key}">${esc(a.label)}${(a.trades || []).length ? '' : ' (거래 없음)'}</option>`).join('');
+    sel.value = AptEngine.pickDefaultAreaKey(traded, CFG.search && CFG.search.defaultAreaPrefs) || traded[0].key;
+    sel.disabled = false;
+    renderCompare();
+  } catch (e) {
+    console.error('[apt-value] 비교 단지 준비 실패:', e);
+    $('cmpOut').innerHTML = '<div class="warnbox">비교 단지 데이터를 불러오지 못했습니다 — 다시 시도해 주세요.</div>';
+  }
 }
 
 /* ── 스트레스 렌더 ── */
@@ -1216,15 +1333,27 @@ function renderStress() {
     <p class="subtle">시나리오는 해당 변수만 바꾼 조건부 재계산입니다. 실제 시장에서는 변수들이 함께 움직일 수 있습니다.</p>`;
 }
 
-/* ── 비교 렌더 ── */
+/* ── 비교 렌더 — §1: 메인과 동일 전처리(prepareComplexForAnalysis)·동일 기준일·동일 필터 ── */
 function renderCompare() {
-  const c2 = DATA.complexes.find(c => c.id === $('cmpSel').value);
-  if (!c2) return;
+  if (!state.cmpPrep) return;
+  const prep = state.cmpPrep, c2 = prep.cx;
   const areaKey = $('cmpArea').value || c2.areas[0].key;
   let r2;
-  try { r2 = AptEngine.analyze({ complex: c2, areaKey, asOfYM: DATA.meta.asOf, overrides: {} }, CFG, HUBS, JOBS, STN); }
-  catch (e) { $('cmpOut').innerHTML = `<div class="warnbox">${esc(e.message)}</div>`; return; }
+  try { r2 = AptEngine.analyze({ complex: c2, areaKey, asOfYM: state.baseInput.asOfYM, overrides: {} }, CFG, HUBS, JOBS, STN); }
+  catch (e) {
+    $('cmpOut').innerHTML = `<div class="warnbox">${esc(e.user ? e.message : '이 평형은 분석할 수 없습니다 — 다른 평형을 선택해 보세요.')}</div>`;
+    return;
+  }
   const a = state.result, b = r2;
+  // §1 비교화면 표시: 각 단지의 데이터 기준(기간·건수·출처)을 가격과 함께 공개
+  const basisOf = (r, isFallback) => {
+    const m = r.marketRef;
+    if (!m) return '<span class="stat est">실거래 데이터 부족</span>';
+    const from = m.items.length ? m.items[m.items.length - 1].date.slice(0, 7).replace('-', '.') : '';
+    const to = m.latest.date.slice(0, 7).replace('-', '.');
+    return `${from && from !== to ? `${from}~${to}` : to} · ${m.n}건${isFallback ? ' <span class="stat est">실거래 데이터 부족 — 등재 샘플 기준</span>' : ''}`;
+  };
+  const aFallback = !state.liveSel && !state.manual && !a.cx.liveLinked;
   const row = (k, va, vb, strong) => `<tr><td>${k}</td><td${strong ? ' class="strong"' : ''}>${va}</td><td${strong ? ' class="strong"' : ''}>${vb}</td></tr>`;
   const diff = b.currentPrice - a.currentPrice;
   let sentence;
@@ -1248,10 +1377,13 @@ function renderCompare() {
     <div class="tblwrap"><table>
       <thead><tr><th></th><th>${esc(a.cx.name)} ${esc(a.area.key)}㎡</th><th>${esc(b.cx.name)} ${esc(b.area.key)}㎡</th></tr></thead><tbody>
       ${row('현재 가격', fmtEokW(a.currentPrice), fmtEokW(b.currentPrice), true)}
+      ${row('실거래 기준', basisOf(a, aFallback), basisOf(b, prep.fallback))}
+      ${row('기준일', esc(state.baseInput.asOfYM), esc(state.baseInput.asOfYM))}
       ${row('시장 기준가', a.marketRef ? `${fmtEok(a.marketRef.low)}~${fmtEok(a.marketRef.high)}` : '—', b.marketRef ? `${fmtEok(b.marketRef.low)}~${fmtEok(b.marketRef.high)}` : '—')}
       ${row('금융 지지가치', a.financial ? `${fmtEok(a.financial.fsv.low)}~${fmtEok(a.financial.fsv.high)}` : '보류', b.financial ? `${fmtEok(b.financial.fsv.low)}~${fmtEok(b.financial.fsv.high)}` : '보류')}
       ${row('판정', `${a.verdicts.market.label}·${a.verdicts.financial.label}·기대 ${a.verdicts.expectation.label}`, `${b.verdicts.market.label}·${b.verdicts.financial.label}·기대 ${b.verdicts.expectation.label}`)}
       ${row('구조 경쟁력', a.structural.score != null ? `${a.structural.score} (${a.structural.band})` : '보류', b.structural.score != null ? `${b.structural.score} (${b.structural.band})` : '보류')}
+      ${row('교육 (생활권)', a.hedonic.eduDetail ? `${a.hedonic.eduDetail.score} ${a.hedonic.eduDetail.tier}${a.hedonic.eduDetail.zoneName ? ` · ${esc(a.hedonic.eduDetail.zoneName)}` : ''}` : '미확인', b.hedonic.eduDetail ? `${b.hedonic.eduDetail.score} ${b.hedonic.eduDetail.tier}${b.hedonic.eduDetail.zoneName ? ` · ${esc(b.hedonic.eduDetail.zoneName)}` : ''}` : '미확인')}
       ${row('주거가치', Math.round(a.scores.living.total), Math.round(b.scores.living.total))}
       ${row('투자가치', Math.round(a.scores.invest.total), Math.round(b.scores.invest.total))}
       ${row('미래가치', a.future.score, b.future.score)}

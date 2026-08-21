@@ -304,3 +304,20 @@ V5에서 5호선이 1위까지 오른 원인 = 같은 장점(다양한 생활권
 - **§39 분석불가**: err.missing 부족 데이터 목록 동반.
 - **테스트 (§43~46)**: test/v4.js 76건 — 유형 시나리오 30+(강남 신축~경기 외곽·이상 저가/고가·데이터 누락·수동 수정), 방향 논리(전세↑→지지력↑ 등 6건), 설명 일치(문장 밴드 단조성+실전 모순 검사), Tier 안정성, USER_VERIFIED, 괴리 산출, §48 다섯 질문 답변 존재를 전 시나리오에 강제. 총 315 tests.
 - 보류(후속): §29 비교 4개 확장(현재 2개+설명 문장), §31-33 관심단지·재방문(P2), §40-42 백테스트(P3), 역 경제력 정밀 데이터(P3).
+
+## §16. V2 개선 (v4.1.0, 2026-08-22) — 교육 V2 · 비교 통일 · 별내선 · 가격 기여도
+
+**교육평가 V2 (개선 PRD §2-14)** — 법정동 문자열 허브 매칭 폐기.
+- `config/education_hubs.json` v2: 교육생활권(zone) 32곳 — dongs(법정동 목록) + 좌표/radius + 구성요소 6종(학교25/학원25/입시15/통학15/수요10/지속성10, 0-100 5점 단위, null=데이터 없음 → 제외·재정규화 §7). 사전 Tier 필드 없음 — 등급(S~D)은 `eduScoreFromComponents`가 점수에서 산출(§11 데이터→점수→등급).
+- `config/anchor_academies.json`: 대표 학원군 6카테고리 — 커버리지 비율로 최대 5점 보조(§6). 브랜드는 config에서만 관리.
+- 매칭 `matchEduZone`: ①법정동(구 가드) ②주력역 좌표 거리(radius 내 소속 / +2km 인접 → 학원·입시 0.8 감쇄). 고덕 생활권 = 명일·고덕·상일·강일(§13 — 아르테온 누락 해소).
+- 단지 보정: elemM/초품아→통학, middlePref→학교, age3049→수요 블렌드. eduDetail = {score, tier, comps, missing, coverage(별점·3단계 §14), relative(생활권 상대 %ile §35), why/weak(§34)}.
+- station_intel 교육축·엔진이 같은 스코어러 공유(단일 진실 원천).
+
+**비교 파이프라인 통일 (§1)** — `prepareComplexForAnalysis(ref)` 하나로 메인·비교 모두: live shard 조회 → 최신 실거래 병합(mergeSampleWithLive / buildAutoComplex) → 동일 기준일·필터 → analyze. `DATA.complexes → analyze()` 직행 금지. 비교 카드에 실거래 기준(기간·건수)·기준일·fallback 배지 표시 + live 전체 단지 비교 검색 추가.
+
+**지하철 최신화 (§15-22)** — rail_network: 8호선 별내선 6역(2024-08) + 경의중앙 동측(회기~덕소, 구리 환승) + 경춘선(상봉~평내호평, 별내 환승) + 4호선 진접선 + 7호선 석남. 대체불가능성 핵심지 = 하드코딩(강남·도심·여의도) → `lineV5.coreCenterMinImportance`(0.4) 이상 다핵 업무지 전체(§21 잠실 포함) — 8호선 detour 83으로 구조 반영(임의 가산 없음 §22).
+
+**가격 기여도 (§23-26)** — `priceContributions`: attribution 모드(잔차 감쇄 없이 속성 반영분 전액 측정)에서 6개 요소(교통직주/교육/상품/생활자연/수급/미래)를 각각 중립화해 전체 재계산한 차이를 억원 단위로 표시. "왜 이 가격인가" 카드(상승 top3/하락 top2) + §26 상호작용 캡션. neutralize 훅: hedonic subs→baseline, supply adj→0, option premium→0, future comps→중립.
+
+**검증** — test/v2fix.js 52건(Test A~E, §11·12·25 검증) + test/regress50.js(서울 50개 단지 12항목 체크리스트 → data/qa/regress50.json 로그, §37: 교육 누락률 0%·메인/비교 불일치 0건·이유 설명 100%). 총 374 tests.

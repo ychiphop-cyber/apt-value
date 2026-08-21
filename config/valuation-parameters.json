@@ -125,12 +125,6 @@
         "density": 0.45
       },
       "hubDecayKm": 1.1,
-      "hubTierCoef": {
-        "1": 1.0,
-        "2": 0.82,
-        "3": 0.62,
-        "4": 0.45
-      },
       "econNote": "V5.2 경제력 축 = 거주민 경제수준(소득·소비) 추정 등급 w(1~5, rail_network, ESTIMATED)의 전 역 백분위. 아파트 시세는 순환참조(집값→역 가치→아파트 가치), 업무·상권·유동인구는 업무 축과 이중 가중이라 입력에서 완전히 제외. 역세권 단위 소득·자산 정밀 데이터가 없으므로 등급 추정임을 표시하고 임의 정밀값을 만들지 않는다. 아래 price* 파라미터는 '주변 시세 수준(priceLevel)' — 점수에 미반영, 결과 검증·참고 표시 전용",
       "econWinsorPct": [
         2,
@@ -182,7 +176,7 @@
       "reasonAxisHigh": 85
     },
     "lineV5": {
-      "note": "Line Value V5.1 — Station Value 평균이 아닌 별도 네트워크 모델. 5축: 노선 내 역세권 가치 30 / 핵심 생활권 연결력 25(한계효용 체감) / 도시 횡단·네트워크 20(환승·관문·횡단성만 — 생활권 중복 가산 금지) / 실제 이동 효율 15 / 대체불가능성 10(우회 시간 proxy). 최종 점수는 raw 그대로 표시(재스케일 없음). 특정 노선 순위를 만들기 위한 조정 금지",
+      "note": "Line Value V5.1 — Station Value 평균이 아닌 별도 네트워크 모델. 5축: 노선 내 역세권 가치 30 / 핵심 생활권 연결력 25(한계효용 체감) / 도시 횡단·네트워크 20(환승·관문·횡단성만 — 생활권 중복 가산 금지) / 실제 이동 효율 15 / 대체불가능성 10(우회 시간 proxy — 핵심지는 importance≥coreCenterMinImportance인 다핵 업무지 전체, §21 잠실 등 포함). 최종 점수는 raw 그대로 표시(재스케일 없음). 특정 노선 순위를 만들기 위한 조정 금지",
       "axes": {
         "station": 0.3,
         "hub": 0.25,
@@ -299,7 +293,8 @@
         12,
         24
       ],
-      "tierNote": "점수차가 작은 노선을 절대순위처럼 보이지 않게 S/A/B/C 표시 — 최고점 대비 4/12/24점 이내"
+      "tierNote": "점수차가 작은 노선을 절대순위처럼 보이지 않게 S/A/B/C 표시 — 최고점 대비 4/12/24점 이내",
+      "coreCenterMinImportance": 0.4
     },
     "transportBlend": {
       "svT": 0.6,
@@ -468,36 +463,77 @@
     "maxTravelMin": 120
   },
   "education": {
-    "subWeights": {
-      "school": 0.3,
-      "academy": 0.3,
-      "access": 0.2,
-      "demand": 0.2
+    "note": "교육평가 V2 — 100점 = 학교 25 + 학원 생태계 25 + 입시 15 + 배정·통학 15 + 교육수요 10 + 지속성 10. 구성요소 데이터가 없으면(null) 추정하지 않고 제외·재정규화(§7). Anchor Academy는 최대 anchorMax점 보조지표(§6). 등급은 점수에서 산출(§11 데이터→점수→등급) — 지역 이름으로 등급을 먼저 정하지 않는다.",
+    "weights": {
+      "school": 0.25,
+      "academy": 0.25,
+      "admission": 0.15,
+      "commute": 0.15,
+      "demand": 0.1,
+      "continuity": 0.1
     },
-    "coefficientByTier": {
-      "1": 1.2,
-      "2": 1.0,
-      "3": 0.8,
-      "4": 0.55
-    },
-    "accessDecay": [
-      {
-        "maxMin": 15,
-        "factor": 1.0
-      },
-      {
-        "maxMin": 30,
-        "factor": 0.75
-      },
-      {
-        "maxMin": 45,
-        "factor": 0.5
-      },
-      {
-        "maxMin": 999,
-        "factor": 0.25
-      }
+    "tierBands": [
+      90,
+      80,
+      70,
+      60
     ],
+    "tierLabels": [
+      "S",
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "coeffByTier": {
+      "S": 1.2,
+      "A": 1.0,
+      "B": 0.8,
+      "C": 0.6,
+      "D": 0.45
+    },
+    "adjacencyKm": 2.0,
+    "adjacencyFactor": 0.8,
+    "coverage": {
+      "full": 0.85,
+      "partial": 0.5
+    },
+    "coverageLabels": [
+      "데이터 충분",
+      "일부 데이터",
+      "데이터 부족"
+    ],
+    "blend": {
+      "commuteComplex": 0.6,
+      "schoolMiddlePref": 0.25,
+      "demandComplex": 0.5
+    },
+    "middlePrefScore": [
+      40,
+      55,
+      70,
+      84,
+      95
+    ],
+    "elemCurve": [
+      [
+        300,
+        95
+      ],
+      [
+        500,
+        85
+      ],
+      [
+        800,
+        72
+      ],
+      [
+        1200,
+        55
+      ]
+    ],
+    "chopumaBonus": 3,
     "localAcademyScore": {
       "1": 35,
       "2": 50,

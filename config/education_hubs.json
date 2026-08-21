@@ -1,21 +1,886 @@
 {
-  "version": "1.0.0",
-  "note": "교육 허브 DB — 사람이 등록·수정한다. 향후 학원 밀도 데이터로 자동 탐지·보정(Phase 2). tier는 교육 프리미엄 계수(education.coefficientByTier) 키.",
-  "hubs": [
-    { "id": "daechi", "hub_name": "대치·도곡", "city": "서울", "district": "강남구", "neighborhood": "대치동·도곡동", "latitude": 37.494, "longitude": 127.062, "radius_km": 1.6, "hub_type": "academy_hub", "tier": 1, "initial_strength": 100, "notes": "전국 최대 입시학원 허브" },
-    { "id": "mokdong", "hub_name": "목동·신정", "city": "서울", "district": "양천구", "neighborhood": "목동·신정동", "latitude": 37.526, "longitude": 126.864, "radius_km": 1.8, "hub_type": "mixed", "tier": 1, "initial_strength": 93, "notes": "학교 선호 + 대형 학원가 결합" },
-    { "id": "junggye", "hub_name": "중계 은행사거리", "city": "서울", "district": "노원구", "neighborhood": "중계동", "latitude": 37.649, "longitude": 127.064, "radius_km": 1.2, "hub_type": "academy_hub", "tier": 2, "initial_strength": 86, "notes": "서울 동북권 대표 학원가" },
-    { "id": "banpo", "hub_name": "반포·서초·잠원", "city": "서울", "district": "서초구", "neighborhood": "반포동·잠원동·서초동", "latitude": 37.503, "longitude": 127.004, "radius_km": 1.8, "hub_type": "school_zone", "tier": 1, "initial_strength": 90, "notes": "학교 선호 + 대치 접근성 + 자체 교육수요" },
-    { "id": "jamsil", "hub_name": "잠실", "city": "서울", "district": "송파구", "neighborhood": "잠실동·신천동", "latitude": 37.508, "longitude": 127.082, "radius_km": 1.6, "hub_type": "mixed", "tier": 1, "initial_strength": 87, "notes": "학교 + 학원가 + 강남 접근성" },
-    { "id": "gwangjang", "hub_name": "광장동", "city": "서울", "district": "광진구", "neighborhood": "광장동", "latitude": 37.545, "longitude": 127.103, "radius_km": 1.0, "hub_type": "school_zone", "tier": 2, "initial_strength": 82, "notes": "광남·양진 학군 — 학교 자체 선호가 강한 학군형" },
-    { "id": "godeok-myeongil", "hub_name": "고덕·명일", "city": "서울", "district": "강동구", "neighborhood": "고덕동·명일동", "latitude": 37.555, "longitude": 127.144, "radius_km": 1.3, "hub_type": "mixed", "tier": 2, "initial_strength": 78, "notes": "전통적 학교 선호 + 최근 학원 인프라 확대" },
-    { "id": "bundang-sunae", "hub_name": "분당 수내·서현", "city": "경기 성남", "district": "분당구", "neighborhood": "수내동·서현동", "latitude": 37.381, "longitude": 127.119, "radius_km": 1.4, "hub_type": "mixed", "tier": 1, "initial_strength": 89, "notes": "분당 핵심 교육축 (수내·서현)" },
-    { "id": "bundang-jeongja", "hub_name": "분당 정자", "city": "경기 성남", "district": "분당구", "neighborhood": "정자동", "latitude": 37.367, "longitude": 127.108, "radius_km": 1.0, "hub_type": "mixed", "tier": 2, "initial_strength": 82, "notes": "분당 교육축 남측 — 수내·서현과 연담" },
-    { "id": "pyeongchon", "hub_name": "평촌", "city": "경기 안양", "district": "동안구", "neighborhood": "귀인동·평촌동·호계동", "latitude": 37.383, "longitude": 126.960, "radius_km": 1.3, "hub_type": "mixed", "tier": 1, "initial_strength": 88, "notes": "학교 + 대형 학원가 결합 (귀인 중심)" },
-    { "id": "gwacheon", "hub_name": "과천 중앙·별양", "city": "경기 과천", "district": "과천시", "neighborhood": "중앙동·별양동", "latitude": 37.428, "longitude": 126.994, "radius_km": 1.0, "hub_type": "school_zone", "tier": 2, "initial_strength": 79, "notes": "학교 접근성과 교육 인프라를 별도 평가" },
-    { "id": "ilsan-hugok", "hub_name": "일산 후곡", "city": "경기 고양", "district": "일산서구", "neighborhood": "일산동(후곡마을)", "latitude": 37.677, "longitude": 126.769, "radius_km": 0.9, "hub_type": "academy_hub", "tier": 2, "initial_strength": 80, "notes": "일산 서측 대표 학원가" },
-    { "id": "ilsan-baekma", "hub_name": "일산 백마", "city": "경기 고양", "district": "일산동구", "neighborhood": "마두동(백마마을)", "latitude": 37.658, "longitude": 126.790, "radius_km": 0.9, "hub_type": "academy_hub", "tier": 2, "initial_strength": 78, "notes": "일산 동측 대표 학원가" },
-    { "id": "suji", "hub_name": "용인 수지", "city": "경기 용인", "district": "수지구", "neighborhood": "풍덕천동·수지구청역 일대", "latitude": 37.322, "longitude": 127.095, "radius_km": 1.2, "hub_type": "mixed", "tier": 2, "initial_strength": 81, "notes": "수지 주요 교육생활권" }
-  ],
-  "phase2_candidates": ["판교", "광교", "영통", "망포", "동탄", "위례", "미사"]
+ "version": "2.0.0",
+ "note": "교육생활권(zone) DB — V2 전면 개편(§2-14): 사전 Tier 지정을 폐기하고 구성요소 점수에서 총점·등급을 계산한다(§11 데이터→점수→등급). 값은 공개 학교·학원 정보 기반 전문가 큐레이션(ESTIMATED, 5점 단위 — 임의 정밀값 금지). null = 해당 구성요소 데이터 없음: 추정하지 않고 제외·재정규화(§7)하며 신뢰도에 표시(§14). dongs = 생활권 소속 법정동(§12·13 — 행정동 문자열 매칭 폐기, 상일동 포함 고덕 생활권 등 실제 생활권 기준). 좌표+radius_km는 법정동 밖 단지의 거리 기반 매칭·인접 생활권 판정용. anchors = anchor_academies.json 카테고리 id.",
+ "asOf": "2026-08",
+ "componentLabels": {
+  "school": "학교 경쟁력",
+  "academy": "학원 생태계",
+  "admission": "입시 성과",
+  "commute": "배정·통학",
+  "demand": "교육 수요",
+  "continuity": "생태계 지속성"
+ },
+ "zones": [
+  {
+   "id": "daechi",
+   "name": "대치·도곡·개포",
+   "city": "서울",
+   "district": "강남구",
+   "dongs": [
+    "대치동",
+    "도곡동",
+    "개포동",
+    "일원동"
+   ],
+   "latitude": 37.494,
+   "longitude": 127.062,
+   "radius_km": 1.8,
+   "components": {
+    "school": 90,
+    "academy": 100,
+    "admission": 95,
+    "commute": 85,
+    "demand": 95,
+    "continuity": 100
+   },
+   "anchors": [
+    "elem-math-top",
+    "elem-eng",
+    "sec-math",
+    "sci-olym",
+    "admission",
+    "med"
+   ],
+   "notes": "전국 최대 입시학원 허브 — 초등부터 재수·의대까지 전 단계 생태계 완결"
+  },
+  {
+   "id": "apgujeong",
+   "name": "압구정·청담·삼성",
+   "city": "서울",
+   "district": "강남구",
+   "dongs": [
+    "압구정동",
+    "청담동",
+    "삼성동",
+    "신사동",
+    "논현동"
+   ],
+   "latitude": 37.524,
+   "longitude": 127.041,
+   "radius_km": 1.6,
+   "components": {
+    "school": 85,
+    "academy": 70,
+    "admission": 80,
+    "commute": 80,
+    "demand": 80,
+    "continuity": 80
+   },
+   "anchors": [
+    "elem-eng",
+    "sec-math"
+   ],
+   "notes": "학교 선호가 강한 학군형 — 대형 학원가는 인접 대치 이용 비중이 큼"
+  },
+  {
+   "id": "banpo",
+   "name": "반포·서초·잠원",
+   "city": "서울",
+   "district": "서초구",
+   "dongs": [
+    "반포동",
+    "잠원동",
+    "서초동",
+    "방배동"
+   ],
+   "latitude": 37.503,
+   "longitude": 127.004,
+   "radius_km": 2.0,
+   "components": {
+    "school": 90,
+    "academy": 80,
+    "admission": 85,
+    "commute": 90,
+    "demand": 85,
+    "continuity": 85
+   },
+   "anchors": [
+    "elem-eng",
+    "sec-math",
+    "admission"
+   ],
+   "notes": "학교 선호 + 자체 학원가 + 대치 접근성 결합"
+  },
+  {
+   "id": "mokdong",
+   "name": "목동·신정",
+   "city": "서울",
+   "district": "양천구",
+   "dongs": [
+    "목동",
+    "신정동"
+   ],
+   "latitude": 37.526,
+   "longitude": 126.864,
+   "radius_km": 1.8,
+   "components": {
+    "school": 90,
+    "academy": 95,
+    "admission": 90,
+    "commute": 90,
+    "demand": 90,
+    "continuity": 95
+   },
+   "anchors": [
+    "elem-math-top",
+    "elem-eng",
+    "sec-math",
+    "sci-olym",
+    "admission"
+   ],
+   "notes": "학교 선호 + 대형 학원가 결합 — 서남권 대표 완결형 학군"
+  },
+  {
+   "id": "junggye",
+   "name": "중계 은행사거리",
+   "city": "서울",
+   "district": "노원구",
+   "dongs": [
+    "중계동",
+    "하계동"
+   ],
+   "latitude": 37.649,
+   "longitude": 127.064,
+   "radius_km": 1.4,
+   "components": {
+    "school": 80,
+    "academy": 85,
+    "admission": 80,
+    "commute": 85,
+    "demand": 80,
+    "continuity": 85
+   },
+   "anchors": [
+    "elem-math-top",
+    "sec-math",
+    "admission"
+   ],
+   "notes": "동북권 대표 학원가 — 은행사거리 중심 초~고 생태계"
+  },
+  {
+   "id": "jamsil",
+   "name": "잠실",
+   "city": "서울",
+   "district": "송파구",
+   "dongs": [
+    "잠실동",
+    "신천동"
+   ],
+   "latitude": 37.508,
+   "longitude": 127.082,
+   "radius_km": 1.6,
+   "components": {
+    "school": 85,
+    "academy": 80,
+    "admission": 70,
+    "commute": 85,
+    "demand": 85,
+    "continuity": 80
+   },
+   "anchors": [
+    "elem-eng",
+    "sec-math"
+   ],
+   "notes": "학교 + 학원가 + 대치 접근성 — 대단지 실수요 기반"
+  },
+  {
+   "id": "songpa-garak",
+   "name": "송파·가락·방이",
+   "city": "서울",
+   "district": "송파구",
+   "dongs": [
+    "가락동",
+    "문정동",
+    "오금동",
+    "송파동",
+    "방이동",
+    "석촌동",
+    "삼전동"
+   ],
+   "latitude": 37.499,
+   "longitude": 127.118,
+   "radius_km": 1.8,
+   "components": {
+    "school": 75,
+    "academy": 75,
+    "admission": 60,
+    "commute": 80,
+    "demand": 80,
+    "continuity": 70
+   },
+   "anchors": [
+    "elem-eng"
+   ],
+   "notes": "헬리오시티·올림픽선수촌 축 — 잠실·대치 접근 + 자체 학원가 성장"
+  },
+  {
+   "id": "godeok",
+   "name": "고덕·명일·상일",
+   "city": "서울",
+   "district": "강동구",
+   "dongs": [
+    "고덕동",
+    "명일동",
+    "상일동",
+    "강일동"
+   ],
+   "latitude": 37.555,
+   "longitude": 127.148,
+   "radius_km": 1.8,
+   "components": {
+    "school": 80,
+    "academy": 70,
+    "admission": 55,
+    "commute": 85,
+    "demand": 85,
+    "continuity": 70
+   },
+   "anchors": [
+    "elem-eng"
+   ],
+   "notes": "전통적 학교 선호(명일 학원가) + 신축 대단지 입주로 인프라 확대 — §13 생활권: 명일·고덕·상일·강일 통합"
+  },
+  {
+   "id": "gwangjang",
+   "name": "광장",
+   "city": "서울",
+   "district": "광진구",
+   "dongs": [
+    "광장동"
+   ],
+   "latitude": 37.545,
+   "longitude": 127.103,
+   "radius_km": 1.0,
+   "components": {
+    "school": 85,
+    "academy": 65,
+    "admission": 70,
+    "commute": 85,
+    "demand": 80,
+    "continuity": 65
+   },
+   "anchors": [],
+   "notes": "광남·양진 학군 — 학교 자체 선호가 강한 학군형"
+  },
+  {
+   "id": "yeouido",
+   "name": "여의도",
+   "city": "서울",
+   "district": "영등포구",
+   "dongs": [
+    "여의도동"
+   ],
+   "latitude": 37.522,
+   "longitude": 126.928,
+   "radius_km": 1.0,
+   "components": {
+    "school": 80,
+    "academy": 65,
+    "admission": 75,
+    "commute": 80,
+    "demand": 75,
+    "continuity": 65
+   },
+   "anchors": [
+    "elem-eng"
+   ],
+   "notes": "학교 선호 + 목동 학원가 접근 — 섬 내 자체 수요 안정"
+  },
+  {
+   "id": "mapo",
+   "name": "마포 대흥·염리",
+   "city": "서울",
+   "district": "마포구",
+   "dongs": [
+    "아현동",
+    "염리동",
+    "대흥동",
+    "공덕동",
+    "신공덕동",
+    "도화동",
+    "용강동"
+   ],
+   "latitude": 37.549,
+   "longitude": 126.946,
+   "radius_km": 1.4,
+   "components": {
+    "school": 70,
+    "academy": 70,
+    "admission": 55,
+    "commute": 80,
+    "demand": 85,
+    "continuity": 60
+   },
+   "anchors": [
+    "elem-eng"
+   ],
+   "notes": "대흥역 학원가 성장 — 신축 대단지 30-40대 수요가 견인"
+  },
+  {
+   "id": "oksu",
+   "name": "옥수·금호",
+   "city": "서울",
+   "district": "성동구",
+   "dongs": [
+    "옥수동",
+    "금호동1가",
+    "금호동2가",
+    "금호동3가",
+    "금호동4가",
+    "응봉동"
+   ],
+   "latitude": 37.54,
+   "longitude": 127.017,
+   "radius_km": 1.2,
+   "components": {
+    "school": 65,
+    "academy": 50,
+    "admission": null,
+    "commute": 75,
+    "demand": 75,
+    "continuity": 50
+   },
+   "anchors": [],
+   "notes": "강남 인접 주거지 — 학원은 압구정·대치 이용 비중이 커 자체 생태계는 얕음 (입시성과 데이터 없음)"
+  },
+  {
+   "id": "seongsu",
+   "name": "성수·서울숲",
+   "city": "서울",
+   "district": "성동구",
+   "dongs": [
+    "성수동1가",
+    "성수동2가",
+    "행당동"
+   ],
+   "latitude": 37.545,
+   "longitude": 127.044,
+   "radius_km": 1.2,
+   "components": {
+    "school": 60,
+    "academy": 50,
+    "admission": null,
+    "commute": 70,
+    "demand": 75,
+    "continuity": 45
+   },
+   "anchors": [],
+   "notes": "신흥 주거지 — 교육 인프라는 성장 초기 (입시성과 데이터 없음)"
+  },
+  {
+   "id": "yongsan",
+   "name": "이촌·한남",
+   "city": "서울",
+   "district": "용산구",
+   "dongs": [
+    "이촌동",
+    "한남동",
+    "보광동",
+    "서빙고동",
+    "동부이촌동"
+   ],
+   "latitude": 37.522,
+   "longitude": 126.988,
+   "radius_km": 1.6,
+   "components": {
+    "school": 70,
+    "academy": 55,
+    "admission": 60,
+    "commute": 75,
+    "demand": 70,
+    "continuity": 55
+   },
+   "anchors": [
+    "elem-eng"
+   ],
+   "notes": "이촌 전통 학군 선호 — 학원은 강남·목동 분산 이용"
+  },
+  {
+   "id": "heukseok",
+   "name": "흑석·상도",
+   "city": "서울",
+   "district": "동작구",
+   "dongs": [
+    "흑석동",
+    "상도동"
+   ],
+   "latitude": 37.506,
+   "longitude": 126.96,
+   "radius_km": 1.2,
+   "components": {
+    "school": 60,
+    "academy": 50,
+    "admission": null,
+    "commute": 70,
+    "demand": 75,
+    "continuity": 45
+   },
+   "anchors": [],
+   "notes": "뉴타운 입주로 수요 성장 — 학원 생태계는 노량진·강남 의존 (입시성과 데이터 없음)"
+  },
+  {
+   "id": "gireum",
+   "name": "길음·미아",
+   "city": "서울",
+   "district": "성북구",
+   "dongs": [
+    "길음동",
+    "돈암동",
+    "미아동"
+   ],
+   "latitude": 37.606,
+   "longitude": 127.023,
+   "radius_km": 1.2,
+   "components": {
+    "school": 55,
+    "academy": 45,
+    "admission": null,
+    "commute": 70,
+    "demand": 70,
+    "continuity": 40
+   },
+   "anchors": [],
+   "notes": "뉴타운 실수요 — 자체 학원가는 소규모 (입시성과 데이터 없음)"
+  },
+  {
+   "id": "dmc",
+   "name": "수색·DMC",
+   "city": "서울",
+   "district": "은평구",
+   "dongs": [
+    "수색동",
+    "증산동",
+    "북가좌동",
+    "남가좌동"
+   ],
+   "latitude": 37.578,
+   "longitude": 126.895,
+   "radius_km": 1.2,
+   "components": {
+    "school": 50,
+    "academy": 40,
+    "admission": null,
+    "commute": 70,
+    "demand": 70,
+    "continuity": 40
+   },
+   "anchors": [],
+   "notes": "DMC 배후 주거지 — 교육 인프라 성장 초기 (입시성과 데이터 없음)",
+   "districts": [
+    "은평구",
+    "서대문구"
+   ]
+  },
+  {
+   "id": "seodaemun",
+   "name": "경희궁·독립문",
+   "city": "서울",
+   "district": "종로구",
+   "dongs": [
+    "홍파동",
+    "교북동",
+    "평동",
+    "교남동",
+    "행촌동",
+    "냉천동",
+    "천연동",
+    "현저동",
+    "무악동",
+    "사직동"
+   ],
+   "latitude": 37.571,
+   "longitude": 126.96,
+   "radius_km": 1.0,
+   "components": {
+    "school": 60,
+    "academy": 45,
+    "admission": null,
+    "commute": 70,
+    "demand": 65,
+    "continuity": 45
+   },
+   "anchors": [],
+   "notes": "도심 서측 주거지 — 학교 선호 보통, 학원은 목동·강북 중심가 분산 (입시성과 데이터 없음)",
+   "districts": [
+    "종로구",
+    "서대문구"
+   ]
+  },
+  {
+   "id": "magok",
+   "name": "마곡",
+   "city": "서울",
+   "district": "강서구",
+   "dongs": [
+    "마곡동",
+    "가양동",
+    "내발산동"
+   ],
+   "latitude": 37.56,
+   "longitude": 126.827,
+   "radius_km": 1.4,
+   "components": {
+    "school": 55,
+    "academy": 50,
+    "admission": null,
+    "commute": 75,
+    "demand": 80,
+    "continuity": 45
+   },
+   "anchors": [],
+   "notes": "신도시형 — 30-40대 유입으로 수요 높으나 생태계 미성숙 (입시성과 데이터 없음)"
+  },
+  {
+   "id": "bundang-sunae",
+   "name": "분당 수내·서현",
+   "city": "경기 성남",
+   "district": "분당구",
+   "dongs": [
+    "수내동",
+    "서현동",
+    "분당동",
+    "이매동"
+   ],
+   "latitude": 37.381,
+   "longitude": 127.119,
+   "radius_km": 1.5,
+   "components": {
+    "school": 85,
+    "academy": 85,
+    "admission": 80,
+    "commute": 85,
+    "demand": 80,
+    "continuity": 85
+   },
+   "anchors": [
+    "elem-math-top",
+    "elem-eng",
+    "sec-math",
+    "admission"
+   ],
+   "notes": "분당 핵심 교육축 — 수내·서현 학원가"
+  },
+  {
+   "id": "bundang-jeongja",
+   "name": "분당 정자",
+   "city": "경기 성남",
+   "district": "분당구",
+   "dongs": [
+    "정자동",
+    "금곡동",
+    "구미동"
+   ],
+   "latitude": 37.367,
+   "longitude": 127.108,
+   "radius_km": 1.2,
+   "components": {
+    "school": 80,
+    "academy": 75,
+    "admission": 70,
+    "commute": 80,
+    "demand": 80,
+    "continuity": 80
+   },
+   "anchors": [
+    "elem-eng",
+    "sec-math"
+   ],
+   "notes": "분당 교육축 남측 — 수내·서현과 연담"
+  },
+  {
+   "id": "pangyo",
+   "name": "판교",
+   "city": "경기 성남",
+   "district": "분당구",
+   "dongs": [
+    "백현동",
+    "삼평동",
+    "판교동",
+    "운중동"
+   ],
+   "latitude": 37.395,
+   "longitude": 127.111,
+   "radius_km": 1.5,
+   "components": {
+    "school": 75,
+    "academy": 65,
+    "admission": 55,
+    "commute": 80,
+    "demand": 85,
+    "continuity": 55
+   },
+   "anchors": [
+    "elem-eng"
+   ],
+   "notes": "IT 종사자 가구 수요 강함 — 학원은 분당 이용 비중 큼"
+  },
+  {
+   "id": "pyeongchon",
+   "name": "평촌",
+   "city": "경기 안양",
+   "district": "동안구",
+   "dongs": [
+    "평촌동",
+    "호계동",
+    "비산동",
+    "관양동"
+   ],
+   "latitude": 37.383,
+   "longitude": 126.96,
+   "radius_km": 1.4,
+   "components": {
+    "school": 85,
+    "academy": 90,
+    "admission": 80,
+    "commute": 85,
+    "demand": 80,
+    "continuity": 85
+   },
+   "anchors": [
+    "elem-math-top",
+    "sec-math",
+    "admission"
+   ],
+   "notes": "학교 + 대형 학원가 결합 (귀인 중심) — 경기 서남권 완결형"
+  },
+  {
+   "id": "gwacheon",
+   "name": "과천",
+   "city": "경기 과천",
+   "district": "과천시",
+   "dongs": [
+    "중앙동",
+    "별양동",
+    "부림동",
+    "원문동",
+    "갈현동"
+   ],
+   "latitude": 37.428,
+   "longitude": 126.994,
+   "radius_km": 1.2,
+   "components": {
+    "school": 80,
+    "academy": 60,
+    "admission": 70,
+    "commute": 80,
+    "demand": 75,
+    "continuity": 65
+   },
+   "anchors": [],
+   "notes": "학교 선호형 — 학원은 평촌·강남 분산 이용"
+  },
+  {
+   "id": "ilsan-hugok",
+   "name": "일산 후곡",
+   "city": "경기 고양",
+   "district": "일산서구",
+   "dongs": [
+    "일산동",
+    "주엽동",
+    "탄현동"
+   ],
+   "latitude": 37.677,
+   "longitude": 126.769,
+   "radius_km": 1.0,
+   "components": {
+    "school": 75,
+    "academy": 80,
+    "admission": 70,
+    "commute": 80,
+    "demand": 70,
+    "continuity": 75
+   },
+   "anchors": [
+    "sec-math"
+   ],
+   "notes": "일산 서측 대표 학원가"
+  },
+  {
+   "id": "ilsan-baekma",
+   "name": "일산 백마",
+   "city": "경기 고양",
+   "district": "일산동구",
+   "dongs": [
+    "마두동",
+    "장항동",
+    "백석동"
+   ],
+   "latitude": 37.658,
+   "longitude": 126.79,
+   "radius_km": 1.0,
+   "components": {
+    "school": 75,
+    "academy": 75,
+    "admission": 70,
+    "commute": 80,
+    "demand": 70,
+    "continuity": 75
+   },
+   "anchors": [],
+   "notes": "일산 동측 대표 학원가"
+  },
+  {
+   "id": "suji",
+   "name": "용인 수지",
+   "city": "경기 용인",
+   "district": "수지구",
+   "dongs": [
+    "풍덕천동",
+    "죽전동",
+    "동천동",
+    "상현동"
+   ],
+   "latitude": 37.322,
+   "longitude": 127.095,
+   "radius_km": 1.5,
+   "components": {
+    "school": 75,
+    "academy": 75,
+    "admission": 70,
+    "commute": 80,
+    "demand": 75,
+    "continuity": 75
+   },
+   "anchors": [
+    "elem-eng",
+    "sec-math"
+   ],
+   "notes": "수지구청역 일대 — 경기 남부 안정 학군"
+  },
+  {
+   "id": "gwanggyo",
+   "name": "광교",
+   "city": "경기 수원",
+   "district": "영통구",
+   "dongs": [
+    "이의동",
+    "원천동",
+    "하동"
+   ],
+   "latitude": 37.297,
+   "longitude": 127.047,
+   "radius_km": 1.4,
+   "components": {
+    "school": 70,
+    "academy": 65,
+    "admission": null,
+    "commute": 80,
+    "demand": 85,
+    "continuity": 50
+   },
+   "anchors": [],
+   "notes": "신도시형 — 수요 강하나 생태계 성장 중 (입시성과 데이터 없음)"
+  },
+  {
+   "id": "yeongtong",
+   "name": "수원 영통",
+   "city": "경기 수원",
+   "district": "영통구",
+   "dongs": [
+    "영통동",
+    "매탄동",
+    "망포동"
+   ],
+   "latitude": 37.251,
+   "longitude": 127.071,
+   "radius_km": 1.4,
+   "components": {
+    "school": 70,
+    "academy": 75,
+    "admission": 55,
+    "commute": 80,
+    "demand": 80,
+    "continuity": 60
+   },
+   "anchors": [
+    "sec-math"
+   ],
+   "notes": "영통 학원가 — 삼성전자 배후 실수요"
+  },
+  {
+   "id": "dongtan",
+   "name": "동탄",
+   "city": "경기 화성",
+   "district": "화성시",
+   "dongs": [
+    "청계동",
+    "오산동",
+    "영천동",
+    "반송동",
+    "석우동",
+    "능동"
+   ],
+   "latitude": 37.201,
+   "longitude": 127.097,
+   "radius_km": 2.0,
+   "components": {
+    "school": 65,
+    "academy": 70,
+    "admission": null,
+    "commute": 80,
+    "demand": 90,
+    "continuity": 55
+   },
+   "anchors": [
+    "elem-eng"
+   ],
+   "notes": "학령인구 비중 전국 최상위 — 생태계는 성장 중 (입시성과 데이터 없음)"
+  },
+  {
+   "id": "wirye",
+   "name": "위례",
+   "city": "경기 성남",
+   "district": "수정구",
+   "dongs": [
+    "장지동",
+    "거여동",
+    "창곡동",
+    "학암동"
+   ],
+   "latitude": 37.478,
+   "longitude": 127.143,
+   "radius_km": 1.5,
+   "components": {
+    "school": 60,
+    "academy": 55,
+    "admission": null,
+    "commute": 80,
+    "demand": 80,
+    "continuity": 45
+   },
+   "anchors": [],
+   "notes": "신도시형 실수요 — 학원은 잠실·가락 이용 비중 큼 (입시성과 데이터 없음)",
+   "districts": [
+    "송파구",
+    "수정구",
+    "하남시"
+   ]
+  },
+  {
+   "id": "misa",
+   "name": "미사·하남",
+   "city": "경기 하남",
+   "district": "하남시",
+   "dongs": [
+    "망월동",
+    "풍산동",
+    "선동",
+    "덕풍동",
+    "신장동"
+   ],
+   "latitude": 37.563,
+   "longitude": 127.193,
+   "radius_km": 1.6,
+   "components": {
+    "school": 55,
+    "academy": 50,
+    "admission": null,
+    "commute": 75,
+    "demand": 80,
+    "continuity": 40
+   },
+   "anchors": [],
+   "notes": "신도시형 — 수요 유입 대비 생태계 초기 (입시성과 데이터 없음)"
+  }
+ ]
 }

@@ -37,6 +37,14 @@ const AptEngine = (() => {
     return points[points.length - 1][1];
   }
 
+  // 좌표 거리(km) — 교육생활권 매칭(§12)용
+  function havKm(a, b) {
+    const d2r = Math.PI / 180;
+    const dLa = (b[0] - a[0]) * d2r, dLo = (b[1] - a[1]) * d2r;
+    const x = Math.sin(dLa / 2) ** 2 + Math.cos(a[0] * d2r) * Math.cos(b[0] * d2r) * Math.sin(dLo / 2) ** 2;
+    return 2 * 6371 * Math.asin(Math.sqrt(x));
+  }
+
   function weightedPercentile(items, p) { // items: [{v,w}]
     const arr = items.slice().sort((a, b) => a.v - b.v);
     const total = arr.reduce((s, it) => s + it.w, 0);
@@ -177,7 +185,7 @@ const AptEngine = (() => {
   }
 
   /* ═══════════ 미래가치 엔진 (V3 §24~28) — 5축 → g 시나리오 ═══════════ */
-  function engineFuture(cx, supplyE, hedonic, option, CFG) {
+  function engineFuture(cx, supplyE, hedonic, option, CFG, input) {
     const F = CFG.future;
     const comps = {};
     const edu = cx.education || {};
@@ -192,6 +200,10 @@ const AptEngine = (() => {
     comps.transitChange = ts;
     comps.eduPref = hedonic.subs.education != null ? hedonic.subs.education : null;   // 미확인이면 축 제외
     comps.redevOption = F.optionGradeScore[option.gradeIdx] ?? 45;
+    if (input && input.neutralize && input.neutralize.has('future')) {   // §25 기여도 재계산
+      comps.transitChange = F.transitNoneScore;
+      comps.redevOption = 45;
+    }
 
     let sum = 0, wsum = 0;
     const W = F.weights;
@@ -389,7 +401,7 @@ const AptEngine = (() => {
     bonus = Math.min(bonus, S.multiStation.totalBonusCap);
     let score = clamp(base * (1 + bonus), 0, 100);
     let ft = null;
-    if (cx.location && cx.location.futureTransit) {
+    if (cx.location && cx.location.futureTransit && !(input.neutralize && input.neutralize.has('future'))) {
       const conf = /확정|공사/.test(cx.location.futureTransit);
       score = clamp(score + (conf ? S.futureTransitBonus.confirmed : S.futureTransitBonus.planned), 0, 100);
       ft = `${cx.location.futureTransit}${conf ? '' : ' — 미확정은 제한 반영'}`;
@@ -403,6 +415,148 @@ const AptEngine = (() => {
       secondary: link.secondary && STN.stations[link.secondary.st] ? { st: link.secondary.st, min: link.secondary.min, sv: STN.stations[link.secondary.st].sv, lines: STN.stations[link.secondary.st].lines } : null,
       gangnamMin: p.gangnamMin, gangnamScore,
       jobMinutes: p.jobMinutes
+    };
+  }
+
+  /* ═══════════ 교육평가 V2 (개선 PRD §2-14) ═══════════
+     생활권(zone) 구성요소 기반 — 100점 = 학교25 + 학원25 + 입시15 + 통학15 + 수요10 + 지속성10.
+     데이터 없는 구성요소는 추정하지 않고 제외·재정규화(§7). Anchor Academy는 커버리지 비율로
+     최대 anchorMax점 보조(§6). 등급(S~D)은 점수에서 산출(§11 데이터→점수→등급).
+     매칭은 법정동 목록 → 좌표 거리(§12) — 행정동 문자열 매칭 폐기, 지역명 사전 Tier 폐기. */
+  function eduScoreFromComponents(comps, E2, anchorCov, anchorsCfg) {
+    let s = 0, w = 0;
+    const used = {}, missing = [];
+    for (const k of Object.keys(E2.weights)) {
+      const v = comps[k];
+      if (v == null || !isFinite(v)) { missing.push(k); continue; }
+      s += E2.weights[k] * v; w += E2.weights[k]; used[k] = Math.round(v);
+    }
+    if (w <= 0) return null;
+    const base = s / w;
+    const anchorMax = (anchorsCfg && anchorsCfg.anchorMax) ?? 5;
+    const anchorBonus = anchorCov != null ? anchorMax * clamp(anchorCov, 0, 1) : 0;
+    const score = clamp(base + anchorBonus, 0, 100);
+    let ti = E2.tierBands.length;
+    for (let i = 0; i < E2.tierBands.length; i++) if (score >= E2.tierBands[i]) { ti = i; break; }
+    return {
+      score: Math.round(score), base: Math.round(base), anchorBonus: round1(anchorBonus),
+      tier: E2.tierLabels[ti], tierIdx: ti, coverage: w, used, missing
+    };
+  }
+
+  /* 존 자체 점수(단지 보정 없음) — 상대평가(§35)·역 교육축(pipeline) 공용 */
+  function eduZoneScore(zone, E2, anchorsCfg) {
+    if (!zone || !zone.components) return null;
+    const cov = anchorsCfg && anchorsCfg.categories && anchorsCfg.categories.length
+      ? (zone.anchors || []).length / anchorsCfg.categories.length : 0;
+    return eduScoreFromComponents(zone.components, E2, cov, anchorsCfg);
+  }
+
+  /* 교육생활권 매칭 (§12·13): ① 법정동 소속(구 가드) ② 좌표 거리(radius 내 → 소속,
+     radius+adjacencyKm 내 → 인접 생활권). 매칭 실패는 null — 임의 배정하지 않는다. */
+  function matchEduZone(HUBS, q, E2) {
+    const zones = (HUBS && HUBS.zones) || [];
+    const norm = s => String(s || '').replace(/\s/g, '');
+    if (q.dong) {
+      for (const z of zones) {
+        const dl = z.districts || (z.district ? [z.district] : []);
+        const dOK = !q.district || !dl.length ||
+          dl.some(d => norm(q.district).includes(norm(d)) || norm(d).includes(norm(q.district)));
+        if (dOK && (z.dongs || []).some(d => norm(d) === norm(q.dong)))
+          return { zone: z, via: 'dong', adjacent: false, distKm: null };
+      }
+    }
+    if (q.coord && q.coord.length === 2) {
+      let best = null;
+      for (const z of zones) {
+        if (z.latitude == null) continue;
+        const d = havKm(q.coord, [z.latitude, z.longitude]);
+        const over = d - z.radius_km;
+        if (!best || over < best.over) best = { z, d, over };
+      }
+      if (best) {
+        const adjKm = (E2 && E2.adjacencyKm) ?? 2;
+        if (best.over <= 0) return { zone: best.z, via: 'coord', adjacent: false, distKm: round1(best.d) };
+        if (best.over <= adjKm) return { zone: best.z, via: 'coord', adjacent: true, distKm: round1(best.d) };
+      }
+    }
+    return null;
+  }
+
+  /* 단지 교육 상세: 존 구성요소 + 단지 수준 보정(초등거리·중학선호·30-49비중) → 점수·등급·신뢰도 */
+  function eduDetailOf(cx, edu, HUBS, E2) {
+    const zone = edu && edu.zoneId ? ((HUBS && HUBS.zones) || []).find(z => z.id === edu.zoneId) : null;
+    const zc = (zone && zone.components) || {};
+    const comps = {};
+    const mps = edu && edu.middlePref ? (E2.middlePrefScore[edu.middlePref - 1] ?? 70) : null;
+    comps.school = zc.school != null && mps != null
+      ? (1 - E2.blend.schoolMiddlePref) * zc.school + E2.blend.schoolMiddlePref * mps
+      : (zc.school ?? mps);
+    comps.academy = zc.academy != null ? zc.academy
+      : (edu && edu.localAcademyLevel ? (E2.localAcademyScore[String(edu.localAcademyLevel)] ?? null) : null);
+    comps.admission = zc.admission ?? null;   // 입시성과: 존 데이터만 — 없으면 추정 금지(§7)
+    comps.continuity = zc.continuity ?? null;
+    const elemS = edu && edu.elemM != null
+      ? clamp(interp(edu.elemM, E2.elemCurve) + (edu.chopuma ? E2.chopumaBonus : 0), 0, 100) : null;
+    comps.commute = elemS != null && zc.commute != null
+      ? E2.blend.commuteComplex * elemS + (1 - E2.blend.commuteComplex) * zc.commute
+      : (elemS ?? zc.commute ?? null);
+    const dS = edu && edu.age3049 != null
+      ? clamp(interp(edu.age3049, [[0.24, 45], [0.27, 58], [0.30, 72], [0.33, 84], [0.36, 92]])
+        + (edu.studentTrend === 'up' ? 5 : edu.studentTrend === 'down' ? -7 : 0), 0, 100) : null;
+    comps.demand = dS != null && zc.demand != null
+      ? E2.blend.demandComplex * dS + (1 - E2.blend.demandComplex) * zc.demand
+      : (dS ?? zc.demand ?? null);
+    const adjacent = !!(edu && edu.adjacent);
+    if (adjacent) for (const k of ['academy', 'admission']) if (comps[k] != null) comps[k] *= E2.adjacencyFactor;
+
+    const anch = HUBS && HUBS.anchors;
+    const anchorCov = zone && anch && anch.categories && anch.categories.length
+      ? (zone.anchors || []).length / anch.categories.length * (adjacent ? E2.adjacencyFactor : 1)
+      : (zone ? 0 : null);
+    const sc = eduScoreFromComponents(comps, E2, anchorCov, anch);
+    if (!sc) return null;
+
+    // §35 상대평가: 등록된 교육생활권 전체 중 위치 (존 자체 점수 기준)
+    let relative = null;
+    if (zone && HUBS.zones && HUBS.zones.length >= 5) {
+      const all = HUBS.zones.map(z => { const s = eduZoneScore(z, E2, anch); return s ? s.score : null; })
+        .filter(v => v != null).sort((a, b) => b - a);
+      const zs = eduZoneScore(zone, E2, anch);
+      if (zs && all.length) {
+        let rank = all.findIndex(v => v <= zs.score);
+        if (rank < 0) rank = all.length - 1;
+        relative = { pctile: Math.max(1, Math.ceil((rank + 1) / all.length * 100)), n: all.length, zoneScore: zs.score };
+      }
+    }
+    // §14 데이터 신뢰도 3단계 + 별점
+    const covIdx = sc.coverage >= E2.coverage.full ? 0 : sc.coverage >= E2.coverage.partial ? 1 : 2;
+    const labels = (HUBS && HUBS.componentLabels) || {
+      school: '학교 경쟁력', academy: '학원 생태계', admission: '입시 성과',
+      commute: '배정·통학', demand: '교육 수요', continuity: '생태계 지속성'
+    };
+    // §34 이유 문장: 상위 구성요소 → 왜 높은가 / 최저·결측 → 아쉬운 점
+    const ranked = Object.entries(sc.used).sort((a, b) => b[1] - a[1]);
+    const hi = ranked.filter(([, v]) => v >= 78).slice(0, 2).map(([k]) => labels[k]);
+    const lo2 = ranked.length ? ranked[ranked.length - 1] : null;
+    const why = hi.length
+      ? `${josa(hi.join('과 '), '이', '가')} 특히 강한 생활권입니다.`
+      : '구성요소가 고르게 중간 수준인 생활권입니다.';
+    const weakBits = [];
+    if (lo2 && lo2[1] < 65) weakBits.push(`${josa(labels[lo2[0]], '은', '는')} 상위 학군 대비 낮습니다`);
+    if (sc.missing.length) weakBits.push(`${sc.missing.map(k => labels[k]).join('·')} 데이터는 확보하지 못해 평가에서 제외했습니다`);
+    const weak = weakBits.length ? weakBits.join('. ') + '.' : '뚜렷한 약점 구성요소는 없습니다.';
+    return {
+      zoneId: zone ? zone.id : null, zoneName: zone ? zone.name : null, adjacent,
+      score: sc.score, base: sc.base, tier: sc.tier, tierIdx: sc.tierIdx,
+      comps: sc.used, missing: sc.missing, labels,
+      anchorBonus: sc.anchorBonus,
+      anchorsCovered: zone ? (zone.anchors || []).length : 0,
+      anchorsTotal: anch && anch.categories ? anch.categories.length : 0,
+      coverage: Math.round(sc.coverage * 100) / 100, covIdx,
+      covLabel: (E2.coverageLabels || ['데이터 충분', '일부 데이터', '데이터 부족'])[covIdx],
+      stars: Math.max(1, Math.round(sc.coverage * 5)),
+      relative, why, weak, zoneNotes: zone ? zone.notes : null
     };
   }
 
@@ -439,7 +593,7 @@ const AptEngine = (() => {
       if (loc.transfer) { transport += 5; tN.push('환승 접근'); }
       if (loc.express) { transport += 5; tN.push('급행·광역'); }
       if ((loc.lines || []).length >= 2) { transport += 3; tN.push('복수 노선'); }
-      if (loc.futureTransit) {
+      if (loc.futureTransit && !(input.neutralize && input.neutralize.has('future'))) {
         const confirmed = /확정|공사/.test(loc.futureTransit);
         transport += confirmed ? 4 : 1;
         tN.push(`${loc.futureTransit}${confirmed ? '' : ' — 미확정은 제한 반영'}`);
@@ -458,36 +612,26 @@ const AptEngine = (() => {
     if (transport != null) transport = clamp(transport, 0, 100);
     job = clamp(job, 0, 100);
 
-    // 교육 (4개 하위 모듈) — 정보 전체 미확인이면 항목 제외 + 재정규화 (§12)
-    let eduScore = null, eduCoeff = 0, school = null, academy = null, access = null, demand = null, hub = null;
+    // 교육 V2 (§2-14) — 생활권 구성요소 기반. 정보 전체 미확인이면 항목 제외 + 재정규화 (§12)
+    let eduScore = null, eduCoeff = 0, eduDetail = null;
     if (edu) {
-      const elemBase = edu.elemM <= 300 ? 95 : edu.elemM <= 500 ? 85 : edu.elemM <= 800 ? 72 : 55;
-      school = clamp(0.45 * (elemBase + (edu.chopuma ? 3 : 0)) + 0.55 * [40, 55, 70, 84, 95][(edu.middlePref || 3) - 1], 0, 100);
-      hub = edu.inHub && edu.hubId ? HUBS.hubs.find(h => h.id === edu.hubId) : null;
-      academy = hub ? hub.initial_strength
-        : (E.localAcademyScore[String(edu.localAcademyLevel || 2)] ?? 50);
-      const accessCands = [];
-      if (hub) accessCands.push({ v: hub.initial_strength, tier: hub.tier });
-      for (const ha of (edu.hubAccess || [])) {
-        const h2 = HUBS.hubs.find(h => h.id === ha.hubId);
-        if (!h2) continue;
-        const dec = E.accessDecay.find(d => ha.min <= d.maxMin);
-        accessCands.push({ v: h2.initial_strength * (dec ? dec.factor : 0.25), tier: h2.tier });
+      eduDetail = eduDetailOf(cx, edu, HUBS, E);
+      if (eduDetail) {
+        eduScore = eduDetail.score;
+        eduCoeff = E.coeffByTier[eduDetail.tier] ?? 0.6;
+        const compLine = Object.entries(eduDetail.comps)
+          .map(([k, v]) => `${eduDetail.labels[k]} ${v}`).join(' · ');
+        notes.education = [
+          `${compLine}${eduDetail.anchorBonus > 0 ? ` · Anchor 학원군 +${eduDetail.anchorBonus}` : ''}`,
+          eduDetail.zoneName
+            ? `${eduDetail.zoneName} 교육생활권${eduDetail.adjacent ? ' 인접(감쇄 반영)' : ''} · ${eduDetail.tier}등급 (계수 ×${eduCoeff}) · ${eduDetail.covLabel}`
+            : `교육생활권 미매칭 — 단지 입력값 기준 (계수 ×${eduCoeff}) · ${eduDetail.covLabel}`,
+          ...(eduDetail.missing.length ? [`미확보 구성요소 제외: ${eduDetail.missing.map(k => eduDetail.labels[k]).join('·')}`] : [])
+        ];
+        if (eduDetail.covIdx === 2) gaps.push('교육 구성요소 데이터 부족 — 제한 평가');
       }
-      if (!accessCands.length) accessCands.push({ v: academy * 0.7, tier: 4 });
-      accessCands.sort((a, b) => b.v - a.v);
-      access = clamp(accessCands[0].v, 0, 100);
-      demand = interp(edu.age3049 || 0.28, [[0.24, 45], [0.27, 58], [0.30, 72], [0.33, 84], [0.36, 92]]);
-      demand += edu.studentTrend === 'up' ? 5 : edu.studentTrend === 'down' ? -7 : 0;
-      demand = clamp(demand, 0, 100);
-      eduScore = E.subWeights.school * school + E.subWeights.academy * academy + E.subWeights.access * access + E.subWeights.demand * demand;
-      const coeffTier = hub ? hub.tier : Math.min(4, (accessCands[0].tier || 4) + 1);
-      eduCoeff = E.coefficientByTier[String(coeffTier)] ?? 0.55;
-      notes.education = [
-        `학교환경 ${Math.round(school)} · 학원가 ${Math.round(academy)} · 교육접근성 ${Math.round(access)} · 수요지속성 ${Math.round(demand)}`,
-        hub ? `${hub.hub_name} 허브 생활권 (계수 ×${eduCoeff})` : `주요 교육 허브 비생활권 (계수 ×${eduCoeff})`
-      ];
-    } else {
+    }
+    if (eduScore == null) {
       notes.education = ['교육 정보 미확인 — 평가 제외(신뢰도 하락)'];
       gaps.push('교육 정보 미확인 — 평가 제외');
     }
@@ -540,6 +684,12 @@ const AptEngine = (() => {
 
     const subs = { transport, job, education: eduScore, life: lifeScore, nature, product };
 
+    // §25 기여도 재계산: 중립화 대상은 기준점수로 치환(해당 카테고리 가격조정 0) — 값이 있던 항목만
+    if (input.neutralize) {
+      const nmap = { transit: ['transport', 'job'], education: ['education'], product: ['product'], lifeNature: ['life', 'nature'] };
+      for (const g of input.neutralize) for (const k of (nmap[g] || [])) if (subs[k] != null) subs[k] = H.baselineScore;
+    }
+
     // 가격 반영: 카테고리별 캡 × (점수−기준)/분모 — 미확인(null) 카테고리는 조정 없음
     const adj = {};
     let total = 0;
@@ -551,7 +701,7 @@ const AptEngine = (() => {
       adj[k] = a; total += a;
     }
     total = clamp(total, -H.totalCap, H.totalCap);
-    return { subs, notes, adj, total, eduDetail: { school, academy, access, demand, eduCoeff, hubName: hub ? hub.hub_name : null } };
+    return { subs, notes, adj, total, eduCoeff, eduDetail };
   }
 
   /* ═══════════ Engine D · 수요·공급·시장구조 ═══════════ */
@@ -572,6 +722,7 @@ const AptEngine = (() => {
       : { demandSide: '비규제 — 매수 진입 제약이 작음', lockinSide: '매물잠김 효과는 약해 공급(매물) 측 완충이 적음' };
     if (!sup.regulated) regAdj = Math.min(0.005, S.regulationAdjCap);
     adj = clamp(adj + regAdj, -S.priceAdjCap, S.priceAdjCap);
+    if (input.neutralize && input.neutralize.has('supply')) adj = 0;   // §25 기여도 재계산
     const score = clamp([88, 76, 62, 45, 30][gradeIdx] - (sup.unsoldLevel >= 4 ? 8 : 0) + (sup.txVolumeLevel >= 4 ? 4 : sup.txVolumeLevel <= 2 ? -4 : 0), 0, 100);
     return {
       demand: Math.round(demand), localRatio, combined, gradeIdx,
@@ -599,6 +750,7 @@ const AptEngine = (() => {
       if (headroom != null) premium = prob * O.maxOptionPremium * clamp(headroom / O.headroomRef, 0, 1);
       else { premiumNote = '용적률·대지지분 데이터 부족 — 금액 반영 없이 등급·시나리오만 제시'; gaps.push('정비사업 사업성 데이터 일부 없음'); }
     }
+    if (input.neutralize && input.neutralize.has('future')) premium = 0;   // §25 기여도 재계산
     let gIdx = O.gradeBands.length;
     for (let i = 0; i < O.gradeBands.length; i++) if (prob >= O.gradeBands[i]) { gIdx = i; break; }
     const scenario = prob <= 0 ? null :
@@ -844,7 +996,7 @@ const AptEngine = (() => {
     const sub = hed.subs;
     if (sub.job >= 75) up.push('주요 업무지 접근성 우수');
     if (sub.transport >= 80) up.push('역세권·교통 경쟁력');
-    if (sub.education >= 80) up.push(hed.eduDetail.hubName ? `선호 학군·학원가 (${hed.eduDetail.hubName})` : '교육환경 우수');
+    if (sub.education >= 80) up.push(hed.eduDetail && hed.eduDetail.zoneName ? `선호 학군·학원가 (${hed.eduDetail.zoneName})` : '교육환경 우수');
     if (sub.product >= 80) up.push('신축급 상품성·대단지');
     else if ((cx.households || 0) >= 3000) up.push('대단지 규모');
     if (sub.nature >= 80) up.push('공원·수변 등 자연환경');
@@ -869,7 +1021,7 @@ const AptEngine = (() => {
     const contrib = [
       fin ? { k: '금융·임대 지지력', v: clamp((fin.value / mv - 1) * 100, -40, 40) } : null,
       sub.transport != null ? { k: '교통·직주 프리미엄', v: clamp((0.5 * (sub.transport + sub.job) - 60) * 0.9, -40, 40) } : null,
-      sub.education != null ? { k: '교육 프리미엄', v: clamp((sub.education - 60) * 0.9 * hed.eduDetail.eduCoeff, -40, 40) } : null,
+      sub.education != null ? { k: '교육 프리미엄', v: clamp((sub.education - 60) * 0.9 * hed.eduCoeff, -40, 40) } : null,
       (sub.life != null && sub.nature != null) ? { k: '생활·자연환경', v: clamp((0.5 * (sub.life + sub.nature) - 60) * 0.9, -40, 40) } : null,
       sub.product != null ? { k: '상품성·희소성', v: clamp((0.5 * (sub.product + scores.invest.subs.scarcity) - 60) * 0.9, -40, 40) } : null,
       { k: '수급 구조', v: clamp((sup.score - 60) * 0.9, -40, 40) },
@@ -910,7 +1062,7 @@ const AptEngine = (() => {
     for (const [k] of top2) {
       if (k === 'transport' && res.transit) coreBits.push(`${res.transit.primary.st}(Station Value ${res.transit.primary.sv}) 이용과 강남 접근성(${res.transit.gangnamMin}분)`);
       else if (k === 'job') coreBits.push('주요 업무지까지의 짧은 이동시간');
-      else if (k === 'education') coreBits.push(hed.eduDetail.hubName ? `${hed.eduDetail.hubName} 교육 생활권` : '교육환경');
+      else if (k === 'education') coreBits.push(hed.eduDetail && hed.eduDetail.zoneName ? `${hed.eduDetail.zoneName} 교육 생활권` : '교육환경');
       else if (k === 'product') coreBits.push('신축급 상품성과 단지 규모');
       else if (k === 'nature') coreBits.push('공원·수변 자연환경');
       else if (k === 'life') coreBits.push('생활 인프라');
@@ -951,7 +1103,7 @@ const AptEngine = (() => {
     const driverPool = [];
     if (sub.transport != null && sub.transport >= 70) driverPool.push([sub.transport, res.transit ? `${res.transit.primary.st} 등 강한 역 접근성` : '교통 접근성']);
     if (sub.job != null && sub.job >= 70) driverPool.push([sub.job, '강남·핵심 업무지 접근성']);
-    if (sub.education != null && sub.education >= 74) driverPool.push([sub.education, hed.eduDetail.hubName ? `${hed.eduDetail.hubName} 교육환경` : '교육환경']);
+    if (sub.education != null && sub.education >= 74) driverPool.push([sub.education, hed.eduDetail && hed.eduDetail.zoneName ? `${hed.eduDetail.zoneName} 교육환경` : '교육환경']);
     if (sub.product != null && sub.product >= 74) driverPool.push([sub.product, '신축·대단지 상품성']);
     if (sub.nature != null && sub.nature >= 78) driverPool.push([sub.nature, '한강·녹지 환경']);
     if (FU && FU.comps.scarcity >= 72) driverPool.push([FU.comps.scarcity, '공급 희소성']);
@@ -1021,7 +1173,11 @@ const AptEngine = (() => {
     const input = {
       asOfYM: rawInput.asOfYM, asOfYear: Number(rawInput.asOfYM.split('-')[0]),
       overrides: rawInput.overrides || {}, useRent: !!rawInput.useRent,
-      manualComplex: !!rawInput.manualComplex
+      manualComplex: !!rawInput.manualComplex,
+      // §25 기여도 재계산: neutralize = 중립화 카테고리, attribution = 속성 기여를 전액 측정
+      // (잔차 감쇄 없이 — "이 가격에 얼마나 반영되어 있나"의 분해용. 일반 분석에는 사용 안 함)
+      neutralize: Array.isArray(rawInput.neutralize) && rawInput.neutralize.length ? new Set(rawInput.neutralize) : null,
+      attribution: !!rawInput.attribution
     };
     const cx = rawInput.complex;
     const area = cx.areas.find(a => a.key === rawInput.areaKey) || cx.areas[0];
@@ -1054,7 +1210,7 @@ const AptEngine = (() => {
     const option = engineOption(cx, input, CFG, gaps);
     // 미래가치 엔진 (5축 → g 시나리오) → Engine B 금융 (시나리오 범위)
     // 전세 없음 → fin=null (금융·전세지지력만 보류, 나머지 분석은 계속 — FR-03)
-    const future = engineFuture(cx, supplyE, hedonic, option, CFG);
+    const future = engineFuture(cx, supplyE, hedonic, option, CFG, input);
     const fin = engineFinancial(cx, area, input, CFG, currentPrice, future.g);
     const finHeld = !fin;
     if (finHeld) gaps.push('전세 실거래 없음 — 금융·임대 지지가치 분석 보류');
@@ -1064,8 +1220,8 @@ const AptEngine = (() => {
     const expectedGapBase = 10;
     const fillRate = clamp(1 - gaps.length / expectedGapBase - (input.manualComplex ? 0.15 : 0), 0.5, 1);
 
-    // 결합 + 범위
-    const combineOut = combine(market, fin, hedonic, supplyE, option, CFG, market.compQuality);
+    // 결합 + 범위 (attribution 모드는 잔차 감쇄 없이 속성 반영분 전액을 측정 — §25 분해 전용)
+    const combineOut = combine(market, fin, hedonic, supplyE, option, CFG, input.attribution ? 0 : market.compQuality);
     const range = valueRange(combineOut.center, market, combineOut.disagreement, fillRate, CFG);
 
     // 점수
@@ -1209,15 +1365,38 @@ const AptEngine = (() => {
     return rec.asOf || !info.meta ? rec : { ...rec, asOf: info.meta.asOf };
   }
 
-  /* 생활권 허브 매칭 (ui에서 이동 — 순수화) */
-  function matchHubIn(hubs, dong, district) {
-    const norm = s => String(s || '').replace(/\s/g, '');
-    for (const h of (hubs && hubs.hubs) || []) {
-      const d1 = norm(district), d2 = norm(h.district);
-      if (!d1.includes(d2) && !d2.includes(d1)) continue;
-      if (norm(h.neighborhood).includes(norm(dong))) return h;
+  /* ═══ §23-26 가격 기여도 — 실제 재계산: 요소를 중립으로 바꿔 전체 모델을 다시 돌린 차이 ═══
+     attribution 모드(잔차 감쇄 없이 속성 반영분 전액 측정)에서 기준 계산과 중립화 계산을
+     각각 수행한다. 단순 설명용 문구 생성 금지(§25) — 금액은 전부 재계산 결과다. */
+  function priceContributions(rawInput, CFG, HUBS, JOBS, STN) {
+    const attrIn = Object.assign({}, rawInput, { attribution: true, neutralize: null });
+    let base;
+    try { base = analyze(attrIn, CFG, HUBS, JOBS, STN); } catch (e) { return null; }
+    const sub = base.hedonic.subs;
+    const defs = [
+      { id: 'transit', label: '교통·직주근접', has: sub.transport != null || sub.job != null },
+      { id: 'education', label: '교육환경', has: sub.education != null },
+      { id: 'product', label: '단지·상품성', has: sub.product != null },
+      { id: 'lifeNature', label: '생활·자연환경', has: sub.life != null || sub.nature != null },
+      { id: 'supply', label: '수급(공급 부담)', has: true },
+      { id: 'future', label: '미래 기대(정비·교통)', has: base.option.prob > 0 || !!(base.cx.location && base.cx.location.futureTransit) }
+    ];
+    const items = [];
+    for (const d of defs) {
+      if (!d.has) continue;
+      let r2;
+      try { r2 = analyze(Object.assign({}, attrIn, { neutralize: [d.id] }), CFG, HUBS, JOBS, STN); } catch (e) { continue; }
+      const amt = base.combineOut.center - r2.combineOut.center;
+      items.push({ id: d.id, label: d.label, amt: Math.round(amt * 100) / 100 });
     }
-    return null;
+    items.sort((a, b) => b.amt - a.amt);
+    return {
+      center: base.combineOut.center,
+      items,
+      up: items.filter(i => i.amt >= 0.05).slice(0, 3),
+      down: items.filter(i => i.amt <= -0.05).sort((a, b) => a.amt - b.amt).slice(0, 2),
+      note: '각 금액은 해당 요소를 중립 기준으로 바꿔 전체 모델을 다시 계산했을 때의 차이 — 가격에 미친 추정 영향입니다. 요소 간 상호작용 때문에 합계가 전체 가격차와 정확히 일치하지 않을 수 있습니다.'
+    };
   }
 
   /* ═══ 자동수집 단지 → 엔진 스키마 (ui에서 이동 — AC-09 Node E2E 테스트 가능) ═══
@@ -1228,7 +1407,10 @@ const AptEngine = (() => {
     const e = (o && o.edits) || {};
     const STN = o.stations, kapt = o.kapt || null;
     const gaps = [];
-    const hub = matchHubIn(o.hubs, entry.dong, region.district);
+    // §12: 교육생활권 매칭 — 법정동 → (실패 시) 주력역 좌표 거리. 행정동 문자열 매칭 폐기
+    const dl0 = o.dongLink;
+    const stCoord = dl0 && dl0.length && STN && STN.stations[dl0[0].st] ? STN.stations[dl0[0].st].c : null;
+    const zoneM = matchEduZone(o.hubs, { dong: entry.dong, district: region.district || region.name, coord: stCoord }, null);
     const hhManual = e.households > 0;
     const hhKapt = !hhManual && kapt ? kapt.households : null;
     const households = hhManual ? e.households : (hhKapt || null);
@@ -1240,7 +1422,7 @@ const AptEngine = (() => {
     if (!builtYear) gaps.push('준공연도 미확인');
     if (kapt && kapt.parkingRatio != null) gaps.push('브랜드·생활·자연환경 기본값 사용');
     else gaps.push('주차·브랜드·생활·자연환경 기본값 사용');
-    if (!hub) gaps.push('교육 상세 미확인 (중립 가정)');
+    if (!zoneM) gaps.push('교육생활권 미확인 — 교육 평가 제외');
 
     // 역 연결: 사용자 입력(MANUAL) > 법정동 자동 연결(ESTIMATED) > 미확인(UNKNOWN)
     let stationLink = null, unknownTransport = false, stStatus = 'UNKNOWN';
@@ -1267,7 +1449,7 @@ const AptEngine = (() => {
       station: stStatus,
       redev: e.redevStage ? 'MANUAL' : 'UNKNOWN',
       supply: e.supplyNext3yAvg > 0 ? 'MANUAL' : 'ESTIMATED',
-      education: hub ? 'ESTIMATED' : 'UNKNOWN',
+      education: zoneM ? 'ESTIMATED' : 'UNKNOWN',
       lifeNature: 'UNKNOWN',
       product: households || (kapt && kapt.parkingRatio != null) ? 'ESTIMATED' : 'UNKNOWN'
     };
@@ -1302,9 +1484,8 @@ const AptEngine = (() => {
       tags: ['실거래 자동'], dataGaps: gaps, fieldStatus, stationLink,
       areas,
       location: { subwayMin: stationLink ? stationLink.primary.min : null, unknownTransport, lines: [], transfer: false, express: false, futureTransit: null, jobMinutes: region.jobMinutes },
-      education: hub
-        ? { elemM: 400, chopuma: false, middlePref: hub.hub_type === 'school_zone' ? 4 : 3, hubId: hub.id, inHub: true, hubAccess: [], age3049: 0.31, studentTrend: 'stable' }
-        : null,   // 허브 매칭도 안 되면 교육은 미확인 — 평가 제외
+      // 교육 V2: 생활권 존 구성요소로만 평가 — 단지 수준 임의 기본값(elemM 400 등) 폐기(§53 평균값 임의 입력 금지)
+      education: zoneM ? { zoneId: zoneM.zone.id, adjacent: zoneM.adjacent, matchedVia: zoneM.via } : null,
       life: null, nature: null,   // 시설 거리 데이터 미확보 — 평가 제외 (10분 기본값 폐기, §56)
       supply: {
         pop: region.pop, next3yAvg: e.supplyNext3yAvg > 0 ? e.supplyNext3yAvg : region.supplyNext3yAvg,
@@ -1329,9 +1510,10 @@ const AptEngine = (() => {
   }
 
   return {
-    analyze, applyStress, repRecentPrice, interp, weightedMedian, weightedPercentile, monthsBetween, clamp, round1,
-    josa, pickDefaultAreaKey, normNameK, liveSearchHay, liveSearchMatch, mergeLiveEntries, matchKaptInfo, matchHubIn, buildAutoComplex,
-    attractSentence, oneLinerV2, stationTier, stationReason, futureSplit, fulfillmentOf, validateUserEdits
+    analyze, applyStress, repRecentPrice, interp, weightedMedian, weightedPercentile, monthsBetween, clamp, round1, havKm,
+    josa, pickDefaultAreaKey, normNameK, liveSearchHay, liveSearchMatch, mergeLiveEntries, matchKaptInfo, buildAutoComplex,
+    attractSentence, oneLinerV2, stationTier, stationReason, futureSplit, fulfillmentOf, validateUserEdits,
+    eduScoreFromComponents, eduZoneScore, matchEduZone, eduDetailOf, priceContributions
   };
 })();
 
