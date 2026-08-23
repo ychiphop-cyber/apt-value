@@ -1380,7 +1380,7 @@ const AptEngine = (() => {
     const decomp = engineDecompose(cx, fin, option, currentPrice, CFG);
     // v4 결과화면 명세 (STEP 1~7) — 과거 임대 데이터는 UI가 rawInput.rentHist로 전달
     let v4 = null;
-    try { v4 = engineV4(cx, area, input, CFG, rep, rawInput.rentHist || null, rawInput.nearbyNew || null); } catch (e) { v4 = null; }
+    try { v4 = engineV4(cx, area, input, CFG, rep, rawInput.rentHist || null, rawInput.nearbyNew || null, rawInput.flagship || null); } catch (e) { v4 = null; }
     const optionPV = decomp && !(input.neutralize && input.neutralize.has('future'))
       ? decomp.events.reduce((s, e) => s + e.amt, 0) : 0;
 
@@ -1804,7 +1804,7 @@ const AptEngine = (() => {
   /* ═══ 재건축 이중 경로 (PRD 추가분 v4.1 — STEP R1~R5) ═══
      인근 신축 후보: 준공 7년 이내 · 같은 동 우선(3개 미만이면 구 전체 확대·표기) ·
      신규계약 전월세 존재 · 유사 평형. 각 단지에 max(전세환산, 월세환산) 적용 후 평균. */
-  function v4NearbyNew(complexes, selfNames, dong, asOfYM, conv, CFG) {
+  function v4NearbyNew(complexes, selfNames, dong, asOfYM, conv, CFG, hhOf) {
     const RB = CFG.v4 && CFG.v4.rebuild;
     if (!RB || !complexes) return null;
     const asOfYear = Number(String(asOfYM).slice(0, 4));
@@ -1812,6 +1812,11 @@ const AptEngine = (() => {
     for (const e of Object.values(complexes)) {
       if (!e || selfNames.has(e.name)) continue;
       if (!e.builtYear || asOfYear - e.builtYear > RB.nearby.maxAgeYears) continue;
+      // 나홀로 소규모 제외 — 세대수가 '확인된' 경우에만 (미확인은 유지, 임의 배제 금지)
+      if (RB.nearby.minHouseholds && typeof hhOf === 'function') {
+        const hh = hhOf(e.name);
+        if (hh > 0 && hh < RB.nearby.minHouseholds) continue;
+      }
       let best = null;
       for (const [k2, a] of Object.entries(e.areas || {})) {
         const dd = Math.abs((a.m2 || Number(k2) || 84) - 84);
@@ -1829,9 +1834,13 @@ const AptEngine = (() => {
       const Rw = basis.wolse ? basis.wolse.dep * conv + basis.wolse.mr * 12 / 10000 : null;
       const Rg = Math.max(Rj ?? -1, Rw ?? -1);
       if (!(Rg > 0)) continue;
+      // 최근 실거래 (상대 기준 P_ref용 — 12개월 내만 인정)
+      let deal = null;
+      const bt = (best.a.trades || [])[0];
+      if (bt && monthsBetween(asOfYM, bt.ym) <= 12) deal = { price: bt.price, ym: bt.ym };
       cands.push({
         name: e.name, dong: e.dong, builtYear: e.builtYear,
-        jeonse: basis.jeonse ? basis.jeonse.v : null, Rgross: Rg,
+        jeonse: basis.jeonse ? basis.jeonse.v : null, Rgross: Rg, deal,
         t: e.tradeCount || 0, sameDong: e.dong === dong
       });
     }
@@ -1843,23 +1852,75 @@ const AptEngine = (() => {
     if (!items.length) return null;
     const avg = arr => arr.reduce((s, x) => s + x, 0) / arr.length;
     const js = items.map(i => i.jeonse).filter(x => x > 0);
+    const ds = items.map(i => i.deal && i.deal.price).filter(x => x > 0);
     return {
       items, scope, n: items.length,
       avgRgross: avg(items.map(i => i.Rgross)),
       avgJeonse: js.length ? Math.round(avg(js) * 10) / 10 : null,
       jeonseMin: js.length ? Math.min(...js) : null,
-      jeonseMax: js.length ? Math.max(...js) : null
+      jeonseMax: js.length ? Math.max(...js) : null,
+      avgDeal: ds.length ? Math.round(avg(ds) * 10) / 10 : null, dealN: ds.length
     };
+  }
+
+  /* §N1 생활권 대장 아파트 — 준공 10년 이내 · 최근 6개월 실거래 · 같은 동 우선 · ㎡당 단가 최고.
+     자기 자신이 대장이면 selfIsFlagship — ② 생략하고 '이 생활권 대장 단지'로 표기 */
+  function v4Flagship(complexes, selfNames, dong, asOfYM, conv, CFG, selfPerM2, hhOf) {
+    if (!complexes) return null;
+    const asOfYear = Number(String(asOfYM).slice(0, 4));
+    const minHH = CFG.v4 && CFG.v4.rebuild && CFG.v4.rebuild.minHouseholds;
+    const cands = [];
+    for (const e of Object.values(complexes)) {
+      if (!e || !e.builtYear || asOfYear - e.builtYear > 10) continue;
+      if (typeof hhOf === 'function') {
+        const hh = hhOf(e.name);
+        if (hh > 0 && hh < ((CFG.v4.rebuild && CFG.v4.rebuild.nearby.minHouseholds) || 0)) continue;
+      }
+      let best = null;
+      for (const [k2, a] of Object.entries(e.areas || {})) {
+        const dd = Math.abs((a.m2 || Number(k2) || 84) - 84);
+        if (dd > 12) continue;
+        const bt = (a.trades || [])[0];
+        if (!bt || monthsBetween(asOfYM, bt.ym) > 6) continue;   // 최근 6개월 실거래 필수
+        if (!best || dd < best.dd) best = { a, dd, bt };
+      }
+      if (!best) continue;
+      const m2 = best.a.m2 || 84;
+      const basis = v4RentBasis({
+        jeonseRaw: best.a.jeonseRaw || [], wolseRaw: best.a.wolseRaw || [],
+        jeonse: best.a.jeonse ? best.a.jeonse.v : null, jeonseMeta: best.a.jeonse || null
+      }, { overrides: {} }, CFG, asOfYM);
+      const Rj = basis.jeonse ? basis.jeonse.v * conv : null;
+      const Rw = basis.wolse ? basis.wolse.dep * conv + basis.wolse.mr * 12 / 10000 : null;
+      const Rg = Math.max(Rj ?? -1, Rw ?? -1);
+      cands.push({
+        name: e.name, dong: e.dong, builtYear: e.builtYear, m2,
+        deal: { price: best.bt.price, ym: best.bt.ym }, perM2: best.bt.price / m2,
+        jeonse: basis.jeonse ? basis.jeonse.v : null, Rgross: Rg > 0 ? Rg : null,
+        isSelf: selfNames.has(e.name), sameDong: e.dong === dong
+      });
+    }
+    if (!cands.length) return null;
+    const top = pool => pool.slice().sort((a, b) => b.perM2 - a.perM2)[0];
+    const sameDong = cands.filter(c => c.sameDong);
+    const scope = sameDong.length ? 'dong' : 'gu';
+    const pick = top(scope === 'dong' ? sameDong : cands);
+    if (!pick) return null;
+    // 자기 자신이 ㎡당 최고면(또는 대장보다 비싸면) 대장 단지
+    if (pick.isSelf || (selfPerM2 > 0 && selfPerM2 >= pick.perM2)) return { selfIsFlagship: true, scope };
+    if (!(pick.Rgross > 0)) return null;   // 대장의 임대가치 없이는 비례 계산 불가
+    return { selfIsFlagship: false, scope, item: pick };
   }
 
   /* STEP R1~R5 — 순수 계산기 (조정기·시나리오·검산이 같은 함수를 쓴다)
      V_실현 = (V_new − 분담금)/(1+k)^y + 기다리는 동안의 임대료 PV
      V_재건축 = p × V_실현 + (1−p) × V_현재상태  — 무산돼도 땅은 남으므로 기대값으로 */
-  function v4RebuildAt(Rold, RnewGross, k, g, cont, p, y, CFG) {
+  function v4RebuildAt(Rold, RnewGross, k, g, cont, p, y, CFG, VnewDirect) {
     const V = CFG.v4;
     const Vold = pv2Stage(Rold, k, g, V.gTerm, V.years, V.termMinSpread).v;
     const Rnew = RnewGross * (1 - V.costRate);
-    const Vnew = pv2Stage(Rnew, k, g, V.gTerm, V.years, V.termMinSpread).v;
+    // VnewDirect(상대 기준 §N3): 새집 가치 자리에 인근 신축 '실거래'를 직접 대입 — 같은 함수, 인자만 다름
+    const Vnew = VnewDirect != null ? VnewDirect : pv2Stage(Rnew, k, g, V.gTerm, V.years, V.termMinSpread).v;
     const Vnet = Vnew - cont;
     const Vdisc = Vnet / Math.pow(1 + k, y);
     let pvDuring = 0;
@@ -1886,7 +1947,7 @@ const AptEngine = (() => {
 
   /* 메인 — cx·area·최근거래·과거임대(hist)·인근 신축(nearby)으로 결과화면용 전체 명세를 만든다.
      hist: { cxOld: {old,n}|null, gu: {gHist,…}|null, oldQ } / nearby: v4NearbyNew 결과 (둘 다 UI가 샤드에서 해석) */
-  function engineV4(cx, area, input, CFG, rep, hist, nearby) {
+  function engineV4(cx, area, input, CFG, rep, hist, nearby, flagship) {
     const V = CFG.v4, F = CFG.financial;
     if (!V) return null;
     // 기준 가격 = 최근 실거래 1건 (사실 그대로 · 날짜·층 표기) — 사용자 입력이 있으면 그 값
@@ -1969,6 +2030,37 @@ const AptEngine = (() => {
     }
     // STEP 6 — 역산 (재건축 채택 시 재건축·호재 몫은 상수로 두고 구축 임대료 성장을 푼다)
     const gq = v4SolveG(R, k, Vfair - Vrent, P, CFG);
+    // ═══ 두 기준 병행 (v4.2 STEP N1~N5) — ② 상대 기준: 재건축은 신축 실거래, 일반은 생활권 대장 ═══
+    let rel = null;
+    if (rbAdopted && nearby && nearby.avgDeal > 0) {
+      const Pref = nearby.avgDeal;
+      const Rref = nearby.avgRgross * (1 - V.costRate);
+      const VrefRent = pv2Stage(Rref, k, g, V.gTerm, V.years, V.termMinSpread).v;
+      // §N3 재건축: STEP R5와 같은 함수 — V_new 자리에 신축 실거래(P_ref)를 직접 대입
+      const rr = v4RebuildAt(R, rb.RnewGross, k, g, rb.cont, rb.p, rb.y, CFG, Pref);
+      rel = { type: 'newbuild', Pref, Rref, VrefRent, refResid: (Pref - VrefRent) / Pref,
+        Vrel: rr.Vrebuild, refItems: nearby.items, refScope: nearby.scope, refDealN: nearby.dealN };
+    } else if (flagship && flagship.selfIsFlagship) {
+      rel = { type: 'self', refScope: flagship.scope };
+    } else if (flagship && flagship.item && !rbAdopted) {
+      const it = flagship.item;
+      const Pref = it.deal.price;
+      const Rref = it.Rgross * (1 - V.costRate);
+      const VrefRent = pv2Stage(Rref, k, g, V.gTerm, V.years, V.termMinSpread).v;
+      // §N3 일반: 단순 비례 — 별도 보정계수 금지
+      rel = { type: 'flagship', Pref, Rref, VrefRent, refResid: (Pref - VrefRent) / Pref,
+        Vrel: Pref * (R / Rref), refItems: [it], refScope: flagship.scope };
+    }
+    if (rel && rel.Vrel != null) {
+      rel.residRel = P - rel.Vrel;                       // 잔여_상대 = 고유 프리미엄
+      rel.residRelPct = Math.round(rel.residRel / P * 100);
+      rel.inherited = resid - rel.residRel;              // 물려받은 몫 = 잔여_절대 − 잔여_상대
+      rel.ownLow = rel.residRel < 0;                     // 음수 → '기준 대비 저평가'
+      rel.ratioActual = P / rel.Pref;
+      rel.ratioTheo = rel.Vrel / rel.Pref;
+      rel.gapPp = Math.round((rel.ratioActual - rel.ratioTheo) * 100);
+      rel.refWarn = rel.refResid > 0.4;                  // 기준점 자체 검증 경고
+    }
     // STEP 7 — 과거 실적 (전세 보증금 기준 — 과거·현재 같은 방식)
     let histOut = null;
     if (hist) {
@@ -2008,7 +2100,7 @@ const AptEngine = (() => {
       Rgross, R, costRate: V.costRate,
       k, g, gTerm: V.gTerm, years: V.years,
       events, O, Vrent, Vfair,
-      rb, rbAdopted, rbDiff, wf, residRentOnly,
+      rb, rbAdopted, rbDiff, wf, residRentOnly, rel,
       resid, residPct, residNone: resid <= 0,
       layers,
       gReq: gq ? gq.g : null, gReqSat: gq ? gq.saturated : null,
@@ -2038,7 +2130,7 @@ const AptEngine = (() => {
     attractSentence, oneLinerV2, stationTier, stationReason, futureSplit, fulfillmentOf, validateUserEdits,
     eduScoreFromComponents, eduZoneScore, matchEduZone, eduDetailOf, priceContributions,
     pv2Stage, engineDecompose, residualLite,
-    engineV4, v4RentBasis, v4Events, v4TransitBucket, v4OptionPV, v4FairAt, v4SolveG, v4NearbyNew, v4RebuildAt, kaptGroupHouseholds, kaptResolve
+    engineV4, v4RentBasis, v4Events, v4TransitBucket, v4OptionPV, v4FairAt, v4SolveG, v4NearbyNew, v4RebuildAt, v4Flagship, kaptGroupHouseholds, kaptResolve
   };
 })();
 

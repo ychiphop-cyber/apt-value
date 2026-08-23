@@ -121,10 +121,13 @@ t('비관 < 보수 < 낙관 · 보수는 확정 호재만', () => {
 /* ── 카피 규칙 (§8) ── */
 t('ui.js 금지어 0건 — 신뢰도·고평가·저평가·점수·등급', () => {
   const ui = fs.readFileSync(path.join(__dirname, '../src/ui.js'), 'utf8');
-  for (const w of ['신뢰도', '고평가', '저평가', '점수', '등급']) {
+  for (const w of ['신뢰도', '고평가', '점수', '등급']) {
     const n = (ui.match(new RegExp(w, 'g')) || []).length;
     assert.strictEqual(n, 0, `'${w}' ${n}건`);
   }
+  // '저평가'는 단독 판정으로는 금지 — v4.2 §N4가 명시 요구한 '…대비 (—) 저평가' 관용구만 허용
+  const bad = (ui.match(/저평가/g) || []).length - (ui.match(/대비\s*(—\s*)?저평가/g) || []).length;
+  assert.strictEqual(bad, 0, `'저평가' 단독 판정 ${bad}건`);
 });
 t('head.html 금지어 0건', () => {
   const h = fs.readFileSync(path.join(__dirname, '../src/head.html'), 'utf8');
@@ -237,6 +240,63 @@ t('v4NearbyNew — 준공 7년 이내만 · 3개 미만이면 구 확대 표기'
   assert.ok(nb && nb.scope === 'gu', '같은 동 신축 2곳뿐 → 구 확대');
   assert.ok(!nb.items.some(i => i.name === '구축D'), '준공 7년 초과 제외');
   assert.strictEqual(nb.items.length, 3);
+});
+
+/* ═══ 두 기준 병행 (PRD 추가분 v4.2 — STEP N1~N5) ═══ */
+t('은마 상대 검산 (§N4) — 잔여_상대 15%·물려받은 17%p (±2%p)', () => {
+  // 절대: v4.1 검산 그대로 → 잔여 8.9억(32%) / 상대: 같은 함수에 V_new 자리만 신축 실거래 42억
+  const abs = E.v4RebuildAt(0.2367, 0.74, 0.043, 0.034, 5.0, 0.80, 10, CFG);
+  const rr = E.v4RebuildAt(0.2367, 0.74, 0.043, 0.034, 5.0, 0.80, 10, CFG, 42.0);
+  const residAbs = (28.0 - abs.Vrebuild) / 28.0 * 100;
+  const residRel = (28.0 - rr.Vrebuild) / 28.0 * 100;
+  assert.ok(Math.abs(rr.Vrebuild - 23.7) < 0.35, 'V_rel ' + rr.Vrebuild.toFixed(2) + ' (PRD 23.7)');
+  assert.ok(residRel >= 13 && residRel <= 17, '잔여_상대 ' + residRel.toFixed(1) + '% (15±2)');
+  assert.ok((residAbs - residRel) >= 15 && (residAbs - residRel) <= 19, '물려받은 몫 ' + (residAbs - residRel).toFixed(1) + '%p (17±2)');
+});
+t('engineV4 재건축 채택 → rel(신축 실거래 기준) + refResid 항상 산출', () => {
+  const nb = NB(0.74);
+  nb.avgDeal = 42; nb.dealN = 1;
+  const v = runRb(nb);
+  assert.ok(v.rel && v.rel.type === 'newbuild');
+  assert.ok(isFinite(v.rel.refResid), '기준점 자체 검증(잔여율_ref) 산출');
+  assert.ok(Math.abs(v.rel.inherited - (v.resid - v.rel.residRel)) < 1e-9, '물려받은 = 잔여_절대 − 잔여_상대');
+  assert.ok(Math.abs(v.rel.ratioActual - v.P / 42) < 1e-9 && Math.abs(v.rel.ratioTheo - v.rel.Vrel / 42) < 1e-9);
+});
+t('기준점 잔여율 > 40% → 경고 플래그', () => {
+  const nb = NB(0.5);          // 신축 임대가치 낮음 + 실거래 42 → refResid 큼
+  nb.avgDeal = 42; nb.dealN = 1;
+  const v = runRb(nb);
+  assert.ok(v.rel.refResid > 0.4 && v.rel.refWarn === true);
+});
+t('일반 경로 — V_rel = P_ref × (R / R_ref), 보정계수 없음', () => {
+  const flag = { selfIsFlagship: false, scope: 'dong', item: { name: '대장', dong: '테스트동', builtYear: 2020, m2: 84, deal: { price: 30, ym: '2026-07' }, perM2: 30 / 84, jeonse: 14, Rgross: 0.7 } };
+  const v = E.engineV4(mkCx(), mkArea(), input, CFG, E.repRecentPrice(mkArea(), '2026-08', CFG), null, null, flag);
+  assert.ok(v.rel && v.rel.type === 'flagship');
+  const Rref = 0.7 * (1 - CFG.v4.costRate);
+  assert.ok(Math.abs(v.rel.Vrel - 30 * (v.R / Rref)) < 1e-12, '단순 비례 정확');
+  assert.ok(Math.abs(v.rel.ratioTheo - v.R / Rref) < 1e-9, '이론비율 = R/R_ref');
+});
+t('고유 프리미엄 음수 → 기준 대비 저평가 플래그 (음수 % 노출 금지 데이터)', () => {
+  // 대장 임대료가 자기보다 조금만 높고 시세는 훨씬 높음 → V_rel > P
+  const flag = { selfIsFlagship: false, scope: 'dong', item: { name: '대장', dong: '테스트동', builtYear: 2020, m2: 84, deal: { price: 60, ym: '2026-07' }, perM2: 60 / 84, jeonse: 12, Rgross: 0.6 } };
+  const v = E.engineV4(mkCx(), mkArea(), input, CFG, E.repRecentPrice(mkArea(), '2026-08', CFG), null, null, flag);
+  assert.ok(v.rel.residRel < 0 && v.rel.ownLow === true);
+});
+t('자기 자신이 대장 → ② 생략 (type self)', () => {
+  const v = E.engineV4(mkCx(), mkArea(), input, CFG, E.repRecentPrice(mkArea(), '2026-08', CFG), null, null, { selfIsFlagship: true, scope: 'dong' });
+  assert.ok(v.rel && v.rel.type === 'self' && v.rel.Vrel == null);
+});
+t('v4Flagship — 준공 10년·6개월 실거래·㎡당 최고 · 자기 대장 감지', () => {
+  const mk = (name, dong, by, price, jr) => [name, { name, dong, builtYear: by, tradeCount: 5, areas: { 84: { m2: 84, trades: [{ ym: '2026-07', d: 5, price, floor: 9 }], jeonseRaw: jr, jeonse: { v: jr[0].v, n: 1, windowMo: 6 } } } }];
+  const cxs = Object.fromEntries([
+    mk('신축비쌈', '같은동', 2020, 30, [{ ym: '2026-07', v: 14 }]),
+    mk('신축저렴', '같은동', 2022, 22, [{ ym: '2026-07', v: 11 }]),
+    mk('구축', '같은동', 2010, 35, [{ ym: '2026-07', v: 12 }])
+  ]);
+  const f1 = E.v4Flagship(cxs, new Set(['자기']), '같은동', '2026-08', 0.047, CFG, 0.2);
+  assert.ok(f1 && !f1.selfIsFlagship && f1.item.name === '신축비쌈', '10년 초과(구축) 제외 + ㎡당 최고 선택');
+  const f2 = E.v4Flagship(cxs, new Set(['신축비쌈']), '같은동', '2026-08', 0.047, CFG, 0.2);
+  assert.ok(f2 && f2.selfIsFlagship, '자기 자신이 대장');
 });
 
 console.log(`v4screen.js  ${pass} pass / ${fail.length} fail`);

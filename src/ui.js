@@ -5,7 +5,7 @@
    단지 소스 3종: ① 상세 프로필 샘플(DATA) ② 실거래 자동수집(data/live/*)
                  ③ 직접 입력
    ═══════════════════════════════════════════════════════════════════ */
-const APP_VERSION = '5.1.0';
+const APP_VERSION = '5.2.0';
 if (typeof ANCH !== 'undefined') HUBS.anchors = ANCH;   // Anchor Academy Index (§6) — 엔진에서 참조
 const DEBUG_MODE = /[?&]debug=true/.test(location.search);
 const $ = id => document.getElementById(id);
@@ -558,6 +558,8 @@ async function runAnalysis() {
       // 재건축 이중 경로용 인근 신축 전월세 (모든 단지 공통 — 신축은 자연히 현 상태 경로가 이긴다)
       if (histCode && LIVE.status === 'ready' && !LIVE.shards[histCode]) { try { await getShard(histCode); } catch (e) {} }
       state.baseInput.nearbyNew = histCode ? nearbyNewOf(histCode, state.baseInput.complex, state.baseInput.asOfYM) : null;
+      // 두 기준 병행(§N1): 생활권 대장 아파트 — 일반 단지의 ② 상대 기준
+      state.baseInput.flagship = histCode ? flagshipOf(histCode, state.baseInput.complex, state.baseInput.asOfYM, areaKeyForHist) : null;
       state.result = AptEngine.analyze(state.baseInput, CFG, HUBS, JOBS, STN);
       $('loading').style.display = 'none';
       renderReport(state.result);
@@ -627,7 +629,17 @@ function nearbyNewOf(code, cx, asOfYM, extraSelfNames) {
     for (const m of (state.liveSel.entry.mergedFrom || [])) selfNames.add(m);
   }
   const conv = cx.conversionRate || region.conv || CFG.financial.defaultConversionRate;
-  return AptEngine.v4NearbyNew(LIVE.shards[code].complexes, selfNames, cx.dong, asOfYM, conv, CFG);
+  return AptEngine.v4NearbyNew(LIVE.shards[code].complexes, selfNames, cx.dong, asOfYM, conv, CFG, kaptHHOf(code));
+}
+
+/* K-apt 세대수 조회기 (나홀로 소규모 필터용 — 샤드 미로드·미확인이면 null) */
+function kaptHHOf(code) {
+  return name => {
+    const info = KAPT.shards[code];
+    if (!info) return null;
+    const rec = AptEngine.matchKaptInfo(info, name, null);
+    return rec ? rec.households : null;
+  };
 }
 
 /* ── 인근 단지 비교 (§D) — 같은 시군구 거래 상위 단지에 같은 잣대 적용.
@@ -933,6 +945,282 @@ function v4FairHtml(r, bm) {
     ${vNbr != null ? `<div class="srow"><span class="s-l">인근 평균만큼 기대받는다면<small>연 ${fmtG(bm.gNbr)}</small></span><span class="s-r num">${fmtEok(vNbr)}</span></div>` : ''}
     <div class="srow now"><span class="s-l">${v.manualPrice ? '입력하신 시세' : '최근 실거래'}<small>${needSub}</small></span><span class="s-r num">${fmtEok(v.P)}</span></div>
     <div class="readout">${readout}</div>
+  </div>`;
+}
+
+
+/* ═══ 두 기준 병행 (v4.2 §N) — ① 임대료 절대 기준 · ② 기준 단지 상대 기준 ═══ */
+function flagshipOf(code, cx, asOfYM, areaKey) {
+  if (!code || LIVE.status !== 'ready' || !LIVE.shards[code]) return null;
+  const region = regionOf(code);
+  if (!region) return null;
+  const selfNames = new Set([cx.name].filter(Boolean));
+  if (state.liveSel && state.liveSel.entry) {
+    selfNames.add(state.liveSel.entry.name);
+    for (const m of (state.liveSel.entry.mergedFrom || [])) selfNames.add(m);
+  }
+  const conv = cx.conversionRate || region.conv || CFG.financial.defaultConversionRate;
+  const a = cx.areas.find(x => x.key === areaKey) || cx.areas[0];
+  const bt = a && (a.trades || [])[0];
+  const selfPerM2 = bt && a.m2 > 0 ? bt.price / a.m2 : 0;
+  return AptEngine.v4Flagship(LIVE.shards[code].complexes, selfNames, cx.dong, asOfYM, conv, CFG, selfPerM2, kaptHHOf(code));
+}
+
+/* A+B+C — 두 기준 카드 + 차이 해석 박스 + 프리미엄 분해 3행 */
+function v4TwoStdHtml(r) {
+  const v = r.v4, rel = v.rel, cx = r.cx;
+  if (rel.type === 'self') {
+    return `
+  <div class="card v4card">
+    <div class="eyebrow">두 개의 자로 재봅니다</div>
+    <h2>이 생활권의 대장 단지입니다</h2>
+    <div class="lede">기준 단지와의 상대 비교(②)는 이 단지 자신이 기준이라 생략합니다.
+      ${esc(cx.dong || cx.district || '이 생활권')}에서 준공 10년 이내·실거래 기준 ㎡당 가격이 가장 높은 단지입니다.
+      가격이 무리한지는 위의 임대료 기준(①)으로 보십시오 — 대장 단지는 생활권 프리미엄을 만드는 쪽이지 물려받는 쪽이 아닙니다.</div>
+  </div>`;
+  }
+  const isRb = rel.type === 'newbuild';
+  const refName = isRb ? `인근 신축 ${rel.refItems.length}곳` : esc(rel.refItems[0].name);
+  const zone = esc(cx.dong || cx.district || '이 지역');
+  const ownAbs = Math.abs(rel.residRel);
+  const chain = `
+    <div class="chain">
+      <div class="crow"><span class="cl">설명 안 되는 부분 (임대료 기준)<small>${Math.max(0, v.residPct)}% · ${fmtEok(Math.max(0, v.resid))}</small></span><span class="cv num">${fmtEok(Math.max(0, v.resid))}</span></div>
+      <div class="crow"><span class="cl">− 기준 단지에서 물려받은 몫<small>기준 단지의 ${Math.round(rel.refResid * 100)}% 프리미엄이 넘어온 부분</small></span><span class="cv num" style="color:var(--l-minus)">−${fmtEok(rel.inherited)}</span></div>
+      <div class="crow hi"><span class="cl">= 이 단지 고유 프리미엄</span><span class="cv num">${rel.ownLow ? `기준 대비 저평가 ${fmtEok(ownAbs)}` : `${fmtEok(rel.residRel)} · ${rel.residRelPct}%`}</span></div>
+    </div>`;
+  return `
+  <div class="card v4card">
+    <div class="eyebrow">두 개의 자로 재봅니다</div>
+    <h2>${esc(cx.name)} ${fmtEok(v.P)} — 어느 자로 재느냐</h2>
+    <div class="lede">임대료로 재면 <b>이 시장 전체가 비싼지</b> 알 수 있고, ${isRb ? '인근 신축으로' : '생활권 대장 단지로'} 재면
+      <b>이 입지에서 이 단지를 고르는 게 맞는지</b> 알 수 있습니다. 묻는 질문이 다르므로 둘 다 봅니다.</div>
+    <div class="two">
+      <div class="std a">
+        <div class="q">① 임대료로 재면<br>"시장 전체가 비싼가"</div>
+        <div class="v num">${fmtEok(v.Vfair)}</div>
+        <div class="r">설명 안 됨 <b>${v.residNone ? '없음' : Math.max(0, v.residPct) + '%'}</b></div>
+        <div class="base">${isRb ? `인근 신축 임대료(전세 ${v.rb.nearby.avgJeonse != null ? v.rb.nearby.avgJeonse + '억' : '기준'})로 계산` : `이 단지 임대료(연 ${fmtMan(v.Rgross * 10000)})로 계산`}</div>
+      </div>
+      <div class="std b">
+        <div class="q">② ${isRb ? '신축 시세로' : '대장 시세로'} 재면<br>"이 입지에서 맞나"</div>
+        <div class="v num">${fmtEok(rel.Vrel)}</div>
+        <div class="r">${rel.ownLow ? '<b>기준 대비 저평가</b>' : `설명 안 됨 <b>${rel.residRelPct}%</b>`}</div>
+        <div class="base">${refName} 실거래 ${fmtEok(rel.Pref)} 기준</div>
+      </div>
+    </div>
+    <div class="gapbox">
+      <div class="t">두 값의 차이 ${fmtEok(Math.abs(rel.Vrel - v.Vfair))}이 뜻하는 것</div>
+      <div class="d">${isRb
+        ? `인근 신축(${rel.refItems.map(i => esc(i.name)).join(' · ')})은 평균 <b>${fmtEok(rel.Pref)}</b>인데, 그 단지들의 임대료로 계산하면 <b>${fmtEok(rel.VrefRent)}</b>입니다.
+           <b>신축 자체도 ${Math.round(rel.refResid * 100)}%가 설명되지 않습니다.</b><br><br>
+           ${esc(cx.name)}은 그 신축의 미래 소유권을 사는 것이므로 <b>그 프리미엄을 그대로 물려받습니다.</b>
+           ${fmtEok(rel.inherited)}이 바로 물려받은 몫입니다.`
+        : `대장 단지(${esc(rel.refItems[0].name)})는 <b>${fmtEok(rel.Pref)}</b>인데, 그 임대료로 계산하면 <b>${fmtEok(rel.VrefRent)}</b>입니다.
+           <b>대장 자체도 ${Math.round(rel.refResid * 100)}%가 설명되지 않습니다.</b><br><br>
+           이 프리미엄은 ${zone} 생활권 가격 수준에 들어 있는 몫이라, 이 단지 가격에도 같은 비중으로 스며 있습니다.`}</div>
+    </div>
+    ${rel.refWarn ? `<p class="subtle" style="margin-top:10px">⚠ 기준 단지도 임대료 대비 비싼 상태입니다(설명 안 됨 ${Math.round(rel.refResid * 100)}%). ②는 참고용으로만 보십시오.</p>` : ''}
+    ${chain}
+    <div class="readout">${zone} ${isRb ? '신축이' : '대장 단지가'} 비싼 것과, ${esc(cx.name)}이 그중에서도 비싼 것은 <b>다른 문제</b>입니다.
+      전자는 시장 전체의 문제이고, 후자만 단지 선택으로 피할 수 있습니다.</div>
+  </div>`;
+}
+
+/* D — 피어 비교 표: 재건축은 레지스트리(비동기), 일반은 같은 구 단지 vs 대장 */
+function v4PeerHtml(r) {
+  const v = r.v4;
+  if (v.rel.type === 'newbuild') {
+    return `
+  <div class="card v4card" id="peerCard">
+    <div class="eyebrow">정비 단계가 확인된 재건축 단지</div>
+    <h2>인근 신축 대비 몇 %에 사고 있나</h2>
+    <div class="lede">재건축 단지의 종착점은 인근 신축입니다. 그래서 <b>신축 가격의 몇 %에 사느냐</b>가 곧 기다림의 값입니다.
+      단계가 앞설수록 비율이 높아야 정상입니다.</div>
+    <div id="peerFill"><p class="subtle">다른 지역 실거래를 불러와 계산 중…</p></div>
+  </div>`;
+  }
+  const pr = v4PeerNormalRows(r);
+  if (!pr || pr.rows.length < 3) return '';
+  const cls = g => g <= 5 ? 'lo' : g <= 15 ? 'mid' : 'hi';
+  const rows = pr.rows.map(x => `
+    <tr class="${x.self ? 'me' : ''}"><td>${esc(x.name)}${x.self ? '<small>이 단지</small>' : ''}</td>
+    <td>${fmtEok(x.P)}</td><td>${Math.round(x.actual * 100)}%</td><td>${Math.round(x.theo * 100)}%</td>
+    <td class="pm ${cls(x.gap)}">${x.gap >= 0 ? '+' : '−'}${Math.abs(x.gap)}%p</td></tr>`).join('');
+  const selfRow = pr.rows.find(x => x.self);
+  return `
+  <div class="card v4card">
+    <div class="eyebrow">${esc(pr.region)} 거래 상위 단지</div>
+    <h2>대장 대비 몇 %에 사고 있나</h2>
+    <div class="lede">기준: ${esc(pr.refName)} ${fmtEok(v.rel.Pref)}. 실제 비율과 임대료가 말하는 이론 비율(임대료 비례)의 차이가
+      <b>그 단지 고유 프리미엄</b>입니다.</div>
+    <div class="tblwrap"><table class="peer">
+      <tr><th>단지</th><th>시세</th><th>실제</th><th>이론</th><th>차이</th></tr>${rows}</table></div>
+    <div class="readout">이 단지는 <b>${selfRow.gap >= 0 ? '+' : '−'}${Math.abs(selfRow.gap)}%p</b>${selfRow.gap <= 5 ? ' — 임대료가 말하는 자리 부근에서 거래됩니다' : selfRow.gap <= 15 ? ' — 중간 수준입니다' : ' — 임대료 대비 프리미엄이 큰 편입니다'}.</div>
+  </div>`;
+}
+function v4PeerNormalRows(r) {
+  const v = r.v4;
+  const code = state.liveSel ? state.liveSel.code : r.cx.regionCode;
+  if (!code || !LIVE.shards[code]) return null;
+  const region = regionOf(code);
+  const conv = region.conv || CFG.financial.defaultConversionRate;
+  const flagName = v.rel.refItems[0].name;
+  const selfNames = new Set([r.cx.name, state.liveSel && state.liveSel.entry ? state.liveSel.entry.name : null].filter(Boolean));
+  const rows = [];
+  for (const e of Object.values(LIVE.shards[code].complexes)) {
+    if (e.name === flagName) continue;
+    let best = null;
+    for (const [k2, a] of Object.entries(e.areas || {})) {
+      const dd = Math.abs((a.m2 || Number(k2) || 84) - 84);
+      if (dd > 12) continue;
+      const bt = (a.trades || [])[0];
+      if (!bt || AptEngine.monthsBetween(state.baseInput.asOfYM, bt.ym) > 6) continue;
+      if (!(a.jeonseRaw || []).length && !(a.jeonse && a.jeonse.v > 0)) continue;
+      if (!best || dd < best.dd) best = { a, dd, bt };
+    }
+    if (!best) continue;
+    const basis = AptEngine.v4RentBasis({
+      jeonseRaw: best.a.jeonseRaw || [], wolseRaw: best.a.wolseRaw || [],
+      jeonse: best.a.jeonse ? best.a.jeonse.v : null, jeonseMeta: best.a.jeonse || null
+    }, { overrides: {} }, CFG, state.baseInput.asOfYM);
+    if (!basis.jeonse && !basis.wolse) continue;
+    const Rj = basis.jeonse ? basis.jeonse.v * conv : null;
+    const Rw = basis.wolse ? basis.wolse.dep * conv + basis.wolse.mr * 12 / 10000 : null;
+    const Rg = Math.max(Rj ?? -1, Rw ?? -1);
+    if (!(Rg > 0)) continue;
+    rows.push({
+      name: e.name, self: selfNames.has(e.name), P: best.bt.price, t: e.tradeCount || 0,
+      actual: best.bt.price / v.rel.Pref, theo: Rg * (1 - CFG.v4.costRate) / v.rel.Rref
+    });
+  }
+  const selfRow = rows.find(x => x.self) || { name: r.cx.name, self: true, P: v.P, actual: v.rel.ratioActual, theo: v.rel.ratioTheo, t: Infinity };
+  const others = rows.filter(x => !x.self).sort((a, b) => b.t - a.t).slice(0, 6);
+  const out = [selfRow, ...others].map(x => ({ ...x, gap: Math.round((x.actual - x.theo) * 100) }));
+  out.sort((a, b) => a.gap - b.gap);
+  return { rows: out, refName: flagName, region: region.name };
+}
+async function fillRebuildPeers(r) {
+  const el = $('peerFill');
+  if (!el) return;
+  const v = r.v4, V = CFG.v4, RB = V.rebuild;
+  const asOf = state.baseInput.asOfYM;
+  const selfEntryName = state.liveSel && state.liveSel.entry ? state.liveSel.entry.name : r.cx.name;
+  const rows = [];
+  for (const p of ((typeof PEERS !== 'undefined' && PEERS.peers) || [])) {
+    try {
+      const shard = await getShard(p.region);
+      try { await getKaptInfo(p.region); } catch (e) {}
+      const norm = AptEngine.normNameK;
+      const entry = Object.values(shard.complexes).find(e => e.dong === p.dong && norm(e.name).includes(norm(p.search)))
+        || Object.values(shard.complexes).find(e => norm(e.name).includes(norm(p.search)));
+      if (!entry) continue;
+      let best = null;
+      for (const [k2, a] of Object.entries(entry.areas || {})) {
+        const dd = Math.abs((a.m2 || Number(k2) || 84) - 84);
+        if (dd > 12) continue;
+        const bt = (a.trades || [])[0];
+        if (!bt || AptEngine.monthsBetween(asOf, bt.ym) > 12) continue;
+        if (!best || dd < best.dd) best = { a, dd, bt };
+      }
+      if (!best) continue;
+      const region = regionOf(p.region);
+      const conv = region.conv || CFG.financial.defaultConversionRate;
+      const basis = AptEngine.v4RentBasis({
+        jeonseRaw: best.a.jeonseRaw || [], wolseRaw: best.a.wolseRaw || [],
+        jeonse: best.a.jeonse ? best.a.jeonse.v : null, jeonseMeta: best.a.jeonse || null
+      }, { overrides: {} }, CFG, asOf);
+      if (!basis.jeonse && !basis.wolse) continue;
+      const Rj = basis.jeonse ? basis.jeonse.v * conv : null;
+      const Rw = basis.wolse ? basis.wolse.dep * conv + basis.wolse.mr * 12 / 10000 : null;
+      const Rg = Math.max(Rj ?? -1, Rw ?? -1);
+      if (!(Rg > 0)) continue;
+      const nb = AptEngine.v4NearbyNew(shard.complexes, new Set([entry.name]), entry.dong, asOf, conv, CFG, kaptHHOf(p.region));
+      if (!nb || !(nb.avgDeal > 0)) continue;
+      const bucket = RB.stages[RB.stageMap[p.stage] || 'promotion'];
+      const rr = AptEngine.v4RebuildAt(Rg * (1 - V.costRate), nb.avgRgross, V.k, V.gBase, RB.defaultContribution, bucket.p, bucket.y, CFG, nb.avgDeal);
+      rows.push({
+        name: p.name, stage: bucket.label, y: bucket.y, P: best.bt.price, Pref: nb.avgDeal,
+        actual: best.bt.price / nb.avgDeal, theo: rr.Vrebuild / nb.avgDeal,
+        self: norm(entry.name) === norm(selfEntryName)
+      });
+    } catch (e) {}
+  }
+  if (!rows.some(x => x.self) && v.rel && v.rel.type === 'newbuild') {
+    rows.push({ name: r.cx.name, stage: v.rb.stageLabel, y: v.rb.y, P: v.P, Pref: v.rel.Pref, actual: v.rel.ratioActual, theo: v.rel.ratioTheo, self: true });
+  }
+  if (rows.length < 2) { el.innerHTML = '<p class="subtle">비교할 다른 재건축 단지 데이터를 불러오지 못했습니다.</p>'; return; }
+  const out = rows.map(x => ({ ...x, gap: Math.round((x.actual - x.theo) * 100) })).sort((a, b) => a.gap - b.gap);
+  const cls = g => g <= 5 ? 'lo' : g <= 15 ? 'mid' : 'hi';
+  const tr = out.map(x => `
+    <tr class="${x.self ? 'me' : ''}"><td>${esc(x.name)}<small>${esc(x.stage)} · ${x.y}년</small></td>
+    <td>${fmtEok(x.P)}</td><td>${fmtEok(x.Pref)}</td><td>${Math.round(x.actual * 100)}%</td><td>${Math.round(x.theo * 100)}%</td>
+    <td class="pm ${cls(x.gap)}">${x.gap >= 0 ? '+' : '−'}${Math.abs(x.gap)}%p</td></tr>`).join('');
+  const selfRow = out.find(x => x.self);
+  const spread = out[out.length - 1].gap - out[0].gap;
+  el.innerHTML = `
+    <div class="tblwrap"><table class="peer">
+      <tr><th>단지</th><th>시세</th><th>인근<br>신축</th><th>실제<br>비율</th><th>이론<br>비율</th><th>차이</th></tr>${tr}</table></div>
+    ${spread >= 10 ? `<div class="punch">실제 비율은 비슷한데 이론 비율은 단계 따라 벌어집니다.<br>시장은 <b>'언젠가는 된다'를 단계와 거의 무관하게</b> 매기고 있습니다.</div>` : ''}
+    <div class="readout">${selfRow ? `이 단지는 <b>${selfRow.gap >= 0 ? '+' : '−'}${Math.abs(selfRow.gap)}%p</b>로 ${selfRow.gap <= Math.min(...out.map(x => x.gap)) + 3 ? '가장 낮은 축' : selfRow.gap >= Math.max(...out.map(x => x.gap)) - 3 ? '가장 높은 축' : '중간'}입니다. 단계 대비로 보면 ${Math.abs(selfRow.gap) <= 15 ? '특별히 튀는 가격은 아닙니다' : '프리미엄이 큰 편입니다'}.` : ''}
+    <br><span class="subtle">기준 신축·시세는 각 단지 실거래에서 계산 · 분담금은 공통 기본값 ${RB.defaultContribution}억 · 정비 단계가 공개 확인된 단지만 표에 올립니다.</span></div>`;
+}
+
+/* E — 종합 판단: 세 기준을 나란히, 합치지 않는다 */
+function v4VerdictHtml(r) {
+  const v = r.v4, rel = v.rel, cx = r.cx;
+  const zone = esc(cx.dong || cx.district || '이 지역');
+  const rows = [];
+  const rp = Math.max(0, v.residPct);
+  if (v.residNone || rp <= 15) rows.push({ ok: true, t: '임대료 기준 — 설명되는 가격입니다', d: v.residNone ? '가격 전체가 임대료와 소득 상승으로 설명됩니다.' : `설명되지 않는 비중이 ${rp}%로 낮은 편입니다.` });
+  else if (rp <= 30) rows.push({ ok: false, t: '임대료 기준 — 부담이 있습니다', d: `가격의 ${rp}%가 임대료로 설명되지 않습니다.` });
+  else rows.push({ ok: false, t: '임대료 기준 — 비쌉니다', d: `가격의 ${rp}%가 임대료로 설명되지 않습니다. ${zone} 시장 전체가 임대료 대비 비싼 상태이고, 이 단지도 예외가 아닙니다.` });
+  if (rel.type === 'self') rows.push({ ok: true, t: '기준 대비 — 이 생활권 대장 단지입니다', d: '상대 비교의 기준 자체가 이 단지입니다.' });
+  else if (rel.ownLow) rows.push({ ok: true, t: `${rel.type === 'newbuild' ? '신축' : '대장'} 대비 — 저평가입니다`, d: `기준 단지 임대료 비례보다 낮게 거래됩니다. 절대 기준과 반대 신호일 수 있으며, 오류가 아니라 정보입니다.` });
+  else if (rel.gapPp <= 15) rows.push({ ok: true, t: `${rel.type === 'newbuild' ? '신축' : '대장'} 대비 — 제자리입니다`, d: `기준 단지의 ${Math.round(rel.ratioActual * 100)}%에 사는 셈입니다. ${rel.type === 'newbuild' ? '단계와 기다림을 감안한' : '임대료가 말하는'} 이론값 ${Math.round(rel.ratioTheo * 100)}%보다 ${rel.gapPp}%p 높지만, 크게 튀지 않습니다.` });
+  else rows.push({ ok: false, t: `${rel.type === 'newbuild' ? '신축' : '대장'} 대비 — 비쌉니다`, d: `이론값 ${Math.round(rel.ratioTheo * 100)}% 대비 ${rel.gapPp}%p 높게 거래됩니다.` });
+  if (v.hist && v.gReq != null) {
+    const inFlow = v.gReq - v.hist.g <= 0.01;
+    rows.push(inFlow
+      ? { ok: true, t: '지난 10년 — 흐름 안에 있습니다', d: `${v.hist.src === 'self' ? '이 단지' : '이 지역'} 임대료는 연 ${fmtG(v.hist.g)} 올랐고, 지금 가격이 요구하는 건 연 ${v.gReqSat === 'high' ? (v.gReq * 100).toFixed(0) + '% 이상' : fmtG(v.gReq)}입니다.` }
+      : { ok: false, t: '지난 10년 — 과거보다 더 요구합니다', d: `실적 연 ${fmtG(v.hist.g)} 대비 지금 가격은 연 ${v.gReqSat === 'high' ? (v.gReq * 100).toFixed(0) + '% 이상' : fmtG(v.gReq)}을 요구합니다.` });
+  }
+  const oks = rows.filter(x => x.ok).length;
+  const punch = oks === rows.length
+    ? `${rows.length}가지 자가 같은 방향입니다 — 기준들 사이에서 무리가 없는 가격 구간입니다.`
+    : oks === 0
+      ? `${rows.length}가지 자가 모두 부담을 가리킵니다 — 어느 기준으로도 설명이 빠듯한 가격입니다.`
+      : `답이 엇갈립니다. 이건 모형의 오류가 아니라 <b>정보</b>입니다.<br>${zone} ${rel.type === 'newbuild' ? '신축' : '대장 단지'}이 비싼 것에 동의한다면 이 단지는 ${rel.ownLow || rel.gapPp <= 15 ? '제자리이고' : '그래도 비싸고'},<br>동의하지 않는다면 이 단지도 함께 비쌉니다.`;
+  return `
+  <div class="card v4card">
+    <div class="eyebrow">${rows.length}가지 자를 겹쳐보면</div>
+    <h2>${esc(cx.name)} ${fmtEok(v.P)}에 대한 ${rows.length}가지 답</h2>
+    ${rows.map(x => `<div class="verdict"><span class="vmark ${x.ok ? 'ok' : 'warn'}">${x.ok ? '✓' : '!'}</span>
+      <span class="vtxt"><b>${esc(x.t)}</b>${x.d}</span></div>`).join('')}
+    <div class="punch">${punch}</div>
+    <div class="readout"><b>고르는 질문이 다릅니다.</b><br><br>
+      '부동산을 살까 말까'를 묻는다면 ① 임대료 기준을 보십시오.<br>
+      '${zone}에서 어느 단지를 살까'를 묻는다면 ② ${rel.type === 'newbuild' ? '신축' : '대장'} 대비를 보십시오.<br><br>
+      대부분의 사람이 실제로 하는 결정은 두 번째입니다.</div>
+  </div>`;
+}
+
+/* F — 두 기준 한계 카드 (본문 노출, 접기 금지) */
+function v4TwoStdLimitsHtml(r) {
+  const v = r.v4, rel = v.rel;
+  const isRb = rel.type === 'newbuild';
+  return `
+  <div class="card v4card">
+    <div class="eyebrow">이 비교가 못 하는 것</div>
+    <div class="lede" style="margin-bottom:0">
+      <b>기준 단지가 비싸면 ②는 그 비쌈을 통과시킵니다.</b> 지금 기준 단지의 설명 안 되는 비중은 ${Math.round(rel.refResid * 100)}%입니다.
+      기준 단지 가격이 30% 부풀려져 있다면 이 비교도 그만큼 관대해집니다. 그래서 ①과 반드시 함께 봐야 합니다.<br><br>
+      ${isRb
+        ? `<b>이론 비율은 분담금·기간 추정에 민감합니다.</b> 표의 이론값은 분담금 ${CFG.v4.rebuild.defaultContribution}억·단계별 기간 가정입니다. 정비사업 속도가 빨라지면 이론값이 올라가 차이가 줄어듭니다.`
+        : `<b>임대료 비례는 상품성 차이를 임대료가 전부 담는다고 가정합니다.</b> 커뮤니티·브랜드처럼 임대료에 덜 잡히는 차이는 이 비례식이 놓칠 수 있습니다.`}<br><br>
+      <b>기준 단지 선정에 따라 답이 바뀝니다.</b> ${isRb
+        ? `같은 생활권 준공 7년 이내 단지 중 거래 상위 ${rel.refItems.length}곳 평균을 쓰며, 목록(${rel.refItems.map(i => esc(i.name)).join(' · ')})을 위에 공개했습니다.`
+        : `같은 생활권 준공 10년 이내 · 최근 6개월 실거래 단지 중 ㎡당 최고가(${esc(rel.refItems[0].name)}, ${rel.refItems[0].builtYear}년 준공, 실거래 ${fmtEok(rel.Pref)})를 쓰며 화면에 공개합니다.`}</div>
   </div>`;
 }
 
@@ -1353,6 +1641,10 @@ function renderReport(r) {
     ${v ? v4HistHtml(r) : ''}
     ${v ? v4NearHtml(r, bm) : ''}
     ${v ? v4FairHtml(r, bm) : ''}
+    ${v && v.rel ? v4TwoStdHtml(r) : ''}
+    ${v && v.rel && v.rel.type !== 'self' ? v4PeerHtml(r) : ''}
+    ${v && v.rel ? v4VerdictHtml(r) : ''}
+    ${v && v.rel && v.rel.type !== 'self' ? v4TwoStdLimitsHtml(r) : ''}
     ${v ? v4AdjustHtml(r) : ''}
     ${v && v.rbAdopted ? v4RebuildLimitsHtml(r) : ''}
     ${v4BeyondHtml(r)}
@@ -1389,6 +1681,7 @@ function renderReport(r) {
   </div>`;
 
   if (v) wireV4Adjust(r);
+  if (v && v.rel && v.rel.type === 'newbuild') fillRebuildPeers(r);
   const bs = $('btn-stn');
   if (bs) bs.onclick = () => {
     const panel = $('stnpanel');

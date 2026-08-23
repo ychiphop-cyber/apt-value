@@ -1506,11 +1506,13 @@
         }
       ],
       "nearby": {
-        "maxAgeYears": 7,
+        "maxAgeYears": 12,
         "minN": 3,
         "topN": 3,
-        "m2Tolerance": 12
-      }
+        "m2Tolerance": 12,
+        "minHouseholds": 300
+      },
+      "nearbyNote": "신축·준신축(12년 이내) — v4.2 예시(래미안대치팰리스 11년차)와 정합. 세대수 300 미만 확인 시 나홀로 제외(미확인은 유지)"
     }
   }
 }

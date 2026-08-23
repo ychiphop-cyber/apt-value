@@ -19,7 +19,8 @@ const consts = [
   `const LINEI=${JSON.stringify(JSON.parse(R('data/line_intelligence.json')))};`,
   `const DONG=${JSON.stringify(JSON.parse(R('data/dong_stations.json')))};`,
   `const RAIL_LINES=${JSON.stringify(JSON.parse(R('data/rail_network.json')).lines)};`,
-  `const ALIASES=${JSON.stringify(JSON.parse(R('data/complex_aliases.json')))};`
+  `const ALIASES=${JSON.stringify(JSON.parse(R('data/complex_aliases.json')))};`,
+  `const PEERS=${JSON.stringify(JSON.parse(R('data/rebuild_peers.json')))};`
 ].join('\n');
 
 const app = head +

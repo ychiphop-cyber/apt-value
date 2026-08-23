@@ -1,0 +1,10 @@
+{
+  "note": "재건축 피어 비교(§N5) 레지스트리 — 정비 단계가 공개 사실로 확인된 단지만 등재. 단계 갱신은 이 파일 수정. 기준 신축·시세는 실거래에서 실시간 계산.",
+  "peers": [
+    { "id": "eunma", "name": "은마", "region": "11680", "dong": "대치동", "search": "은마", "stage": "union", "src": "2023-09 조합설립인가" },
+    { "id": "apgujeong-shinhyundai", "name": "압구정 신현대", "region": "11680", "dong": "압구정동", "search": "신현대12차", "stage": "union", "src": "압구정2구역 2021-04 조합설립인가" },
+    { "id": "jamsil-jugong5", "name": "잠실주공5단지", "region": "11710", "dong": "잠실동", "search": "주공아파트 5단지", "stage": "union", "src": "2013-12 조합설립인가 (보수 기준)" },
+    { "id": "mokdong7", "name": "목동신시가지7단지", "region": "11470", "dong": "목동", "search": "목동신시가지7", "stage": "safety_check", "src": "안전진단 통과" },
+    { "id": "sunae-yangji", "name": "수내 양지마을", "region": "41135", "dong": "수내동", "search": "양지마을", "stage": "zone_designated", "src": "1기 신도시 선도지구" }
+  ]
+}
