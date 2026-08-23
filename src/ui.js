@@ -5,7 +5,7 @@
    단지 소스 3종: ① 상세 프로필 샘플(DATA) ② 실거래 자동수집(data/live/*)
                  ③ 직접 입력
    ═══════════════════════════════════════════════════════════════════ */
-const APP_VERSION = '5.0.0';
+const APP_VERSION = '5.1.0';
 if (typeof ANCH !== 'undefined') HUBS.anchors = ANCH;   // Anchor Academy Index (§6) — 엔진에서 참조
 const DEBUG_MODE = /[?&]debug=true/.test(location.search);
 const $ = id => document.getElementById(id);
