@@ -149,7 +149,10 @@ function mergeMonth(shard, ymd, trades, rents, opts) {
   for (const cx of Object.values(shard.complexes)) {
     for (const ar of Object.values(cx.areas)) {
       if (replaceTrades) ar.trades = (ar.trades || []).filter(t => t.ym !== ym);
-      if (replaceRents) ar.jeonseRaw = (ar.jeonseRaw || []).filter(r => r.ym !== ym);
+      if (replaceRents) {
+        ar.jeonseRaw = (ar.jeonseRaw || []).filter(r => r.ym !== ym);
+        if (ar.wolseRaw) ar.wolseRaw = ar.wolseRaw.filter(r => r.ym !== ym);
+      }
     }
   }
   const touch = it => {
@@ -172,11 +175,15 @@ function mergeMonth(shard, ymd, trades, rents, opts) {
   }
   for (const it of rents) {
     if (!it.aptNm || !it.m2 || !it.deposit) continue;
-    if (it.monthlyRent) continue;                                  // 순수 전세만 대표값에 사용
-    if (it.contractType && it.contractType.includes('갱신')) continue; // 갱신계약(5% 상한) 제외 — 시세 왜곡 방지
+    if (it.contractType && it.contractType.includes('갱신')) continue; // 갱신계약(5% 상한) 제외 — 시세 왜곡 방지 (전세·월세 공통)
     const ar = touch(it);
-    const rec = { ym: ymOf(it), v: Math.round(it.deposit / 100) / 100 };
-    ar.jeonseRaw.push(rec);
+    if (it.monthlyRent) {
+      // 월세 신규계약 — R = max(전세환산, 월세환산) 채택에 사용 (보증금 억, 월세 만원)
+      if (!ar.wolseRaw) ar.wolseRaw = [];
+      ar.wolseRaw.push({ ym: ymOf(it), dep: Math.round(it.deposit / 100) / 100, mr: Math.round(it.monthlyRent) });
+    } else {
+      ar.jeonseRaw.push({ ym: ymOf(it), v: Math.round(it.deposit / 100) / 100 });
+    }
   }
 }
 
@@ -213,7 +220,11 @@ function finalizeShard(shard, nowYM) {
         ar.jeonse = { v: vs[Math.floor((vs.length - 1) / 2)], n: win.length, windowMo: used };
       } else ar.jeonse = null;
       ar.jeonseRaw = raw.slice(-60);   // 재계산용 원시값 일부 보관
-      if (!ar.trades.length && !ar.jeonseRaw.length) delete cx.areas[ak];
+      if (ar.wolseRaw) {
+        ar.wolseRaw = ar.wolseRaw.filter(r => nowN - ymNum(r.ym) <= 24).slice(-40);
+        if (!ar.wolseRaw.length) delete ar.wolseRaw;
+      }
+      if (!ar.trades.length && !ar.jeonseRaw.length && !(ar.wolseRaw || []).length) delete cx.areas[ak];
     }
     cx.tradeCount = total;
     if (!Object.keys(cx.areas).length) delete shard.complexes[k];

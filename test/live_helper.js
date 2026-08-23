@@ -59,7 +59,7 @@ function prepareLive(id) {
     edits: {}, ovPrice: null, ovJeonse: null, areaKey: null, conv: null,
     asOf: INDEX.meta.updatedAt, stations: STN, hubs: HUBS,
     dongLink: dongLinkFor(e.g, entry.dong),
-    kapt: E.matchKaptInfo(kaptOf(e.g), entry.name, (ALIASES.aliases || {})[id]),
+    kapt: E.kaptResolve(kaptOf(e.g), entry.name, id, ALIASES),
     liveId: id
   });
   return { cx, entry, region: regionOf(e.g), id };

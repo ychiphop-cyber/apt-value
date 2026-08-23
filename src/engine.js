@@ -1118,7 +1118,7 @@ const AptEngine = (() => {
     const hi = CFG.station.v4.reasonAxisHigh ?? 85;
     const names = { transit: '교통', econ: '거주민 경제력', edu: '교육·주거', biz: '업무 접근성' };
     const strong = Object.entries(comps || {}).filter(([, v]) => v >= hi).map(([k]) => names[k]);
-    if (strong.length >= 3) return `${josa(strong.join('·'), '이', '가')} 모두 상위권이어서 종합평가에서 높은 등급을 받았습니다 — 한 축이 압도적이라기보다 균형이 강점입니다.`;
+    if (strong.length >= 3) return `${josa(strong.join('·'), '이', '가')} 모두 상위권이어서 종합평가에서 높은 자리를 받았습니다 — 한 축이 압도적이라기보다 균형이 강점입니다.`;
     if (strong.length) return `${josa(strong.join('·'), '이', '가')} 특히 강해 종합평가를 끌어올렸습니다. 나머지 축은 상대적으로 평이합니다.`;
     return '뚜렷하게 압도적인 축 없이 여러 요소가 고르게 반영된 평가입니다.';
   }
@@ -1377,6 +1377,9 @@ const AptEngine = (() => {
     const support = jeonseSupport(fin, cx.supply, supplyE.combined, CFG);
     // v3 토대: 가격 6층 분해 (①정적 ②물가 ③초과성장 ④공급·노후 ⑤옵션 ⑥잔여)
     const decomp = engineDecompose(cx, fin, option, currentPrice, CFG);
+    // v4 결과화면 명세 (STEP 1~7) — 과거 임대 데이터는 UI가 rawInput.rentHist로 전달
+    let v4 = null;
+    try { v4 = engineV4(cx, area, input, CFG, rep, rawInput.rentHist || null); } catch (e) { v4 = null; }
     const optionPV = decomp && !(input.neutralize && input.neutralize.has('future'))
       ? decomp.events.reduce((s, e) => s + e.amt, 0) : 0;
 
@@ -1440,7 +1443,7 @@ const AptEngine = (() => {
 
     attract.sentence = attractSentence(attract.score, CFG);
     const res = {
-      cx, area, input, currentPrice, repPrice: rep, market, marketRef, marketCenter, financial: fin, finHeld, support, hedonic, supplyE, option, decomp,
+      cx, area, input, currentPrice, repPrice: rep, market, marketRef, marketCenter, financial: fin, finHeld, support, hedonic, supplyE, option, decomp, v4,
       future, futureView, structural, verdicts, transit, combineOut, range, gaps, fillRate, fulfillment, editIssues, dataStatus, trace,
       scores: { living, invest, attract },
       confidence: conf
@@ -1503,8 +1506,10 @@ const AptEngine = (() => {
     const areas = {};
     for (const e of entries) {
       for (const [k, a] of Object.entries(e.areas || {})) {
-        if (!areas[k]) areas[k] = { m2: a.m2, trades: [], jeonse: null };
+        if (!areas[k]) areas[k] = { m2: a.m2, trades: [], jeonse: null, jeonseRaw: [], wolseRaw: [] };
         areas[k].trades.push(...(a.trades || []));
+        areas[k].jeonseRaw.push(...(a.jeonseRaw || []));
+        areas[k].wolseRaw.push(...(a.wolseRaw || []));
         if (a.jeonse && (!areas[k].jeonse || (a.jeonse.n || 0) > (areas[k].jeonse.n || 0))) areas[k].jeonse = a.jeonse;
       }
     }
@@ -1528,6 +1533,40 @@ const AptEngine = (() => {
     }
     if (!rec) return null;
     return rec.asOf || !info.meta ? rec : { ...rec, asOf: info.meta.asOf };
+  }
+
+  /* 분할 등재 물리단지의 세대수 = 구성 등재단지 K-apt 세대수 합 (전원 매칭 시에만 — 부분합 금지) */
+  function kaptGroupHouseholds(info, memberNames, aliasesOf) {
+    if (!info || !info.byName || !memberNames || !memberNames.length) return null;
+    let sum = 0;
+    for (const nm of memberNames) {
+      const rec = matchKaptInfo(info, nm, aliasesOf ? aliasesOf(nm) : null);
+      if (!rec || !(rec.households > 0)) return null;
+      sum += rec.households;
+    }
+    return sum > 0 ? sum : null;
+  }
+
+  /* K-apt 세대수 해석 전체 경로 — ① 단지명 직접 ② 분할단지 → 통합 등재/구성 합산 ③ 수기 확인 테이블.
+     통합 등재 값을 쓸 때는 grouped 표기 → 화면에 '통합 단지 전체'로 명시(개별 차수 아님). */
+  function kaptResolve(info, entryName, liveId, aliasesCfg) {
+    const aliasMap = (aliasesCfg && aliasesCfg.aliases) || {};
+    let rec = matchKaptInfo(info, entryName, aliasMap[liveId]);
+    if (rec) return rec;
+    for (const g of (aliasesCfg && aliasesCfg.splitGroups) || []) {
+      if (!g.members.includes(liveId)) continue;
+      const uni = matchKaptInfo(info, g.display, g.aliases);
+      if (uni) return { ...uni, grouped: true, groupDisplay: g.display };
+      const memberNames = g.members.map(m => m.split('|')[2]);
+      const hh = kaptGroupHouseholds(info, memberNames,
+        nm => { const mid = g.members.find(m => m.endsWith('|' + nm)); return mid ? aliasMap[mid] : null; });
+      if (hh) return { households: hh, asOf: info && info.meta ? info.meta.asOf : null, grouped: true, groupDisplay: g.display };
+    }
+    const man = (aliasesCfg && aliasesCfg.manualHouseholds) || {};
+    if (man[liveId] && man[liveId].households > 0) {
+      return { households: man[liveId].households, asOf: null, manualSrc: true, note: man[liveId].note || '수기 확인' };
+    }
+    return null;
   }
 
   /* ═══ §23-26 가격 기여도 — 실제 재계산: 요소를 중립으로 바꿔 전체 모델을 다시 돌린 차이 ═══
@@ -1622,7 +1661,8 @@ const AptEngine = (() => {
     const areas = Object.entries(entry.areas).map(([k, a]) => ({
       key: k, label: `전용 ${k}㎡형`, m2: a.m2,
       trades: (a.trades || []).map(t => ({ ym: t.ym, price: t.price, floor: t.floor })),
-      jeonse: a.jeonse ? a.jeonse.v : null, jeonseMeta: a.jeonse || null
+      jeonse: a.jeonse ? a.jeonse.v : null, jeonseMeta: a.jeonse || null,
+      jeonseRaw: a.jeonseRaw || [], wolseRaw: a.wolseRaw || []   // v4: 신규계약 원시값 (STEP 1)
     })).sort((x, y) => Number(x.key) - Number(y.key));
 
     // 이 단지에 매매 실거래가 전혀 없으면, 사용자가 입력한 시세를 앵커로 사용
@@ -1639,7 +1679,10 @@ const AptEngine = (() => {
       regionTier: region.tier, builtYear,
       // §10·12: 임의 기본값 폐기 — 미확인은 null로 두고 엔진이 해당 항목을 제외·재정규화한다
       households,
-      householdsNote: hhManual ? null : (hhKapt ? `K-apt 확인${kapt.asOf ? ' · ' + kapt.asOf + ' 기준' : ''}` : null),
+      householdsNote: hhManual ? null
+        : hhKapt && kapt.grouped ? `통합 단지 전체 · K-apt${kapt.asOf ? ' · ' + kapt.asOf : ''}`
+        : hhKapt && kapt.manualSrc ? (kapt.note || '수기 확인')
+        : hhKapt ? `K-apt 확인${kapt.asOf ? ' · ' + kapt.asOf + ' 기준' : ''}` : null,
       householdsSource: hhManual ? 'MANUAL' : (hhKapt ? 'KAPT' : null),
       brandTier: null,
       parkingRatio: kapt && kapt.parkingRatio != null ? kapt.parkingRatio : null,
@@ -1657,6 +1700,203 @@ const AptEngine = (() => {
         adjacentRatio: region.adjacentRatio, metroRatio: region.metroRatio,
         unsoldLevel: 2, txVolumeLevel: 3, jeonseListingsLevel: 3, jeonseTrend: 'stable', regulated: region.regulated
       }
+    };
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     결과화면 개편 v4 (PRD 2026-08-23) — 계산 엔진 STEP 1~7
+     R = max(전세환산, 월세환산) × (1−보유비용) → 2단계 DCF → 옵션가치 →
+     4층 분해 → 역산 g_req → 과거 실적 g_hist. 모든 계수는 CFG.v4.
+     ═══════════════════════════════════════════════════════════════════ */
+
+  /* STEP 1 입력 정리 — 최근 6개월 신규계약 우선, 부족 시 12개월 확대(표기).
+     jeonseRaw: [{ym,v}] / wolseRaw: [{ym,dep,mr}] (수집기가 이미 갱신계약 제외) */
+  function v4RentBasis(area, input, CFG, asOfYM) {
+    const V = CFG.v4;
+    const mAgo = ym => monthsBetween(asOfYM, ym);
+    const pickWindow = (rows, need) => {
+      for (const mo of [V.rentWindowMo, V.rentWindowExtMo]) {
+        const w = rows.filter(r => mAgo(r.ym) <= mo);
+        if (w.length >= need) return { rows: w, windowMo: mo, ext: mo > V.rentWindowMo };
+      }
+      const w = rows.filter(r => mAgo(r.ym) <= 24);
+      return w.length ? { rows: w, windowMo: 24, ext: true } : null;
+    };
+    const bySort = rows => rows.slice().sort((a, b) => b.ym.localeCompare(a.ym));
+    let jeonse = null;
+    if (input.overrides.jeonse != null) {
+      jeonse = { v: input.overrides.jeonse, n: null, windowMo: null, ext: false, manual: true };
+    } else {
+      const jr = bySort(area.jeonseRaw || []);
+      const w = pickWindow(jr, 1);
+      if (w) {
+        const use = bySort(w.rows).slice(0, V.jeonseAvgN);
+        jeonse = { v: use.reduce((s, r) => s + r.v, 0) / use.length, n: use.length, nWindow: w.rows.length, windowMo: w.windowMo, ext: w.ext, manual: false };
+      } else if (area.jeonse > 0) {
+        jeonse = { v: area.jeonse, n: (area.jeonseMeta && area.jeonseMeta.n) || null, windowMo: (area.jeonseMeta && area.jeonseMeta.windowMo) || null, ext: true, manual: false, fromMedian: true };
+      }
+    }
+    let wolse = null;
+    const wr = bySort(area.wolseRaw || []);
+    const ww = pickWindow(wr, 1);
+    if (ww) {
+      const use = bySort(ww.rows).slice(0, V.wolseAvgN);
+      wolse = {
+        dep: use.reduce((s, r) => s + r.dep, 0) / use.length,
+        mr: use.reduce((s, r) => s + r.mr, 0) / use.length,
+        n: use.length, nWindow: ww.rows.length, windowMo: ww.windowMo, ext: ww.ext
+      };
+    }
+    return { jeonse, wolse };
+  }
+
+  /* 사건(호재) 감지 → 4단계 버킷 — 교통은 텍스트, 정비는 12단계→4버킷 매핑 */
+  function v4TransitBucket(text) {
+    if (!text) return null;
+    if (/임박/.test(text)) return 'imminent';
+    if (/미확정/.test(text)) return 'plan';
+    if (/공사|착공|개통|확정/.test(text)) return 'constr';
+    return 'plan';
+  }
+  function v4Events(cx, CFG) {
+    const V = CFG.v4;
+    const events = [];
+    const ft = (cx.location || {}).futureTransit || '';
+    const tb = v4TransitBucket(ft);
+    if (tb && tb !== 'none') {
+      const b = V.transitBuckets[tb];
+      events.push({ id: 'transit', name: ft.replace(/\s*\(.*?\)\s*/g, ''), bucket: tb, bucketLabel: b.label, p: b.p, y: b.y, uplift: V.uplift.transit, capPct: V.upliftCapPct.transit });
+    }
+    const stage = (cx.redev && cx.redev.stage) || 'none';
+    const rb = stage === 'none' ? null : (V.redevStageMap[stage] || 'early');
+    if (rb) {
+      const b = V.redevBuckets[rb];
+      const stageLabel = (CFG.option.stageLabels && CFG.option.stageLabels[stage]) || b.label;
+      events.push({ id: 'redev', name: `정비사업 (${stageLabel})`, bucket: rb, bucketLabel: b.label, p: b.p, y: b.y, uplift: V.uplift.redev, capPct: V.upliftCapPct.redev });
+    }
+    return events;
+  }
+
+  /* STEP 3 옵션가치: O = Σ 확률 × 예상상승분(가격 대비 캡) ÷ (1+k)^남은년수 */
+  function v4OptionPV(events, k, P, filter) {
+    let O = 0;
+    for (const e of events) {
+      if (filter === 'none') continue;
+      if (filter === 'confirmed' && e.p < 0.7) continue;
+      const up = P > 0 ? Math.min(e.uplift, e.capPct * P) : e.uplift;
+      e.upliftEff = up;
+      e.amt = e.p > 0 ? e.p * up / Math.pow(1 + k, e.y) : 0;
+      O += e.amt;
+    }
+    return O;
+  }
+
+  /* STEP 2·4·5·6 통합 계산기 — 순수함수 (조정기·시나리오·인근 비교가 같은 함수를 쓴다) */
+  function v4FairAt(R, k, g, CFG, events, P, eventsFilter) {
+    const V = CFG.v4;
+    const evs = (events || []).map(e => ({ ...e }));
+    const O = v4OptionPV(evs, k, P, eventsFilter || 'all');
+    const Vrent = pv2Stage(R, k, g, V.gTerm, V.years, V.termMinSpread).v;
+    return { Vrent, O, Vfair: Vrent + O, events: evs };
+  }
+
+  /* STEP 6 역산: V_rent(g_req) + O = P 를 만족하는 g_req (이분법, 2단계 DCF 기준) */
+  function v4SolveG(R, k, O, P, CFG) {
+    const V = CFG.v4;
+    if (!(P > 0) || !(R > 0)) return null;
+    const f = g => pv2Stage(R, k, g, V.gTerm, V.years, V.termMinSpread).v + O;
+    let [lo, hi] = V.gReqRange;
+    if (f(hi) < P) return { g: hi, saturated: 'high' };
+    if (f(lo) > P) return { g: lo, saturated: 'low' };
+    for (let i = 0; i < 60; i++) {
+      const mid = (lo + hi) / 2;
+      if (f(mid) < P) lo = mid; else hi = mid;
+    }
+    return { g: (lo + hi) / 2, saturated: null };
+  }
+
+  /* 메인 — cx·area·최근거래·과거임대(hist)로 결과화면용 전체 명세를 만든다.
+     hist: { cxOld: {old,n}|null, gu: {gHist,depM2Old,depM2Now,nOld}|null, oldQ } (UI가 샤드에서 해석) */
+  function engineV4(cx, area, input, CFG, rep, hist) {
+    const V = CFG.v4, F = CFG.financial;
+    if (!V) return null;
+    // 기준 가격 = 최근 실거래 1건 (사실 그대로 · 날짜·층 표기) — 사용자 입력이 있으면 그 값
+    const manualPrice = input.overrides.price != null;
+    const latest = rep && rep.latest ? rep.latest : null;
+    const P = manualPrice ? input.overrides.price : (latest ? latest.price : null);
+    if (!(P > 0)) return null;
+    const deal = latest ? {
+      ym: latest.ym, d: latest.d || null, floor: latest.floor || null, price: latest.price,
+      date: `${latest.ym}${latest.d ? '-' + String(latest.d).padStart(2, '0') : ''}`
+    } : null;
+    // STEP 1 — R
+    const conv = cx.conversionRate || F.defaultConversionRate;
+    const basis = v4RentBasis(area, input, CFG, input.asOfYM);
+    if (!basis.jeonse && !basis.wolse) return null;
+    const Rj = basis.jeonse ? basis.jeonse.v * conv : null;
+    const Rw = basis.wolse ? basis.wolse.dep * conv + basis.wolse.mr * 12 / 10000 : null;
+    const picked = Rw != null && (Rj == null || Rw > Rj) ? 'wolse' : 'jeonse';
+    const Rgross = picked === 'wolse' ? Rw : Rj;
+    const R = Rgross * (1 - V.costRate);
+    // k·g — 기본값 (조정기는 v4FairAt로 재계산)
+    const k = V.k + (input.overrides.rateDelta || 0);
+    const g = V.gBase;
+    // STEP 3 — 사건
+    const events = v4Events(cx, CFG);
+    const O = v4OptionPV(events, k, P, 'all');
+    // STEP 2·4
+    const Vrent = pv2Stage(R, k, g, V.gTerm, V.years, V.termMinSpread).v;
+    const Vfair = Vrent + O;
+    const resid = P - Vfair;
+    const residPct = Math.round(resid / P * 100);
+    // STEP 5 — 4층 (순서 고정: L1 → L2 → L3 → L4)
+    const L1 = R / k, L2 = Vrent - L1, L3 = O, L4 = P - (L1 + L2 + L3);
+    const pct = x => Math.round(x / P * 100);
+    const layers = [
+      { id: 'live', label: '지금 이 집에 사는 값', sub: '실거주가치 — 전세·월세로 확인되는 값', amt: L1, pct: pct(L1) },
+      { id: 'income', label: '소득이 올려줄 임대료', sub: '소득 상승 반영', amt: L2, pct: pct(L2) },
+      ...(events.length ? [{ id: 'fixed', label: events.map(e => e.name).join(' · '), sub: events.map(e => `${e.bucketLabel} · 실현 가정 ${(e.p * 100).toFixed(0)}%`).join(' / '), amt: L3, pct: pct(L3) }] : []),
+      { id: 'unknown', label: '설명되지 않는 부분', sub: '임대료 밖에서 시장이 보는 것', amt: L4, pct: pct(L4) }
+    ];
+    // 반올림 오차는 L4 흡수 (합 100%)
+    const sumPct = layers.reduce((s, l) => s + l.pct, 0);
+    if (sumPct !== 100) layers[layers.length - 1].pct += 100 - sumPct;
+    // STEP 6 — 역산
+    const gq = v4SolveG(R, k, O, P, CFG);
+    // STEP 7 — 과거 실적 (전세 보증금 기준 — 과거·현재 같은 방식)
+    let histOut = null;
+    if (hist) {
+      const jeonseNow = basis.jeonse ? basis.jeonse.v : null;
+      if (hist.cxOld && hist.cxOld.old > 0 && jeonseNow > 0) {
+        const gH = Math.pow(jeonseNow / hist.cxOld.old, 1 / (hist.yearsBack || 10)) - 1;
+        histOut = { g: gH, src: 'self', oldDep: hist.cxOld.old, nOld: hist.cxOld.n, nowDep: jeonseNow, oldQ: hist.oldQ };
+      } else if (hist.gu && hist.gu.gHist != null) {
+        histOut = { g: hist.gu.gHist, src: 'gu', oldQ: hist.oldQ, guName: hist.guName || null };
+      }
+      if (histOut) {
+        // 미래 트랙 표기용: 지금 임대료(채택 기준) 월환산 → 10년 뒤 필요 금액
+        histOut.nowMo = Math.round(Rgross / 12 * 10000);
+        histOut.needMo = gq ? Math.round(Rgross * Math.pow(1 + gq.g, V.years) / 12 * 10000) : null;
+      }
+    }
+    // 시나리오 3종 + 기준
+    const scen = {};
+    for (const [id, s] of Object.entries(V.scenarios)) {
+      const sg = s.g === 'hist' ? (histOut ? histOut.g : s.gFallback) : s.g;
+      scen[id] = { label: s.label, k: s.k, g: sg, desc: s.desc, v: v4FairAt(R, s.k, sg, CFG, events, P, s.events).Vfair };
+    }
+    scen.base = { label: '기준', k, g, v: Vfair };
+    return {
+      P, deal, manualPrice, conv,
+      rent: { ...basis, Rj, Rw, picked, jeonseOnly: Rw == null, wolseOnly: Rj == null },
+      Rgross, R, costRate: V.costRate,
+      k, g, gTerm: V.gTerm, years: V.years,
+      events, O, Vrent, Vfair,
+      resid, residPct, residNone: resid <= 0,
+      layers,
+      gReq: gq ? gq.g : null, gReqSat: gq ? gq.saturated : null,
+      hist: histOut, scen,
+      gIncome: V.gBase
     };
   }
 
@@ -1679,7 +1919,8 @@ const AptEngine = (() => {
     josa, pickDefaultAreaKey, normNameK, liveSearchHay, liveSearchMatch, mergeLiveEntries, matchKaptInfo, buildAutoComplex,
     attractSentence, oneLinerV2, stationTier, stationReason, futureSplit, fulfillmentOf, validateUserEdits,
     eduScoreFromComponents, eduZoneScore, matchEduZone, eduDetailOf, priceContributions,
-    pv2Stage, engineDecompose, residualLite
+    pv2Stage, engineDecompose, residualLite,
+    engineV4, v4RentBasis, v4Events, v4TransitBucket, v4OptionPV, v4FairAt, v4SolveG, kaptGroupHouseholds, kaptResolve
   };
 })();
 

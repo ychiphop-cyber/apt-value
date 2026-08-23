@@ -5,7 +5,7 @@
    단지 소스 3종: ① 상세 프로필 샘플(DATA) ② 실거래 자동수집(data/live/*)
                  ③ 직접 입력
    ═══════════════════════════════════════════════════════════════════ */
-const APP_VERSION = '4.2.0';
+const APP_VERSION = '5.0.0';
 if (typeof ANCH !== 'undefined') HUBS.anchors = ANCH;   // Anchor Academy Index (§6) — 엔진에서 참조
 const DEBUG_MODE = /[?&]debug=true/.test(location.search);
 const $ = id => document.getElementById(id);
@@ -201,7 +201,7 @@ function renderAptList(q) {
   $('aptList').innerHTML = liveStatusHtml() + sampleCards + groupCards + liveCards + `
     <button class="apt dashed full" data-id="__manual__">
       <b>＋ 직접 입력</b>
-      <span class="l1">검색에 없는 아파트를 핵심 정보만으로 진단합니다 (신뢰도는 낮게 표시됩니다)</span>
+      <span class="l1">검색에 없는 아파트를 핵심 정보만으로 진단합니다 (미입력 항목은 기본값 사용으로 표기됩니다)</span>
     </button>` +
     (q && !sample.length && !liveMatches.length && !groupMatches.length ? `<div class="notebox">검색 결과가 없습니다. ${LIVE.status !== 'ready' ? '자동수집을 연결하면 수도권 전 단지가 검색됩니다. ' : ''}직접 입력으로 진단할 수 있습니다.</div>` : '');
 
@@ -297,7 +297,8 @@ function buildAutoComplex() {
     areaKey: state.areaKey, conv: state.ovConv,
     asOf: liveAsOf(), stations: STN, hubs: HUBS,
     dongLink: dongLinkFor(code, entry.dong),
-    kapt: AptEngine.matchKaptInfo(KAPT.shards[code], entry.name, (ALIASES.aliases || {})[id]),
+    // 세대수: 직접 매칭 → 분할단지 통합/합산 → 수기 확인 테이블 (kaptResolve)
+    kapt: AptEngine.kaptResolve(KAPT.shards[code], entry.name, id, typeof ALIASES !== 'undefined' ? ALIASES : null),
     liveId: id
   });
 }
@@ -327,6 +328,8 @@ function mergeSampleWithLive(cx) {
     if (la && la.trades && la.trades.length) {
       a.trades = la.trades; merged++;
       if (la.jeonse) { a.jeonse = la.jeonse.v; a.jeonseMeta = la.jeonse; }
+      a.jeonseRaw = la.jeonseRaw || [];   // v4 STEP 1: 신규계약 원시값 (전세 3건 평균·월세 채택)
+      a.wolseRaw = la.wolseRaw || [];
     }
   }
   if (merged) { out.liveLinked = true; out.aptSeq = live.aptSeq || null; }
@@ -343,7 +346,7 @@ function renderManualForm() {
       <div class="full"><label class="mini">단지명<input type="text" class="box" id="mName" value="${esc(v.name || '')}" placeholder="예: ○○아파트"></label></div>
       <div><label class="mini">지역 구분
         <select id="mTier">${['서울핵심', '서울', '수도권핵심', '수도권', '지방광역', '기타'].map(t => `<option ${v.tier === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-        <p class="subtle">요구수익률·임대가치 성장률 가정에 쓰입니다.</p></div>
+        <p class="subtle">지역별 기본값(전환율 등)에 쓰입니다.</p></div>
       <div><label class="mini">준공연도<span class="inline-num"><input type="number" id="mYear" min="1965" max="2026" value="${v.builtYear || 2010}"><em>년</em></span></label></div>
       <div><label class="mini">세대수<span class="inline-num"><input type="number" id="mHH" min="50" step="50" value="${v.households || 1000}"><em>세대</em></span></label></div>
       <div><label class="mini">전용면적<span class="inline-num"><input type="number" id="mM2" min="20" step="1" value="${v.m2 || 84}"><em>㎡</em></span></label></div>
@@ -360,7 +363,7 @@ function renderManualForm() {
       <div><label class="mini">정비사업 단계
         <select id="mRedev">${REDEV_OPTS.map(([k, l]) => `<option value="${k}" ${((v.redev || 'none') === k) ? 'selected' : ''}>${l}</option>`).join('')}</select></label></div>
     </div>
-    <p class="subtle">그 밖의 항목(주차·브랜드·공원·규제 등)은 중립 가정값으로 계산되며, 결과의 신뢰도 표시에 반영됩니다.</p>`;
+    <p class="subtle">그 밖의 항목(주차·브랜드·공원·규제 등)은 중립 가정값으로 계산되며, 결과 화면에 기본값 사용으로 표기됩니다.</p>`;
   const bind = (id, key, num) => { $(id).addEventListener('input', () => { state.manualVals[key] = num ? Number($(id).value) : $(id).value.trim(); nav(); }); };
   bind('mName', 'name'); bind('mYear', 'builtYear', 1); bind('mHH', 'households', 1);
   bind('mM2', 'm2', 1); bind('mPrice', 'price', 1); bind('mJeonse', 'jeonse', 1); bind('mSubway', 'subwayMin', 1);
@@ -429,7 +432,7 @@ function renderStep2() {
   const jm = area.jeonseMeta;
   $('areaCard').innerHTML = `
     <h2>평형과 가격을 확인해 주세요</h2>
-    <p class="hint">자동입력 값은 수정할 수 있습니다. 수정하면 결과 신뢰도 계산에 반영됩니다.</p>
+    <p class="hint">자동입력 값은 수정할 수 있습니다. 수정한 값은 결과에 그대로 반영됩니다.</p>
     <div class="seg" id="areaSeg">${cx.areas.map(a => `<button data-k="${a.key}" aria-pressed="${a.key === state.areaKey}" aria-label="${esc(a.label)}${isLive ? `, 최근 매매 ${a.trades.length}건` : ''}">${esc(a.label)}${isLive ? ` · ${a.trades.length}건` : ''}</button>`).join('')}</div>
     <div class="grid2" style="margin-top:16px">
       <div>
@@ -478,7 +481,7 @@ function renderStep2() {
         <p class="subtle">역을 바꾸거나 도보시간을 입력하면 확인값(MANUAL)으로 계산합니다.</p></div>`;
   }
   const liveExtra = isLive ? `
-    <h3 class="mini-h">보완 정보 (선택) — 입력하면 정확도·신뢰도가 올라갑니다</h3>
+    <h3 class="mini-h">보완 정보 (선택) — 입력하면 정확도가 올라갑니다</h3>
     <div class="grid2">
       ${stationRow}
       <div><label class="mini">세대수 ${e.households > 0 ? '<span class="stat ok">입력됨</span>' : cx.householdsSource === 'KAPT' ? '<span class="stat ok">자동확인 (K-apt)</span>' : '<span class="stat" style="color:var(--muted);background:var(--raised);border:1px solid var(--line)">미확인 — 항목 보류</span>'}
@@ -491,7 +494,7 @@ function renderStep2() {
 
   $('assumeCard').innerHTML = `
     <details class="acc"><summary><span class="sumleft">🛠 데이터 수정하기 (선택)</span><span class="sumr">계산 가정 · 역 거리 · 세대수 · 공급</span></summary><div class="detail-body">
-    <p class="hint">필요한 경우에만 열어 수정하세요. 합리성 검증을 통과한 수정값(사용자 확인)은 신뢰도를 깎지 않으며 오히려 정확도를 높입니다. 모든 가정은 결과 화면에 표시됩니다.</p>
+    <p class="hint">필요한 경우에만 열어 수정하세요. 합리성 검증을 통과한 수정값(사용자 확인)은 정확도를 높입니다. 모든 가정은 결과 화면에 표시됩니다.</p>
     <div class="kv"><span>${esc(F.baseRate.label)}</span><span>${fmtPct(F.baseRate.value)} <span class="srcline" style="display:inline">(${esc(F.baseRate.asOf)})</span></span></div>
     <div class="kv"><span>${esc(F.mortgageRate.label)}</span><span>${fmtPct(F.mortgageRate.value)} <span class="srcline" style="display:inline">(${esc(F.mortgageRate.asOf)})</span></span></div>
     <div class="kv"><span>요구수익률 r (합성)</span><span>${fmtPct(r)} = 대체투자 ${fmtPct(F.altReturn)} + 유동성 ${fmtPct(F.liquidityPremium)} + 지역·자산위험</span></div>
@@ -539,18 +542,20 @@ function buildInput() {
   };
 }
 
-function runAnalysis() {
+async function runAnalysis() {
   go(3);
   $('report').innerHTML = ''; $('loading').style.display = 'block';
   state.stress = new Set();
   state.cmpRef = null; state.cmpPrep = null;
-  setTimeout(() => {
+  setTimeout(async () => {
     try {
       state.baseInput = buildInput();
+      // 과거 임대 실적(10년 전 전세) 샤드 — 있으면 결과에 §C '지난 10년 실적'이 포함된다
+      const histCode = state.liveSel ? state.liveSel.code : (state.baseInput.complex.regionCode || null);
+      if (histCode) { try { await getRentHist(histCode); } catch (e) {} }
+      const areaKeyForHist = state.baseInput.areaKey || (state.baseInput.complex.areas[0] || {}).key;
+      state.baseInput.rentHist = histCode ? histResolve(histCode, state.baseInput.complex, areaKeyForHist) : null;
       state.result = AptEngine.analyze(state.baseInput, CFG, HUBS, JOBS, STN);
-      // §23-26: 가격 기여도 — 요소 중립화 실제 재계산 (실패해도 본 분석은 유지)
-      try { state.contrib = AptEngine.priceContributions(state.baseInput, CFG, HUBS, JOBS, STN); }
-      catch (e) { state.contrib = null; console.error('[apt-value] 기여도 계산 실패:', e); }
       $('loading').style.display = 'none';
       renderReport(state.result);
     } catch (e) {
@@ -567,665 +572,619 @@ function runAnalysis() {
   }, 700);
 }
 
-/* ═══ 최종 토대 v3 §4 — 현재가 6층 분해 카드 + 역산 헤드라인 + 잔여 상대비교 ═══ */
-function residualBenchmarkOf(r) {
+/* ═══════════════════════════════════════════════════════════════════
+   결과 화면 v5.0 (PRD 결과화면개편 v4) — 가격 명세 4층 · 지난 10년 실적 ·
+   인근 비교 · 적정가 · 직접 조정 · 계산 밖의 가치 · 접힘 4종.
+   본문에는 전문용어·판정을 쓰지 않는다 — 금액과 조건으로만 말한다.
+   ═══════════════════════════════════════════════════════════════════ */
+const fmtMan = x => x == null || !isFinite(x) ? '—' : Math.round(x).toLocaleString() + '만';
+const fmtG = x => x == null || !isFinite(x) ? '—' : (x * 100).toFixed(1) + '%';
+const fmtGp = x => x == null || !isFinite(x) ? '—' : (x >= 0 ? '+' : '−') + Math.abs(x * 100).toFixed(1) + '%p';
+
+/* ── 과거 임대 실적 샤드 (data/rent_history/{code}.json) ── */
+const RENTH = { shards: {}, enabled: null };
+async function getRentHist(code) {
+  if (RENTH.enabled === null) {
+    try {
+      const s = await fetch('data/rent_history/status.json', { cache: 'no-store' });
+      RENTH.enabled = s.ok ? !!(await s.json()).enabled : false;
+    } catch (e) { RENTH.enabled = false; }
+  }
+  if (!RENTH.enabled || !code) return null;
+  if (code in RENTH.shards) return RENTH.shards[code];
+  try {
+    const r = await fetch(`data/rent_history/${code}.json`, { cache: 'no-store' });
+    RENTH.shards[code] = r.ok ? await r.json() : null;
+  } catch (e) { RENTH.shards[code] = null; }
+  return RENTH.shards[code];
+}
+/* 단지·평형의 과거 전세 조회 — 실거래명·분할단지 구성명까지 시도, 없으면 구 지수 */
+function histResolve(code, cx, areaKey, extraNames) {
+  const h = RENTH.shards[code];
+  if (!h) return null;
+  const names = [cx.name, ...(extraNames || [])];
+  if (state.liveSel && state.liveSel.entry && state.liveSel.entry.name === cx.name) {
+    for (const m of (state.liveSel.entry.mergedFrom || [])) names.push(m);
+  }
+  let cxOld = null;
+  for (const nm of names) {
+    const rec = (h.cx[`${cx.dong}|${nm}`] || {})[areaKey];
+    if (rec && rec.old > 0) { cxOld = rec; break; }
+  }
+  return { cxOld, gu: h.gu, oldQ: h.meta.oldQ, yearsBack: h.meta.yearsBack, guName: h.meta.name };
+}
+
+/* ── 인근 단지 비교 (§D) — 같은 시군구 거래 상위 단지에 같은 잣대 적용.
+   인근 단지의 개발 호재는 자동 확인이 어려워 반영하지 않는다(접힘에 명시). ── */
+function v4BenchmarkOf(r) {
+  const v = r.v4;
+  if (!v) return null;
   const code = state.liveSel ? state.liveSel.code : r.cx.regionCode;
   if (!code || LIVE.status !== 'ready' || !LIVE.shards[code]) return null;
   const region = regionOf(code);
   if (!region) return null;
-  const selfName = state.liveSel ? state.liveSel.entry.name : r.cx.name;
+  const V = CFG.v4;
+  const selfNames = new Set([r.cx.name, state.liveSel && state.liveSel.entry ? state.liveSel.entry.name : null].filter(Boolean));
   const rows = [];
   for (const e of Object.values(LIVE.shards[code].complexes)) {
-    if (e.name === selfName) continue;
+    if (selfNames.has(e.name)) continue;
     let best = null;
     for (const [k2, a] of Object.entries(e.areas || {})) {
-      if (!a.trades || !a.trades.length || !a.jeonse || !(a.jeonse.v > 0)) continue;
+      if (!a.trades || !a.trades.length) continue;
+      if (!(a.jeonseRaw || []).length && !(a.jeonse && a.jeonse.v > 0)) continue;
       const dd = Math.abs((a.m2 || Number(k2) || 84) - 84);
       if (!best || dd < best.dd || (dd === best.dd && a.trades.length > best.n)) best = { a, dd, n: a.trades.length };
     }
     if (!best) continue;
-    const prices = best.a.trades.slice(0, 6).map(t => t.price).sort((x, y) => x - y);
-    const P = prices[Math.floor(prices.length / 2)];
-    const lite = AptEngine.residualLite(P, best.a.jeonse.v, region.conv, region.tier, CFG);
-    if (lite != null) rows.push({ lite, t: best.n });
+    const P = best.a.trades[0].price;
+    const basis = AptEngine.v4RentBasis({
+      jeonseRaw: best.a.jeonseRaw || [], wolseRaw: best.a.wolseRaw || [],
+      jeonse: best.a.jeonse ? best.a.jeonse.v : null, jeonseMeta: best.a.jeonse || null
+    }, { overrides: {} }, CFG, state.baseInput.asOfYM);
+    if (!basis.jeonse && !basis.wolse) continue;
+    const conv = region.conv || CFG.financial.defaultConversionRate;
+    const Rj = basis.jeonse ? basis.jeonse.v * conv : null;
+    const Rw = basis.wolse ? basis.wolse.dep * conv + basis.wolse.mr * 12 / 10000 : null;
+    const Rg = Math.max(Rj ?? -1, Rw ?? -1);
+    if (!(Rg > 0) || !(P > 0)) continue;
+    const R = Rg * (1 - V.costRate);
+    const fair = AptEngine.v4FairAt(R, V.k, V.gBase, CFG, [], P).Vfair;
+    const gq = AptEngine.v4SolveG(R, V.k, 0, P, CFG);
+    rows.push({ name: e.name, t: e.tradeCount || best.n, resid: Math.round((P - fair) / P * 100), gReq: gq ? gq.g : null });
   }
   rows.sort((a, b) => b.t - a.t);
-  const top = rows.slice(0, (CFG.financialV3 && CFG.financialV3.residualBenchmarkN) || 8);
-  if (top.length < 3) return null;
-  const ls = top.map(x => x.lite).sort((a, b) => a - b);
-  const med = ls.length % 2 ? ls[(ls.length - 1) / 2] : (ls[ls.length / 2 - 1] + ls[ls.length / 2]) / 2;
-  return { median: Math.round(med * 10) / 10, n: top.length, region: region.name };
+  const top = rows.slice(0, V.benchmarkN || 12);
+  if (top.length < 4) return null;
+  const all = [...top.map(x => ({ name: x.name, resid: x.resid, self: false })), { name: r.cx.name, resid: v.residPct, self: true }]
+    .sort((a, b) => a.resid - b.resid);
+  const rank = all.findIndex(x => x.self) + 1;
+  const nb = top.map(x => x.resid).sort((a, b) => a - b);
+  const med = nb.length % 2 ? nb[(nb.length - 1) / 2] : Math.round((nb[nb.length / 2 - 1] + nb[nb.length / 2]) / 2);
+  const gqs = top.map(x => x.gReq).filter(x => x != null).sort((a, b) => a - b);
+  const gNbr = gqs.length ? gqs[Math.floor(gqs.length / 2)] : null;
+  return { top, all, rank, n: all.length, med, gNbr, region: region.name };
 }
 
-function decompCard(r) {
-  const d = r.decomp;
-  if (!d) return r.finHeld ? `<div class="card" id="decompCard">
-    <h2>현재가는 무엇으로 이루어져 있는가</h2>
-    <p class="subtle">전세 실거래가 없어 가격 6층 분해와 역산(필요 성장률)을 보류했습니다 — 임의 가정값으로 채우지 않습니다. STEP 2에서 전세 시세를 입력하면 제공됩니다.</p></div>` : '';
-  const A = d.assumptions;
-  const optAmt = d.layers[4].amt;
-  const headline = d.impliedG10 != null
-    ? `현재 ${fmtEok(r.currentPrice)}을 정당화하려면, 앞으로 ${A.excessYears}년간 임대가치(월세)가 <b>연 ${(d.impliedG10 * 100).toFixed(1)}%</b>씩 올라야 합니다. 물가·소득이 설명하는 건 <b>연 ${(A.infl * 100).toFixed(1)}%</b>입니다.${optAmt >= 0.05 ? ` <span class="subtle">(개발 옵션 ${fmtEok(optAmt)} 효과를 빼고 계산한 값입니다 — 빼지 않으면 연 ${(d.impliedG10All * 100).toFixed(1)}%)</span>` : ''}`
-    : '';
-  const maxAbs = Math.max(...d.layers.map(l => Math.abs(l.amt)), 0.01);
-  const rowOf = l => `<div class="cr"><div class="ck" style="flex:2.2">${l.no} ${esc(l.label)}</div>
-    <div class="cbar"><span class="mid"></span><i class="${l.amt >= 0 ? 'pos' : 'neg'}" style="width:${Math.min(50, Math.abs(l.amt) / maxAbs * 50)}%"></i></div>
-    <div class="cv" style="min-width:86px">${fmtEok(l.amt)} · ${l.pct}%</div></div>`;
-  const bm = residualBenchmarkOf(r);
-  const evNotes = d.events.filter(e => e.note).map(e => `${esc(e.name)}: ${esc(e.note)}`);
-  return `<div class="card" id="decompCard">
-    <h2>현재가 ${fmtEok(r.currentPrice)} — 무엇으로 이루어져 있는가</h2>
-    ${headline ? `<div class="oneliner" style="margin:8px 0 12px">${headline}</div>` : ''}
-    ${d.layers.slice(0, 5).map(rowOf).join('')}
-    <div class="kv" style="margin-top:6px"><span><b>모형이 설명하는 가치</b></span><span class="strong">${fmtEok(d.explained)} · ${d.explainedPct}%</span></div>
-    ${rowOf(d.layers[5])}
-    <p class="subtle">⑥ 잔여는 '거품'이 아닙니다 — 조망·브랜드·유동성처럼 모형이 아직 못 담은 것과 과열이 섞여 있습니다. ①~④는 임대가치 흐름, ⑤는 사건(확률 ${d.events.map(e => `${Math.round(e.prob * 100)}%`).join('·') || '—'} × 시간할인), 층 순서는 ①→⑤ 고정입니다.</p>
-    ${bm ? `<div class="kv"><span>잔여율 상대비교 (간이 잣대: ①+② 기준)</span><span class="strong">이 단지 ${d.liteResidual}% / ${esc(bm.region)} 거래 상위 ${bm.n}개 단지 중앙값 ${bm.median}%</span></div>
-    <p class="subtle">${d.liteResidual <= bm.median ? '같은 지역에서 상대적으로 임대가치가 뒷받침하는 가격입니다.' : '같은 지역 평균보다 임대가치로 설명되지 않는 부분이 큽니다 — 그만큼 기대·프리미엄에 값을 지불하는 셈입니다.'}</p>` : ''}
-    ${d.marketExcessG != null ? `<div class="kv"><span>역산 검증 (§8)</span><span>시장이 보는 지역 초과성장 <b>${(d.marketExcessG * 100).toFixed(1)}%p</b> vs 모형 신호 ${(d.modelExcessG * 100).toFixed(1)}%p</span></div>` : ''}
-    ${evNotes.length ? `<p class="subtle">${evNotes.join(' · ')}</p>` : ''}
-    <p class="subtle" style="margin-top:8px">가정: 요구수익률 k ${(A.k * 100).toFixed(1)}%(국고채 프록시+프리미엄, 가격구간 조정 ${(A.kParts.priceBandAdj * 100).toFixed(1)}%p) · 순 임대가치 ${A.R}억(총 ${A.Rgross}억 − 보유비용 ${(A.ownerCostRate * 100).toFixed(0)}%) · 물가 ${(A.infl * 100).toFixed(1)}% · 초과성장 ${A.excessYears}년 한정 · 전세는 <b>신규계약</b> 기준 · 전환율(${(A.conv * 100).toFixed(1)}%)은 보증금↔월세 환산 전용으로 요구수익률과 별개입니다.</p>
-  </div>`;
-}
-
-/* ═══ FR-07 "왜 이 가격인가" — 가격별 원자료→공식→중간값→최종값 공개 (AC-07: 화면 숫자만으로 재계산 가능) ═══ */
-function whyPriceCard(r) {
-  const mref = r.marketRef, fin = r.financial, co = r.combineOut, cx = r.cx;
-  const RG = CFG.range, FNC = CFG.final, VD = CFG.verdicts, FG = CFG.financialGrade;
-  const rc = 1 - r.market.compQuality;   // 잔차계수: 비교거래가 대상 자체일수록 히도닉 이중반영 제거
-  const priceMethod = r.input.overrides.price != null ? '사용자 입력' : '최근 실거래 (사실 그대로)';
-
-  /* ② 시장 기준가 — 사용 거래·가중치·공식 */
-  let refBody = '<p class="subtle">동일평형 거래가 없어 시장 기준가를 산출하지 못했습니다 — 비교거래 앵커로 대체합니다.</p>';
-  if (mref && mref.items) {
-    const rows = mref.items.slice().sort((a, b) => b.w - a.w).map(t =>
-      `<tr><td>${esc(t.date)}</td><td>${t.floor ? t.floor + '층' : '—'}</td><td style="text-align:right">${t.price}억</td><td style="text-align:right">${(t.w * 100).toFixed(1)}%</td><td>${[t.outlier ? `이상거래 저가중 ×${mref.formula.outlierWeight}` : '', t.lowFloor ? `저층(≤${mref.formula.lowFloorMax}층) ×${mref.formula.lowFloorWeight}` : ''].filter(Boolean).join(' · ') || '—'}</td></tr>`).join('');
-    const f = mref.formula;
-    refBody = `
-      <p class="subtle">기간창 규칙: ${CFG.marketRef.windowsDays.join('→')}일 — ${mref.baseWindowDays || 90}일 내 유효 거래 ${CFG.marketRef.minComps}건 미만이면 다음 창으로 확장${mref.extended ? ` (이번 계산: ${mref.windowDays}일까지 확장)` : ` (이번 계산: ${mref.windowDays}일창)`}. 최근성 반감기 ${f.recencyHalfLifeDays}일.</p>
-      <div class="tblwrap"><table><thead><tr><th>계약일</th><th>층</th><th>거래가</th><th>가중치</th><th>저가중 사유</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <div class="kv"><span>가중중앙값 (반올림 전)</span><span class="strong">${fmtRaw(mref.med)}억 → 표시 ${fmtEok(mref.med)}</span></div>
-      <div class="kv"><span>범위 반폭 half</span><span>max(최소반폭 ${(f.minHalfSpread * 100).toFixed(1)}%×중앙값 = ${fmtRaw(f.minHalf)}억, 사분위폭/2 = ${fmtRaw(f.iqrHalf)}억) = <b>${fmtRaw(f.half)}억</b>${f.minHalfApplied ? ' (최소반폭 적용)' : ' (분산 기준)'}</span></div>
-      <div class="kv"><span>하단 = 중앙값 − half</span><span>${fmtRaw(mref.med)} − ${fmtRaw(f.half)} = ${fmtRaw(mref.low)}억 → 표시 ${fmtEok(mref.low)}</span></div>
-      <div class="kv"><span>상단 = 중앙값 + half</span><span>${fmtRaw(mref.med)} + ${fmtRaw(f.half)} = ${fmtRaw(mref.high)}억 → 표시 ${fmtEok(mref.high)}</span></div>`;
-  }
-
-  /* ③ 금융 지지가치 — R·r·g 대입값 */
-  let finBody;
-  if (fin) {
-    const scenRows = (fin.scen || []).map(s =>
-      `<tr><td>${s.k === 'low' ? '보수' : s.k === 'base' ? '기준' : '우호'}</td><td style="text-align:right">${(s.g * 100).toFixed(2)}%</td><td style="text-align:right">${(fin.r * 100).toFixed(2)}% − ${(s.g * 100).toFixed(2)}% = ${((fin.r - s.g) * 100).toFixed(2)}%</td><td style="text-align:right"><b>${fmtRaw(s.v, 2)}억</b> → ${fmtEok(s.v)}</td><td>2단계 (${fin.excessYears}년 g₁ + 이후 물가 착지)</td></tr>`).join('');
-    finBody = `
-      <div class="kv"><span>연간 주거서비스 가치 R</span><span class="strong">${esc(fin.rSourceText)} = ${fmtRaw(fin.R)}억/년</span></div>
-      <div class="kv"><span>요구수익률 k (합성)</span><span>국고채 프록시 ${fmtPct(fin.rParts.altReturn)} + 유동성 ${fmtPct(fin.rParts.liquidityPremium)} + 자산위험 ${fmtPct(fin.rParts.assetRiskPremium)} + 지역위험 ${fmtPct(fin.rParts.regionRiskPremium)} + 가격구간 ${signPct(fin.rParts.priceBandAdj)}${fin.rParts.rateDelta ? ` + 금리변화 ${signPct(fin.rParts.rateDelta)}` : ''} = <b>${(fin.r * 100).toFixed(2)}%</b></span></div>
-      <div class="tblwrap"><table><thead><tr><th>시나리오</th><th>성장률 g</th><th>r − g</th><th>V (반올림 전 → 표시)</th><th>공식</th></tr></thead><tbody>${scenRows}</tbody></table></div>
-      <div class="kv"><span>금융 지지력 비율</span><span>기준 시나리오 ${fmtRaw(fin.fsv.base, 2)}억 ÷ 현재가 ${fmtRaw(r.currentPrice, 2)}억 = <b>${r.verdicts.financial.ratio != null ? Math.round(r.verdicts.financial.ratio * 100) + '%' : '—'}</b></span></div>
-      ${fin.impliedG != null ? `<div class="kv"><span>필요 성장률 역산 g₁ (${fin.excessYears}년)</span><span>2단계 현재가치(R=${fmtRaw(fin.R)}, k=${(fin.r * 100).toFixed(2)}%, 이후 물가 ${(fin.growth.infl * 100).toFixed(1)}%)가 현재가 ${fmtRaw(r.currentPrice, 2)}억과 같아지는 g₁ = <b>${(fin.impliedG * 100).toFixed(2)}%</b></span></div>` : ''}
-      <p class="subtle">전세 ${fmtEok(fin.jeonse)}${r.input.overrides.jeonse != null ? ' <span class="stat ok">사용자 확인(USER_VERIFIED)</span>' : ' (전월세 실거래 중앙값)'} · 전환율 ${(fin.conv * 100).toFixed(1)}% (지역 시장 전환율).</p>`;
-  } else {
-    finBody = '<p class="subtle">전세 실거래가 없어 금융·임대 지지가치를 산출하지 않았습니다(N/A). 임의 가정값으로 채우지 않으며, STEP 2에서 전세 시세를 입력하면 같은 공식(V=R÷(r−g))으로 계산해 표시합니다. 시장·주거·수급·미래 분석은 이 보류와 무관하게 계속 제공됩니다.</p>';
-  }
-
-  /* ④ 모델 종합가치 — 상대모델 브리지 (앵커 × (1+Σ조정)) */
-  const adjLabels = { transport: '교통·역세권', job: '직주근접', education: '교육', life: '생활편의', nature: '자연환경', product: '상품성' };
-  const vM = r.market.value;
-  const adjRows = Object.entries(r.hedonic.adj).map(([k, a]) => {
-    if (r.hedonic.subs[k] == null) return `<tr style="color:var(--muted)"><td>${adjLabels[k] || k}</td><td style="text-align:right">미확인</td><td style="text-align:right">—</td><td style="text-align:right">제외</td></tr>`;
-    return `<tr><td>${adjLabels[k] || k}</td><td style="text-align:right">${signPct(a)}</td><td style="text-align:right">${signPct(a * rc)}</td><td style="text-align:right">${a ? (a * rc * vM >= 0 ? '+' : '') + fmtRaw(a * rc * vM, 2) + '억' : '—'}</td></tr>`;
-  }).join('');
-  const bridgeBody = `
-    <p class="subtle">주거가치 점수는 가격에 직접 더하지 않습니다. 아래 브리지는 <b>비교거래 앵커</b>(동일단지·유사평형·인근 실거래 가중중앙값 — 대상의 현재가 입력값이 아님)에 항목별 조정률(카테고리 상한 ±${(CFG.hedonic.categoryCaps.transport * 100).toFixed(0)}% 수준, 총량 상한 ±${(CFG.hedonic.totalCap * 100).toFixed(0)}%)을 적용한 금액 경로입니다. 동일단지 거래 비중(${(r.market.compQuality * 100).toFixed(0)}%)만큼 이미 시장가격에 반영됐다고 보고 잔차계수 ${rc.toFixed(2)}를 곱합니다.</p>
-    <div class="kv"><span>① 비교거래 앵커 P₀</span><span class="strong">${fmtRaw(vM, 2)}억 (동일평형 ${r.market.compCount}건 + 유사 ${r.market.compCountAll - r.market.compCount}건)</span></div>
-    <div class="tblwrap"><table><thead><tr><th>항목</th><th>조정률</th><th>×잔차계수</th><th>금액 기여</th></tr></thead><tbody>${adjRows}
-      <tr style="border-top:2px solid var(--line)"><td><b>히도닉 잔차 합계</b></td><td style="text-align:right">${signPct(r.hedonic.total)}</td><td style="text-align:right"><b>${signPct(co.hRes)}</b></td><td style="text-align:right"><b>${(co.hRes * vM >= 0 ? '+' : '') + fmtRaw(co.hRes * vM, 2)}억</b></td></tr>
-      <tr><td>수급 조정</td><td style="text-align:right">${signPct(r.supplyE.adj)}</td><td style="text-align:right">${signPct(r.supplyE.adj)}</td><td style="text-align:right">${(r.supplyE.adj * vM >= 0 ? '+' : '') + fmtRaw(r.supplyE.adj * vM, 2)}억</td></tr></tbody></table></div>
-    <div class="kv"><span>② 조정 후 시장경로 가치</span><span>P₀ × (1 ${signPct(co.hRes)} ${signPct(r.supplyE.adj)}) = <b>${fmtRaw(co.vMktAdj, 2)}억</b></span></div>
-    ${co.marketOnly
-      ? '<div class="kv"><span>③ 금융 결합</span><span>전세 없음 — 금융 경로 보류, 시장 경로만 사용 (가중 1.0)</span></div>'
-      : `<div class="kv"><span>③ 금융 결합 (괴리 ${(co.disagreement * 100).toFixed(0)}% → 가중 축소)</span><span>${fmtRaw(co.vMktAdj, 2)}×${co.wm.toFixed(2)} + ${fmtRaw(co.vFundEff, 2)}×${co.wf.toFixed(2)} = <b>${fmtRaw(co.centerRaw, 2)}억</b></span></div>`}
-    <div class="kv"><span>④ 시장 괴리·안전장치</span><span>시장 중심 대비 ${signPct(co.divergence)}${co.divergenceLarge ? ' — <b>괴리 큼(표시·설명, 강제 보정 없음)</b>' : ''}${co.extremeGuarded ? ` · 비정상 가드(±${(FNC.extremeGuard * 100).toFixed(0)}%) 적용 = ` : ' · 최종 = '}<b>${fmtRaw(co.center, 2)}억</b></span></div>
-    <div class="kv"><span>⑤ 범위 폭 spread</span><span>${(RG.minSpread * 100).toFixed(1)}% + ${RG.dispersionWeight}×분산 ${(r.market.dispersion * 100).toFixed(1)}% + ${RG.disagreementWeight}×괴리 ${(co.disagreement * 100).toFixed(0)}% + ${RG.dataGapWeight}×결측 ${((1 - r.fillRate) * 100).toFixed(0)}% = <b>${(r.range.spread * 100).toFixed(1)}%</b> [${(RG.minSpread * 100).toFixed(1)}~${(RG.maxSpread * 100).toFixed(0)}% 클램프]</span></div>
-    <div class="kv"><span>모델 종합가치 범위</span><span class="strong">${fmtRaw(co.center, 2)}×(1∓${(r.range.spread * 100).toFixed(1)}%) = ${fmtRaw(r.range.low, 2)} ~ ${fmtRaw(r.range.high, 2)}억 → 표시 ${fmtEok(r.range.low)}~${fmtEok(r.range.high)}</span></div>
-    <p class="subtle">역 경제력 축은 거주민 소득·소비 추정 등급만 쓰므로 '집값→역 가치→집값' 순환이 없습니다. 이 범위는 판정·가격매력도 계산에 쓰는 모델값이며, 상단 '시장 기준가'(동일평형 가중중앙값)와는 정의가 다른 별도 개념입니다.</p>`;
-
-  /* ⑤ 판정 기준 — 임계치 공개 */
-  const verdictBody = `
-    <div class="kv"><span>시장 상대평가</span><span>현재가 ${fmtRaw(r.currentPrice, 2)}억 vs 기준가 ${mref ? `${fmtRaw(mref.low, 2)}~${fmtRaw(mref.high, 2)}억` : '—'} — 하단×${(1 - VD.marketTolerance).toFixed(3)} 미만이면 '${VD.marketLabels[0]}', 상단×${(1 + VD.marketTolerance).toFixed(3)} 초과면 '${VD.marketLabels[2]}', 그 외 '${VD.marketLabels[1]}' → <b>${r.verdicts.market.label}</b></span></div>
-    <div class="kv"><span>금융 지지력</span><span>${fin ? `비율 ${Math.round(r.verdicts.financial.ratio * 100)}% — ≥${FG.bands[0] * 100}% ${FG.labels[0]} / ≥${FG.bands[1] * 100}% ${FG.labels[1]} / ≥${FG.bands[2] * 100}% ${FG.labels[2]} / 미만 ${FG.labels[3]} → <b>${r.verdicts.financial.label}</b>` : `전세 없음 → <b>${VD.heldLabel}</b>`}</span></div>
-    <div class="kv"><span>미래 기대 반영도</span><span>${fin && fin.impliedG != null ? `역산 g₁₀ ${(fin.impliedG * 100).toFixed(2)}% vs 시나리오 [보수 ${(fin.gScen.low * 100).toFixed(1)}% / 기준 ${(fin.gScen.base * 100).toFixed(1)}% / 우호 ${(fin.gScen.high * 100).toFixed(1)}%] — 보수 미만 '낮음', 기준 이하 '보통', 우호 이하 '높음', 초과 '매우 높음' → <b>${r.verdicts.expectation.label}</b>` : `전세 없음 → <b>${VD.heldLabel}</b>`}</span></div>`;
-
-  return `
-  <div class="card" id="whyCard">
-    <h2>왜 이 가격인가 — 금액 근거</h2>
-    <p class="hint">화면의 모든 가격을 원자료 → 가중치 → 공식 → 중간값 → 최종값 순서로 공개합니다. 반올림은 표시 단계에서 한 번만 하며, 아래 숫자를 그대로 대입하면 대표 가격이 재계산됩니다.</p>
-    <details class="acc"><summary><span class="sumleft">① 현재 시장가격 — ${esc(priceMethod)}</span><span class="sumr">${fmtEokW(r.currentPrice)}</span></summary><div class="detail-body">
-      <div class="kv"><span>선택 규칙</span><span>사용자 수정값 &gt; 최근 실거래 — 실거래는 이상거래로 판단되어도 삭제·교체하지 않습니다(원칙 1: 사실과 판단 분리). 이번 계산: <b>${esc(priceMethod)}</b></span></div>
-      ${mref ? `<div class="kv"><span>근거 거래</span><span>${esc(mref.latest.date)} 계약 · ${mref.latest.floor ? mref.latest.floor + '층 · ' : ''}전용 ${r.area.m2}㎡ · ${mref.latest.price}억${mref.latest.outlier ? ' (이상거래 플래그)' : ''}</span></div>` : ''}
-      ${r.repPrice && (r.repPrice.anomalous || r.repPrice.anomalousHigh) && r.input.overrides.price == null ? `<div class="kv"><span>모델 판단</span><span>이 거래는 3개월 또래 중앙값 ${r.repPrice.peerMed}억 대비 이상 ${r.repPrice.anomalous ? '저가' : '고가'} 가능성 — 가격 판단은 시장 중심가격(아래 ②)을 기준으로 함께 보세요</span></div>` : ''}
-      <div class="kv"><span>출처</span><span>${state.liveSel || cx.liveLinked ? '국토교통부 실거래가 공개 API' : 'DB 등재 실거래'} · ${esc(state.liveSel ? liveAsOf() : DATA.meta.asOf)} 기준${r.input.overrides.price != null ? ' · <b>사용자 입력(MANUAL)</b>' : ''}</span></div>
-      <p class="subtle">현재 시장가격은 계산값이 아니라 실제 거래(또는 사용자 입력)의 대표값입니다.</p>
-    </div></details>
-    <details class="acc"><summary><span class="sumleft">② 시장 기준가 — 동일평형 가중중앙값</span><span class="sumr">${mref ? `${fmtEok(mref.low)}~${fmtEokW(mref.high)}` : '산출 불가'}</span></summary><div class="detail-body">${refBody}</div></details>
-    <details class="acc"><summary><span class="sumleft">③ 금융 지지가치 — 2단계 (10년 성장 + 물가 착지)</span><span class="sumr">${fin ? `${fmtEok(fin.fsv.low)}~${fmtEokW(fin.fsv.high)}` : '분석 보류'}</span></summary><div class="detail-body">${finBody}</div></details>
-    <details class="acc"><summary><span class="sumleft">④ 모델 종합가치 — 비교거래 앵커 × 속성 조정 브리지</span><span class="sumr">${fmtEok(r.range.low)}~${fmtEokW(r.range.high)}</span></summary><div class="detail-body">${bridgeBody}</div></details>
-    <details class="acc"><summary><span class="sumleft">⑤ 가격 판정 기준 — 임계치</span><span class="sumr">${r.verdicts.market.label} · ${r.verdicts.financial.label} · ${r.verdicts.expectation.label}</span></summary><div class="detail-body">${verdictBody}</div></details>
-  </div>`;
-}
-
-/* ── 등급 헬퍼 ── */
-function gradeCls(score) { const B = CFG.scores.gradeBands; return score >= B.high ? 'A' : score >= B.mid ? 'B' : 'C'; }
-function verdictBadge(pos) {
-  if (pos.includes('하단 아래')) return ['green', pos + ' — 지표상 저평가 신호'];
-  if (pos.includes('하단')) return ['green', pos];
-  if (pos.includes('중앙')) return ['blue', pos];
-  if (pos.includes('상단 위')) return ['', pos + ' — 프리미엄 구간'];
-  return ['amber', pos];
-}
-
-/* ── 결과 렌더 ── */
-function renderReport(r) {
-  const cx = r.cx, area = r.area;
-  const isLive = !!state.liveSel;
-  const conf = r.confidence;
-  const S = DATA.defaultSources;
-  const mref = r.marketRef, V = r.verdicts, FU = r.future, ST = r.structural;
-
-  const rvLow = mref ? mref.low : r.range.low, rvHigh = mref ? mref.high : r.range.high, rvMid = mref ? mref.med : r.combineOut.center;
-  const lo0 = Math.min(rvLow, r.currentPrice), hi0 = Math.max(rvHigh, r.currentPrice);
-  const span = hi0 - lo0 || 1;
-  const dLo = lo0 - span * 0.18, dHi = hi0 + span * 0.18;
-  const pos = x => ((x - dLo) / (dHi - dLo) * 100).toFixed(1);
-
-  const vCls = { '할인': 'green', '적정': 'blue', '프리미엄': 'amber' };
-  const fCls = { '강함': 'green', '양호': 'green', '보통': 'blue', '약함': 'amber' };
-  const eCls = { '낮음': 'green', '보통': 'blue', '높음': 'amber', '매우 높음': '' };
-
-  const contribRows = r.explain.contrib.map(c => {
-    const w = Math.min(50, Math.abs(c.v) / 40 * 50);
-    return `<div class="cr"><div class="ck">${esc(c.k)}</div>
-      <div class="cbar"><span class="mid"></span><i class="${c.v >= 0 ? 'pos' : 'neg'}" style="width:${w}%"></i></div>
-      <div class="cv">${c.v >= 0 ? '+' : ''}${Math.round(c.v)}</div></div>`;
-  }).join('');
-
-  const sbRow = (k, v) => `<div class="sb"><div class="k">${k}</div><div class="sbar"><i style="width:${Math.round(v)}%"></i></div><div class="v">${Math.round(v)}</div></div>`;
-
-  const compRows = r.market.comps.slice().sort((a, b) => b.w - a.w).slice(0, 8).map(c =>
-    `<tr><td>${c.ym}</td><td>${esc(c.label)}</td><td>${fmtEok(c.raw)}</td><td>${fmtEok(c.v)}</td><td>${(c.w * 100).toFixed(0)}%</td></tr>`).join('');
-
-  const fin = r.financial, sup = r.supplyE, opt = r.option, hd = r.hedonic, ed = hd.eduDetail;
-
-  const srcCommon = `<div class="kv"><span>교육생활권·Anchor 학원군 (공개 학교·학원 정보 큐레이션)</span><span>${esc(HUBS.asOf || '')} 기준</span></div>
-       <div class="kv"><span>수도권 철도망·역 가치 (Station Intelligence)</span><span>${esc(STN.meta.updatedAt)} 기준</span></div>`;
-  const srcRows = (isLive
-    ? `<div class="kv"><span>국토교통부 실거래가 공개 API (매매·전월세 자동수집)</span><span>${esc(liveAsOf())} 기준</span></div>
-       <div class="kv"><span>입지·수급 간이 기본값 (pipeline/regions.json)</span><span>${esc(REGIONS.asOf)} 기준</span></div>`
-    : Object.values(S).map(s => `<div class="kv"><span>${esc(s.src)}</span><span>${esc(s.asOf)} 기준</span></div>`).join('')) + srcCommon;
-
-  /* ═══ V2 화면 준비 ═══ */
-  const ful = r.fulfillment, pv = r.explain.priceView;
+/* ── A. 헤더 + 가격 블록 ── */
+function v4HeadHtml(r) {
+  const cx = r.cx, v = r.v4;
+  const sub = [
+    `전용 ${r.area.m2}㎡`,
+    cx.households != null ? `${cx.households.toLocaleString()}세대` : '세대수 미확인',
+    cx.builtYear ? `${cx.builtYear}년 준공` : '준공연도 미확인',
+    [cx.district, cx.dong].filter(Boolean).join(' ')
+  ].filter(Boolean).join(' · ');
   const rep = r.repPrice;
-  const anomaly = rep && (rep.anomalous || rep.anomalousHigh) && r.input.overrides.price == null;
-  const lowFul = ful.overall < (CFG.structuralV2.minFulfillForScore * 100);
-  const circled = ['①', '②', '③', '④', '⑤'];
-  const stG = v => v == null ? '<div class="sb"><div class="k">—</div></div>' : sbRow('', v);
-  const posSentence = (() => {
-    if (!mref) return '';
-    const d = r.currentPrice / mref.med - 1;
-    const where = r.currentPrice > mref.high ? '상단 위' : r.currentPrice < mref.low ? '하단 아래' : '범위 안';
-    return `${r.input.overrides.price != null ? '입력하신 가격' : '최근 거래'} ${fmtEok(r.currentPrice)}은 시장 중심가격 ${fmtEok(mref.med)} 대비 ${signPct(d)} — 시장가격 범위의 <b>${where}</b>입니다.`;
-  })();
-  const divNote = r.combineOut.divergenceLarge
-    ? `<div class="notebox">📐 <b>모델과 시장가격의 차이가 큽니다</b> — 모델 해석 중심이 시장 중심가격 대비 ${signPct(r.combineOut.divergence)}. ${r.combineOut.divergence < 0 ? '구조 경쟁력·임대가치 대비 현재 거래가격이 높다는 뜻으로, 미래 기대나 최근 시장 변화가 모델에 충분히 반영되지 않았을 가능성이 있습니다.' : '모델이 구조·임대가치를 시장보다 높게 평가하고 있습니다 — 시장이 아직 반영하지 않은 요인일 수도, 모델의 한계일 수도 있습니다.'}${r.combineOut.extremeGuarded ? ' (비정상 폭주 방지 가드 적용됨)' : ''}</div>` : '';
-
-  $('report').innerHTML = `
-  <div class="hero">
-    <div class="aptname">${esc(cx.name)} <span style="font-weight:500;color:var(--muted);font-size:13px">${esc(area.label)}</span></div>
-    <div class="aptsub">${esc(cx.city)} ${esc(cx.district)} ${esc(cx.dong)} · ${cx.builtYear ? `${cx.builtYear}년` : '준공연도 미확인'} · ${cx.households != null ? `${cx.households.toLocaleString()}세대` : '세대수 미확인'}${isLive ? ' · 실거래 자동수집' : ''}</div>
-    <div class="quad" style="grid-template-columns:1.2fr 1fr">
-      <div class="hs"><span class="k">현재 시장가격</span><div class="big accent" style="font-size:24px">${mref ? `${fmtEok(mref.low)} ~ ${fmtEokW(mref.high)}` : `${fmtEok(r.range.low)} ~ ${fmtEokW(r.range.high)}`}</div>
-        <div class="s">${mref ? `최근 ${mref.windowDays}일 동일평형 ${mref.n}건 가중중앙값${mref.extended ? ` <span class="stat est">${mref.baseWindowDays || 90}일 거래 부족 — ${mref.windowDays}일까지 확장</span>` : ''}` : '거래 부족 — 모델 해석 범위'}</div></div>
-      <div class="hs"><span class="k">최근 거래 <span class="stat" style="background:var(--raised);border:1px solid var(--line);color:var(--muted)">사실</span></span><div class="big">${fmtEokW(r.currentPrice)}</div>
-        <div class="s">${mref ? `${esc(mref.latest.date)} · ${mref.latest.floor}층${anomaly ? ` <span class="stat est">이상 ${rep.anomalousHigh && !rep.anomalous ? '고가' : '저가'} 가능성</span>` : ''}${r.input.overrides.price != null ? ' · <span class="stat est">사용자 입력값 기준</span>' : ''}` : '실거래 기준'}</div></div>
-    </div>
-    ${anomaly ? `<div class="notebox">📌 <b>모델 판단</b> — 최근 거래 ${fmtEok(rep.latest.price)}은 동기간 또래 거래(중앙값 ${rep.peerMed}억)와 비교하면 <b>이상 ${rep.anomalousHigh && !rep.anomalous ? '고가' : '저가'} 가능성</b>이 있습니다. 실거래는 사실 그대로 표시합니다 — 가격 판단은 시장 중심가격 ${mref ? `${fmtEok(mref.low)}~${fmtEok(mref.high)}` : ''}과 함께 보세요.</div>` : ''}
-    <div class="oneliner" style="margin-top:12px"><b>한 줄 진단</b> — ${esc(r.explain.oneLiner)}</div>
-    <div class="factors" style="margin-top:12px">
-      <div class="fbox up"><div class="fh">이 가격을 설명하는 ${pv.explains.length}가지</div><ul>${pv.explains.map((x, i) => `<li>${circled[i]} ${esc(x)}</li>`).join('')}</ul></div>
-      <div class="fbox down"><div class="fh">주의할 ${pv.cautions.length}가지</div><ul>${pv.cautions.map((x, i) => `<li>${circled[i]} ${esc(x)}</li>`).join('')}</ul></div>
-    </div>
-    <div class="chiprow">
-      <span class="badge ${ful.band === '높음' ? 'green' : ful.band === '보통' ? 'blue' : 'amber'}">데이터 신뢰도 ${ful.overall}% · ${ful.band}</span>
-      ${r.editIssues && r.editIssues.length ? '<span class="badge amber">수정값 검증 필요</span>' : ''}
-      ${r.finHeld ? '<span class="badge gray">금융·전세 분석 보류</span>' : ''}
-    </div>
-    <button class="btn ghost" id="whyJump" style="width:100%;margin-top:12px">왜 이렇게 판단했나요? ↓</button>
+  const anomaly = rep && (rep.anomalous || rep.anomalousHigh) && !(v && v.manualPrice);
+  const dealSub = v && v.deal ? `${v.deal.ym.replace('-', '.')}${v.deal.floor ? ` · ${v.deal.floor}층` : ''}` : '';
+  const priceRow = v && v.manualPrice
+    ? `<div class="prow"><span class="pk">입력하신 시세<small>직접 입력값</small></span><span class="pv num">${fmtEok(v.P)}</span></div>`
+    : `<div class="prow"><span class="pk">최근 실거래<small>${esc(dealSub)}</small></span><span class="pv num">${v ? fmtEok(v.P) : fmtEok(r.currentPrice)}</span></div>`;
+  const askRow = (cx.askLow > 0 && cx.askHigh > 0)
+    ? `<div class="prow ask"><span class="pk">현재 호가<small>${cx.askCount ? `매물 ${cx.askCount}건` : '매물'}</small></span><span class="pv num">${fmtEok(cx.askLow)} <em>~</em> ${fmtEok(cx.askHigh)}</span></div>`
+    : '';
+  return `
+  <div class="v4head">
+    <div class="name">${esc(cx.name)}</div>
+    <div class="hsub">${esc(sub)}${cx.householdsNote ? ` <span class="subtle" style="font-size:11.5px">(${esc(cx.householdsNote)})</span>` : ''}</div>
   </div>
+  <div class="pricebox">
+    ${priceRow}
+    ${askRow}
+    <div class="pnote">아래 명세는 <b>${v && v.manualPrice ? '입력하신 시세' : '최근 실거래'} ${v ? fmtEok(v.P) : fmtEok(r.currentPrice)}</b> 기준입니다.${askRow ? ' 호가는 아직 거래로 확인되지 않은 가격이라 명세에 넣지 않습니다.' : ' 호가(매물 가격)는 거래로 확인된 값이 아니어서 수집하지 않습니다.'}${anomaly ? `<br>직전 거래는 3개월 또래 거래(중앙값 ${rep.peerMed}억)와 차이가 커 <b>이상 ${rep.anomalousHigh && !rep.anomalous ? '고가' : '저가'} 가능성</b>이 있습니다. 실거래는 사실 그대로 표시하며, 다르게 보이면 STEP 2에서 시세를 수정하세요.` : ''}</div>
+  </div>`;
+}
 
-  ${decompCard(r)}
-
-
-  <div class="card" id="scr2">
-    <h2>${circled[0]} 이 아파트는 좋은 아파트인가? <span style="font-size:14px;color:var(--accent)">${ST.score == null ? '판단 보류' : lowFul ? `${esc(ST.band)} 추정` : `구조 경쟁력 ${ST.score} / 100`}</span></h2>
-    <p class="hint">구조 경쟁력 = 입지·교육주거·상품·희소성. 미래 기대는 넣지 않습니다 — 한 달 시세가 움직여도 이 값은 흔들리지 않습니다.</p>
-    ${ST.score == null
-      ? '<p class="subtle">핵심 구조 데이터가 부족해 점수를 만들지 않습니다. 데이터 수정하기에서 세대수·역 정보를 보완하면 평가할 수 있습니다.</p>'
-      : lowFul
-        ? `<p style="font-size:15px"><b>${esc(ST.band)} 추정</b> — 데이터 충족도가 ${ful.overall}%로 낮아 정밀 점수 대신 등급 범위로만 제시합니다 (원칙 3: 모르는 것은 모른다고 말한다).</p>`
-        : ''}
-    ${ST.comps.location != null ? sbRow('입지 (교통·직주)', ST.comps.location) : '<div class="sb"><div class="k">입지</div><div style="font-size:11px;color:var(--muted)">미확인 — 제외</div><div class="v">—</div></div>'}
-    ${ST.comps.living != null ? sbRow('교육·주거 환경', ST.comps.living) : '<div class="sb"><div class="k">교육·주거</div><div style="font-size:11px;color:var(--muted)">미확인 — 제외</div><div class="v">—</div></div>'}
-    ${ST.comps.product != null ? sbRow('상품성', ST.comps.product) : '<div class="sb"><div class="k">상품성</div><div style="font-size:11px;color:var(--muted)">미확인 — 제외</div><div class="v">—</div></div>'}
-    ${ST.comps.scarcity != null ? sbRow('희소성', ST.comps.scarcity) : '<div class="sb"><div class="k">희소성</div><div style="font-size:11px;color:var(--muted)">미확인 — 제외</div><div class="v">—</div></div>'}
-    ${ed ? `<details class="acc" style="margin-top:10px"><summary><span class="sumleft">🎓 교육 ${ed.score}점 · ${esc(ed.tier)}등급${ed.zoneName ? ` — ${esc(ed.zoneName)}${ed.adjacent ? ' 인접' : ''}` : ''}</span><span class="sumr">${'★'.repeat(ed.stars)}${'☆'.repeat(5 - ed.stars)}</span></summary><div class="detail-body">
-      ${Object.entries(ed.comps).map(([k, v]) => sbRow(ed.labels[k], v)).join('')}
-      ${ed.missing.length ? `<p class="subtle">미확보 데이터 제외: ${ed.missing.map(k => esc(ed.labels[k])).join(' · ')} — 추정값으로 채우지 않고 나머지 가중치로 재계산했습니다.</p>` : ''}
-      ${ed.anchorBonus > 0 ? `<div class="kv"><span>Anchor 학원군 (대표 학원 카테고리 ${ed.anchorsCovered}/${ed.anchorsTotal})</span><span>보조 +${ed.anchorBonus}점</span></div>` : ''}
-      ${ed.relative ? `<div class="kv"><span>상대 위치</span><span class="strong">수도권 교육생활권 ${ed.relative.n}곳 중 상위 ${ed.relative.pctile}%</span></div>` : ''}
-      <div class="kv"><span>데이터 신뢰도</span><span>${'★'.repeat(ed.stars)}${'☆'.repeat(5 - ed.stars)} · ${esc(ed.covLabel)}</span></div>
-      <div class="op" style="margin-top:8px"><div class="ot">왜 이 점수인가</div><p>${esc(ed.why)}</p></div>
-      <div class="op"><div class="ot">아쉬운 점</div><p>${esc(ed.weak)}</p></div>
-      <p class="subtle">등급은 지역 이름이 아니라 구성요소 점수에서 계산됩니다 (데이터 → 점수 → 등급). 생활권 매칭은 법정동·좌표 기준 — 행정동 표기가 달라도 실제 생활권이 같으면 같이 평가합니다.</p>
-    </div></details>` : ''}
-    <p class="subtle">데이터 충족 ${ful.overall}%${ST.excluded.length ? ` · 미확인 그룹(${ST.excluded.length}) 제외 후 재정규화` : ''} — 좋은 아파트와 좋은 가격은 다른 질문입니다. 가격은 아래에서.</p>
-  </div>
-
-  <div class="card" id="scr3">
-    <h2>${circled[1]} 지금 가격은 좋은 가격인가? <span style="font-size:14px;color:var(--accent)">가격매력도 ${r.scores.attract.score} / 100</span></h2>
-    <p class="hint">${esc(r.scores.attract.sentence)}</p>
-    <div class="rangeviz">
-      <div class="rv-band">
-        <div class="rv-rail"></div>
-        <div class="rv-fill" style="left:${pos(rvLow)}%;width:${(pos(rvHigh) - pos(rvLow)).toFixed(1)}%"></div>
-        <div class="rv-center" style="left:${pos(rvMid)}%"></div>
-        <div class="rv-price" style="left:${pos(r.currentPrice)}%" title="현재 가격"></div>
-      </div>
-      <div class="rv-labels"><span>${fmtEok(rvLow)}</span><span>시장가격 범위 (중심 ${fmtEok(rvMid)})</span><span>${fmtEok(rvHigh)}</span></div>
-      <div class="rv-cap">● 현재 가격 위치 — ${posSentence}</div>
+/* ── B. 가격 명세 (첫 화면) ── */
+function v4SpecHtml(r, bm) {
+  const v = r.v4;
+  const colors = { live: 'var(--l1)', income: 'var(--l2)', fixed: 'var(--l3)', unknown: 'var(--l4)' };
+  const segs = v.layers.filter(l => l.amt > 0).map(l =>
+    `<span style="background:${colors[l.id]};flex:${Math.max(0.02, l.amt / v.P).toFixed(3)}"></span>`).join('');
+  const rows = v.layers.map(l => `
+    <div class="brow">
+      <span class="dot" style="background:${colors[l.id]}"></span>
+      <span class="lbl">${esc(l.label)}<small>${esc(l.sub)}</small></span>
+      <span class="amt num">${l.id === 'unknown' && v.residNone ? '없음' : fmtEok(l.amt)}</span><span class="pct num">${l.id === 'unknown' && v.residNone ? '' : l.pct + '%'}</span>
+    </div>`).join('');
+  const explained = Math.min(100, 100 - (v.residNone ? 0 : v.layers[v.layers.length - 1].pct));
+  const readout = v.residNone
+    ? `가격 전체가 지금 살 수 있는 값과 소득 상승${v.events.length ? ', 확정 호재' : ''}로 설명됩니다 — 설명되지 않는 비중이 없습니다.`
+    : `가격의 <b>${explained}%</b>는 지금 살 수 있는 값과 소득 상승${v.events.length ? ', 호재' : ''}로 설명됩니다. 나머지 ${fmtEok(v.resid)}은 맨 아래에서 다룹니다.`;
+  const rentRows = [];
+  if (v.rent.jeonse) {
+    const j = v.rent.jeonse;
+    rentRows.push(`<div class="brow2 ${v.rent.picked === 'jeonse' ? 'pick' : ''}"><span>전세 기준 (${fmtEok(j.v)} × ${(v.conv * 100).toFixed(1)}%)${v.rent.picked === 'jeonse' ? '<span class="pickmark">채택</span>' : ''}</span><span>${v.rent.picked === 'jeonse' ? '<b>' : ''}연 ${fmtMan(v.rent.Rj * 10000)}${v.rent.picked === 'jeonse' ? '</b>' : ''}</span></div>`);
+  }
+  if (v.rent.wolse) {
+    const w = v.rent.wolse;
+    rentRows.push(`<div class="brow2 ${v.rent.picked === 'wolse' ? 'pick' : ''}"><span>월세 기준 (보증금 ${fmtEok(w.dep)} + 월 ${fmtMan(w.mr)})${v.rent.picked === 'wolse' ? '<span class="pickmark">채택</span>' : ''}</span><span>${v.rent.picked === 'wolse' ? '<b>' : ''}연 ${fmtMan(v.rent.Rw * 10000)}${v.rent.picked === 'wolse' ? '</b>' : ''}</span></div>`);
+  }
+  const srcBits = [];
+  if (v.rent.jeonse) srcBits.push(v.rent.jeonse.manual ? '전세는 입력하신 값'
+    : v.rent.jeonse.fromMedian ? `전세 실거래 ${v.rent.jeonse.n || '—'}건 중앙값 (최근 ${v.rent.jeonse.windowMo || '—'}개월)`
+    : `전세 신규계약 최근 ${v.rent.jeonse.n}건 평균 (${v.rent.jeonse.windowMo}개월 창${v.rent.jeonse.ext ? ' — 6개월 내 거래 부족으로 확대' : ''})`);
+  if (v.rent.wolse) srcBits.push(`월세 신규계약 ${v.rent.wolse.n}건 평균 (최근 ${v.rent.wolse.windowMo}개월${v.rent.wolse.ext ? ' — 기간 확대' : ''})`);
+  const why = v.rent.jeonseOnly
+    ? `이 평형은 월세 실거래가 없어 <b>전세 신규계약만으로 산정</b>했습니다. 전세·월세 모두 갱신계약(5% 상한에 눌린 가격)은 제외합니다.`
+    : `전세는 계약갱신 때문에 시세보다 눌려 있을 수 있습니다. 법정 전환 상한도 갱신에만 적용되고 신규계약은 자유롭습니다. 그래서 <b>둘 다 신규계약으로 환산해 높은 쪽</b>을 씁니다.`;
+  return `
+  <div class="card v4card">
+    <div class="eyebrow">가격 명세</div>
+    <h2>${fmtEok(v.P)}은 무엇으로 되어 있나</h2>
+    <div class="stack">${segs}</div>
+    ${rows}
+    <div class="readout">${readout}</div>
+    <div class="basis">
+      <div class="t">실거주가치는 이렇게 잡았습니다</div>
+      ${rentRows.join('')}
+      <div class="why">${why} 채택한 임대료에서 세금·수리비·공실 몫 ${(v.costRate * 100).toFixed(0)}%를 뺀 값이 계산의 출발점입니다.<br><span class="subtle">${srcBits.map(esc).join(' · ')} · 전환율 ${(v.conv * 100).toFixed(1)}% (${esc(r.cx.district || '지역')} 시장 기준)</span></div>
     </div>
-    <div class="chiprow">
-      <span class="vlabel-chip">시장 상대평가</span><span class="badge ${vCls[V.market.label] ?? 'gray'}">${V.market.label}</span>
-      <span class="vlabel-chip">금융 지지력</span><span class="badge ${fCls[V.financial.label] ?? 'gray'}">${V.financial.held ? V.financial.label : `${V.financial.label} ${Math.round(V.financial.ratio * 100)}%`}</span>
-      <span class="vlabel-chip">미래 기대 반영도</span><span class="badge ${eCls[V.expectation.label] ?? 'gray'}">${V.expectation.label}</span>
+  </div>`;
+}
+
+/* ── C. 지난 10년 실적 ── */
+function v4HistHtml(r) {
+  const v = r.v4, h = v.hist;
+  if (!h || v.gReq == null) return '';
+  const gH = h.g, gNeed = v.gReq, gInc = v.gIncome;
+  const dHist = h.src === 'self'
+    ? `전세 ${fmtEok(h.oldDep)} → ${fmtEok(h.nowDep)}`
+    : `${esc(h.guName || '')} 전세 평균 기준`;
+  const needCap = v.gReqSat === 'high' ? `${(gNeed * 100).toFixed(0)}% 이상` : `${(gNeed * 100).toFixed(1)}%`;
+  const exHist = gH - gInc, exNeed = gNeed - gInc;
+  const diff = exNeed - exHist;
+  const punch = diff > 0.002
+    ? `지난 10년 이 단지${h.src === 'gu' ? '가 속한 지역' : ''}은 가구 소득보다 연 ${fmtGp(exHist)} ${exHist >= 0 ? '빠르게' : '느리게'} 올랐습니다.<br>지금 가격은 앞으로 <b>${fmtGp(exNeed)}</b>를 기대합니다. 과거보다 <b>${fmtGp(diff).replace('+', '')} 더</b> 요구하는 셈입니다.`
+    : diff < -0.002
+      ? `지난 10년 실적(연 ${fmtG(gH)})이 지금 가격이 요구하는 수준(연 ${needCap})보다 높습니다.<br>과거 흐름이 이어진다면 지금 가격은 무리한 기대가 아닙니다.`
+      : `지금 가격이 요구하는 상승(연 ${needCap})은 지난 10년 실적(연 ${fmtG(gH)})과 거의 같습니다.`;
+  const readout = diff > 0.002
+    ? `과거 흐름이 그대로 이어지면 지금 가격은 대체로 설명됩니다. 다만 <b>과거보다 조금 더 좋아진다</b>는 전제가 붙어 있습니다.`
+    : `과거 흐름만 이어져도 지금 가격이 설명되는 구간입니다.`;
+  return `
+  <div class="card v4card">
+    <div class="eyebrow">지난 10년 실적</div>
+    <h2>${h.src === 'self' ? '이 단지 임대료는 실제로 이렇게 올랐습니다' : '이 지역 임대료는 실제로 이렇게 올랐습니다'}</h2>
+    <div class="track">
+      <div class="tbox"><div class="k">지난 10년 · 실제</div><div class="v num">${(gH * 100).toFixed(1)}%</div><div class="d">${dHist}</div></div>
+      <div class="arrow">→</div>
+      <div class="tbox fut"><div class="k">앞으로 10년 · 필요</div><div class="v num">${needCap}</div><div class="d">월 ${fmtMan(h.nowMo)} → ${fmtMan(h.needMo)}</div></div>
     </div>
-    <div class="kv"><span>모델 해석 범위 (구조·임대가치 기반)</span><span>${fmtEok(r.range.low)} ~ ${fmtEokW(r.range.high)}</span></div>
-    ${divNote}
-  </div>
-
-  <div class="card" id="scr4">
-    <h2>${circled[2]} 현재 가격에는 무엇이 들어가 있나?</h2>
-    <p class="hint">이 가격을 사는 것은 무엇을 믿고 사는 것인가 — 확인된 가치와 기대를 구분합니다.</p>
-    <div class="tiles3">
-      <div class="t3" style="cursor:default"><div class="k">확인된 가치</div>
-        <ul style="margin:6px 0 0;padding-left:16px;font-size:12.5px;line-height:1.7;text-align:left">${pv.explains.map(x => `<li>${esc(x)}</li>`).join('') || '<li>—</li>'}</ul></div>
-      <div class="t3" style="cursor:default"><div class="k">가격에 반영된 기대</div>
-        <ul style="margin:6px 0 0;padding-left:16px;font-size:12.5px;line-height:1.7;text-align:left">${pv.reflected.map(x => `<li>${esc(x)}</li>`).join('') || '<li>뚜렷한 선반영 기대 없음</li>'}</ul></div>
-      <div class="t3" style="cursor:default"><div class="k">아직 불확실한 기대</div>
-        <ul style="margin:6px 0 0;padding-left:16px;font-size:12.5px;line-height:1.7;text-align:left">${r.futureView.optional.length ? r.futureView.optional.map(o => `<li>${esc(o.name)} — 가능성 ${esc(o.likelihood)}</li>`).join('') : '<li>확인된 불확실 기대 없음</li>'}</ul></div>
+    <div style="margin-top:16px">
+      <div class="bline"><span class="l">같은 기간 가구 소득 (전국)</span><span class="r num">연 ${fmtG(gInc)}</span></div>
+      <div class="bline"><span class="l">${h.src === 'self' ? '이 단지가' : '이 지역이'} 더 오른 폭 (실적)</span><span class="r num">${fmtGp(exHist)}</span></div>
+      <div class="bline"><span class="l">지금 가격이 기대하는 폭</span><span class="r num" style="color:var(--l-alert)">${fmtGp(exNeed)}</span></div>
     </div>
-    ${r.futureView.confirmed.length ? `<p class="subtle" style="margin-top:10px">확정·진행 중 변화: ${r.futureView.confirmed.map(c => `${esc(c.name)} (${esc(c.impact)})`).join(' · ')}</p>` : ''}
-    <div class="factors" style="margin-top:12px">
-      <div class="fbox up"><div class="fh">추가 상승을 위해 필요한 조건</div><ul>${pv.upside.map(x => `<li>${esc(x)}</li>`).join('') || '<li>—</li>'}</ul></div>
-      <div class="fbox down"><div class="fh">깨질 경우 위험한 조건</div><ul>${pv.risks.map(x => `<li>${esc(x)}</li>`).join('') || '<li>—</li>'}</ul></div>
+    <div class="punch">${punch}</div>
+    <div class="readout">${readout}${h.src === 'gu' ? `<br><span class="subtle">이 단지의 10년 전 전세 실거래가 없어(신축 등) ${esc(h.guName || '지역')} 평균(${esc(h.oldQ || '')} → 현재, ㎡당 전세 기준)으로 계산했습니다. 지역 평균은 신축 입주 같은 단지 구성 변화를 포함한 참고치입니다.</span>` : `<br><span class="subtle">과거·현재 모두 전세 신규계약 보증금 기준(${esc(h.oldQ || '')} 분기 실거래 ${h.nOld || ''}건 → 현재)으로 같은 방식으로 비교했습니다.</span>`}</div>
+  </div>`;
+}
+
+/* ── D. 인근 단지 비교 ── */
+function v4NearHtml(r, bm) {
+  if (!bm) return '';
+  const v = r.v4;
+  const vals = bm.all.map(x => x.resid);
+  const lo = Math.min(...vals, 0), hi = Math.max(...vals, 5);
+  const span = hi - lo || 1;
+  const X = x => (6 + (x - lo) / span * 88).toFixed(1);
+  const pins = bm.all.map(x => x.self
+    ? `<div class="pin me" style="left:${X(x.resid)}%"></div><div class="plabel" style="left:${X(x.resid)}%">이 단지 ${x.resid <= 0 ? '0' : x.resid}%</div>`
+    : `<div class="pin" style="left:${X(x.resid)}%" title="${esc(x.name)}"></div>`).join('');
+  const selfResid = Math.max(0, v.residPct);
+  const ord = ['첫', '두', '세', '네', '다섯', '여섯', '일곱', '여덟', '아홉', '열'][bm.rank - 1] || bm.rank + '';
+  const title = bm.rank <= 10 ? `임대료가 ${ord} 번째로 든든하게 받쳐줍니다` : `임대료 받침이 ${bm.n}개 단지 중 ${bm.rank}번째입니다`;
+  return `
+  <div class="card v4card">
+    <div class="eyebrow">${esc(bm.region)} ${bm.n}개 단지 중</div>
+    <h2>${title}</h2>
+    <div class="plot">
+      <div class="axis"></div>
+      ${pins}
+      <div class="tick" style="left:${X(lo)}%">${lo}%</div>
+      <div class="tick" style="left:${X(bm.med)}%">${bm.med}%</div>
+      <div class="tick" style="left:${X(hi)}%">${hi}%</div>
     </div>
-  </div>
+    <div class="cap">가로축 = 설명되지 않는 비중. 왼쪽일수록 지금 임대료가 가격을 잘 설명합니다.</div>
+    <div class="readout">인근 ${bm.top.length}개 단지는 평균적으로 가격의 <b>${bm.med}%</b>가 설명되지 않습니다. 이 단지는 <b>${selfResid}%</b>로 ${selfResid < bm.med ? '평균보다 낮습니다' : selfResid > bm.med ? '평균보다 높습니다 — 그만큼 기대에 값을 지불하는 셈입니다' : '평균과 같습니다'}.</div>
+  </div>`;
+}
 
-  <div class="card" id="stressCard">
-    <h2>${circled[3]} 무엇이 달라지면 판단도 달라지나?</h2>
-    <p class="hint">가정을 바꿔보세요 — 전세·금리·공급이 움직이면 지지력과 판정이 어떻게 변하는지 즉시 재계산합니다. 복수 선택 가능.</p>
-    <div class="stressgrid" id="stressBtns">
-      ${CFG.stress.presets.map(p => `<button class="sbtn" data-sid="${p.id}" aria-pressed="false">${esc(p.label)}</button>`).join('')}
-      <button class="sreset" id="stressReset">초기화</button>
-    </div>
-    <div id="stressOut"></div>
-  </div>
+/* ── E. 적정가 ── */
+function v4FairHtml(r, bm) {
+  const v = r.v4, V = CFG.v4;
+  const rowVal = g => AptEngine.v4FairAt(v.R, v.k, g, CFG, v.events, v.P).Vfair;
+  const sc = v.scen;
+  const card = (s, mid) => `<div class="sc ${mid ? 'mid' : ''}"><div class="k">${esc(s.label)}</div><div class="v num">${fmtEok(s.v)}</div><div class="d">${s.desc.map(esc).join('<br>')}</div></div>`;
+  const vInfl = rowVal(0.02);
+  const vInc = sc.base.v;
+  const vNbr = bm && bm.gNbr != null ? rowVal(bm.gNbr) : null;
+  const diff = v.P - vInc;
+  const readout = diff > 0.05
+    ? `소득이 오른 만큼 임대료가 오른다면 <b>${fmtEok(vInc)}</b>입니다. 차액 <b>${fmtEok(diff)}</b>은 이 단지가 평균보다 더 좋아진다고 볼 때만 설명됩니다.`
+    : `소득이 오른 만큼 임대료가 오른다고 보면 <b>${fmtEok(vInc)}</b> — 지금 가격은 그 기준선 ${diff < -0.05 ? '아래' : '부근'}에 있습니다.`;
+  const needSub = v.gReqSat === 'high' ? `연 ${(v.gReq * 100).toFixed(0)}% 이상을 기대하는 가격` : `연 ${(v.gReq * 100).toFixed(1)}%를 기대하는 가격`;
+  return `
+  <div class="card v4card">
+    <div class="eyebrow">적정가</div>
+    <h2>어디까지 인정하느냐에 달렸습니다</h2>
+    <div class="scen">${card(sc.pess)}${card(sc.cons, true)}${card(sc.opti)}</div>
+    <div class="basenote">기준 시나리오(현 금리 유지 + 소득 ${fmtG(V.gBase)})는 <b>${fmtEok(sc.base.v)}</b>입니다.</div>
+    <div class="srow"><span class="s-l">전국 물가만큼만<small>연 2.0%</small></span><span class="s-r num">${fmtEok(vInfl)}</span></div>
+    <div class="srow"><span class="s-l">가구 소득만큼<small>연 ${fmtG(V.gBase)} · 2024년 실적</small></span><span class="s-r num">${fmtEok(vInc)}</span></div>
+    ${vNbr != null ? `<div class="srow"><span class="s-l">인근 평균만큼 기대받는다면<small>연 ${fmtG(bm.gNbr)}</small></span><span class="s-r num">${fmtEok(vNbr)}</span></div>` : ''}
+    <div class="srow now"><span class="s-l">${v.manualPrice ? '입력하신 시세' : '최근 실거래'}<small>${needSub}</small></span><span class="s-r num">${fmtEok(v.P)}</span></div>
+    <div class="readout">${readout}</div>
+  </div>`;
+}
 
-  <div class="card" id="riskCard">
-    <h2>시장·공급 리스크</h2>
-    <div class="kv"><span>공급 부담</span><span class="strong">${esc(sup.gradeLabel)} (종합 부담률 ${sup.combined.toFixed(2)})</span></div>
-    <div class="kv"><span>전세 지지력</span><span class="strong">${r.support ? `${esc(r.support.label)} (${r.support.score}점)` : '분석 보류 — 전세 실거래 없음'}</span></div>
-    <div class="kv"><span>매수수요 환경</span><span style="text-align:left;flex:1.6">${esc(sup.regulation.demandSide)}</span></div>
-    <div class="kv"><span>매물잠김 효과</span><span style="text-align:left;flex:1.6">${esc(sup.regulation.lockinSide)}</span></div>
-    <p class="subtle">${esc(sup.notes[0] || '')}</p>
-  </div>
-
-  <div class="card" id="trustCard">
-    <h2>데이터 신뢰도 ${ful.overall}% · ${ful.band}</h2>
-    <p class="hint">이 진단이 어떤 데이터 위에 서 있는지 공개합니다 — 미확인(UNKNOWN)은 임의 중립값으로 채우지 않고 제외했습니다.</p>
-    ${Object.entries(ful.cats).map(([k, v]) => sbRow(CFG.fulfillment.labels[k] || k, v)).join('')}
-    ${r.dataStatus ? `<div class="chips" style="margin-top:10px">
-      <span class="stat ok">확인(VERIFIED) ${r.dataStatus.VERIFIED}</span>
-      <span class="stat info">사용자 확인(USER_VERIFIED) ${r.dataStatus.MANUAL}</span>
-      <span class="stat est">추정(ESTIMATED) ${r.dataStatus.ESTIMATED}</span>
-      <span class="stat" style="color:var(--muted);background:var(--raised);border:1px solid var(--line)">미확인(UNKNOWN) ${r.dataStatus.UNKNOWN}</span>
-    </div>` : ''}
-    ${r.editIssues && r.editIssues.length ? `<div class="notebox" style="margin-top:10px">⚠️ <b>수정값 검증 필요</b> — ${r.editIssues.map(esc).join(' · ')}. 값이 실제와 맞는지 확인해 주세요 (합리성 검증을 통과한 수정은 신뢰도를 깎지 않습니다).</div>` : ''}
-    <div class="kv" style="margin-top:8px"><span>모델 신뢰도 (거래 수·최근성 기반)</span><span>${conf.score}/100 · ${esc(conf.label)}</span></div>
-    ${conf.penalties.length ? `<p class="subtle">${conf.penalties.map(esc).join(' · ')}</p>` : ''}
-    <h3 class="mini-h">데이터 출처·기준일</h3>
-    ${srcRows}
-    <div class="kv"><span>금리·계수 설정</span><span>${esc(CFG.asOf)} 기준 (config)</span></div>
-  </div>
-
-  <button class="btn ghost" id="deepToggle" style="width:100%;margin:4px 0 14px">🔍 상세 계산 근거 보기 — 거래 샘플·가중치·공식·전체 엔진</button>
-  <div id="deepWrap" hidden>
-
-  ${whyPriceCard(r)}
-
-  ${(() => {
-    /* ═══ §23-26 왜 이 가격인가 — 요소별 기여를 실제 재계산으로 금액 표시 ═══ */
-    const cb = state.contrib;
-    if (!cb || !cb.items.length) return '';
-    const fmtAmt = v => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(v >= 0.995 || v <= -0.995 ? 1 : 2)}억`;
-    const upNames = cb.up.map(i => i.label.split('(')[0].trim());
-    const downNames = cb.down.map(i => i.label.split('(')[0].trim());
-    const lead = mref
-      ? `최근 ${mref.windowDays}일 동일면적 실거래 ${mref.n}건의 가중중앙값 <b>${fmtEokW(mref.med)}</b>을 기준으로 계산했습니다.`
-      : `비교거래 앵커 <b>${fmtEokW(r.market.value)}</b>을 기준으로 계산했습니다.`;
-    const story = upNames.length
-      ? ` ${AptEngine.josa(upNames.slice(0, 2).join('과 '), '이', '가')} 가격을 가장 크게 끌어올렸고${downNames.length ? `, ${AptEngine.josa(downNames.join('·'), '은', '는')} 할인요인으로 작용했습니다` : ', 뚜렷한 할인요인은 없습니다'}.`
-      : downNames.length ? ` ${AptEngine.josa(downNames.join('·'), '이', '가')} 할인요인으로 작용했습니다.` : '';
-    const maxAbs = Math.max(...cb.items.map(i => Math.abs(i.amt)), 0.01);
-    const rowOf = i => `<div class="cr"><div class="ck">${esc(i.label)}</div>
-      <div class="cbar"><span class="mid"></span><i class="${i.amt >= 0 ? 'pos' : 'neg'}" style="width:${Math.min(50, Math.abs(i.amt) / maxAbs * 50)}%"></i></div>
-      <div class="cv">${fmtAmt(i.amt)}</div></div>`;
-    return `<div class="card" id="whyContribCard">
-      <h2>무엇이 이 가격을 만들었나 — 단지 속성 기여 (추정)</h2>
-      <p style="font-size:13.5px;line-height:1.75;color:var(--ink2);margin:0 0 12px">${lead}${story}</p>
-      <div class="factors">
-        <div class="fbox up"><div class="fh">가격 상승 요인</div><ul>${cb.up.map(i => `<li>${esc(i.label)} <b>${fmtAmt(i.amt)}</b></li>`).join('') || '<li>뚜렷한 상승 기여 없음</li>'}</ul></div>
-        <div class="fbox down"><div class="fh">가격 하락 요인</div><ul>${cb.down.map(i => `<li>${esc(i.label)} <b>${fmtAmt(i.amt)}</b></li>`).join('') || '<li>뚜렷한 하락 기여 없음</li>'}</ul></div>
-      </div>
-      <div style="margin-top:12px">${cb.items.map(rowOf).join('')}</div>
-      <div class="kv" style="margin-top:10px"><span>모델 해석 범위</span><span class="strong">${fmtEok(r.range.low)} ~ ${fmtEokW(r.range.high)} · 중심 ${fmtEok(r.combineOut.center)}</span></div>
-      <p class="subtle" style="margin-top:8px">${esc(cb.note)} 평균적 단지(기준점) 대비 반영분 추정이며, 세부 계산은 아래 '상세 계산 근거 보기'에서 공개합니다.</p>
-    </div>`;
-  })()}
-
-  ${r.transit ? (() => {
-    const t = r.transit, p = t.primary;
-    const totalStn = Object.keys(STN.stations).length;
-    const goldenRows = p.lines.map(ln => { const L = LINEI.lines.find(x => x.name === ln); return L ? `<span class="badge gray" style="border-color:${L.color};color:var(--ink)"><i style="width:8px;height:8px;border-radius:50%;background:${L.color};display:inline-block"></i>${esc(ln)} 노선 가치 ${L.golden}${L.tier ? ' · ' + L.tier : ''}</span>` : ''; }).join(' ');
-    let hopViz = '';
-    for (const ln of p.lines) {
-      const le = RAIL_LINES.find(x => x.name === ln && !x.overlay && x.stations.includes(p.st));
-      if (!le) continue;
-      const i = le.stations.indexOf(p.st);
-      const trio = [le.stations[i - 1], p.st, le.stations[i + 1]].filter(Boolean);
-      hopViz = `<h3 class="mini-h">한 정거장의 가치 (${esc(ln)})</h3><div class="hopviz">${trio.map(s => { const d = STN.stations[s]; return `<div class="hop ${s === p.st ? 'cur' : ''}"><div class="hn">${esc(s)}</div><div class="hv">${d ? Math.round(d.sv) : '—'}</div><div class="hs">Station Value</div></div>`; }).join('')}</div>`;
-      break;
+/* ── F. 직접 조정하기 ── */
+function v4AdjustHtml(r) {
+  const v = r.v4, V = CFG.v4, F = CFG.financial;
+  const tr0 = v.events.find(e => e.id === 'transit');
+  const rb0 = v.events.find(e => e.id === 'redev');
+  const histOpt = v.hist ? { g: v.hist.g, label: `연 ${fmtG(v.hist.g)}` } : null;
+  const opt = (id, label, hint, pressed, data) =>
+    `<button class="opt" ${data} aria-pressed="${pressed}">${esc(label)}<small>${esc(hint)}</small></button>`;
+  const rateOpts = V.rateOptions.map(o => opt('r', o.label, o.hint, o.id === 'now', `data-k="${o.k}"`)).join('');
+  const incOpts = V.incomeOptions.map(o => {
+    if (o.id === 'hist') {
+      if (!histOpt) return '';
+      return opt('g', o.label, histOpt.label, false, `data-g="${histOpt.g}"`);
     }
-    let sentence;
-    if (t.bonus > 0.01 && t.bonusNotes.length) sentence = `단순한 복수 역세권이 아니라, ${t.bonusNotes[0]} — 서로 다른 생활권을 실제로 확장하는 구성이라 추가 가치를 인정했습니다.`;
-    else if (t.secondary) sentence = `두 개 역을 이용할 수 있지만 접근 가능한 업무지가 크게 겹쳐, 가장 강한 역(${esc(p.st)}) 중심으로 평가했습니다 — 노선 개수가 아니라 새로 열리는 목적지가 기준입니다.`;
-    else if (p.express) sentence = `${esc(p.st)}은(는) 급행·광역 노선이 정차해 단일 노선임에도 주요 업무지 도달력이 높게 평가됐습니다.`;
-    else sentence = `${esc(p.st)}의 힘(업무지 접근·네트워크·목적지가치)과 도보 ${p.min}분 거리를 함께 반영한 평가입니다.`;
-    const sb = (k, v) => `<div class="sb"><div class="k">${k}</div><div class="sbar"><i style="width:${Math.round(v)}%"></i></div><div class="v">${Math.round(v)}</div></div>`;
-    return `<div class="card" id="transitCard">
-    <h2>교통 가치 분석 <span style="font-size:14px;color:var(--accent)">${Math.round(r.hedonic.subs.transport)} / 100</span></h2>
-    <p class="hint">"역세권인가?"가 아니라 "얼마나 강력한 역을 얼마나 가까이 이용하는가"를 평가합니다.</p>
-    <div class="tiles3" style="grid-template-columns:1fr 1fr">
-      <div class="t3" style="cursor:default"><div class="k">가장 강력한 역 — 내 역의 힘</div>
-        <div class="v">${esc(p.st)} <em>${p.lines.map(esc).join(' · ')}</em></div>
-        <div class="s">Station Value <b>${p.sv}</b> / 100 · 균형형 <b>${AptEngine.stationTier(p.sv, CFG).label} 등급</b> (수도권 ${totalStn}개 역 중 상위 ${p.rankPct}%) · 도보 ${p.min}분${p.status === 'ESTIMATED' ? ' <span class="stat est">추정</span>' : p.status === 'MANUAL' ? ' <span class="stat ok">사용자 확인</span>' : ''}</div></div>
-      <div class="t3" style="cursor:default"><div class="k">강남 핵심 접근</div>
-        <div class="v g${gradeCls(t.gangnamScore)}">${t.gangnamScore}<em> / 100</em></div>
-        <div class="s">${esc(p.st)}에서 강남권 약 ${t.gangnamMin}분</div></div>
+    return opt('g', o.label, o.hint, o.id === 'nat', `data-g="${o.g}"`);
+  }).join('');
+  const supOpts = V.supplyOptions.map(o => opt('s', o.label, o.hint, o.id === 'norm', `data-d="${o.d}"`)).join('');
+  const rbOpts = Object.entries(V.redevBuckets).map(([id, b]) =>
+    opt('rb', b.label, b.p > 0 ? `확률 ${(b.p * 100).toFixed(0)}% · ${b.y}년` : '신축·준신축', (rb0 ? rb0.bucket : 'none') === id, `data-p="${b.p}" data-y="${b.y}"`)).join('');
+  const trOpts = Object.entries(V.transitBuckets).map(([id, b]) =>
+    opt('tr', b.label, b.p > 0 ? `확률 ${(b.p * 100).toFixed(0)}% · ${b.y}년` : '계획 없음', (tr0 ? tr0.bucket : 'none') === id, `data-p="${b.p}" data-y="${b.y}"`)).join('');
+  return `
+  <div class="card v4card" id="adjCard">
+    <div class="eyebrow">직접 조정하기</div>
+    <h2>내 생각을 넣으면 얼마인가</h2>
+    <div class="ctl"><div class="q">앞으로 금리는</div>
+      <div class="hint2">지금 ${esc(F.baseRate.label)} ${fmtPct(F.baseRate.value)} · ${esc(F.mortgageRate.label)} ${fmtPct(F.mortgageRate.value)} (${esc(F.baseRate.asOf)})</div>
+      <div class="opts" id="c-rate">${rateOpts}</div></div>
+    <div class="ctl"><div class="q">임대료를 낼 소득은 얼마나 오를까</div>
+      <div class="hint2">전국 가구소득 2024년 +3.4% · 수도권 가구소득은 비수도권보다 20% 높음</div>
+      <div class="opts" id="c-inc">${incOpts}</div></div>
+    <div class="ctl"><div class="q">주변 전월세 수급은</div>
+      <div class="hint2">재건축·재개발 멸실이 많으면 전월세가 부족해져 임대료가 더 오릅니다</div>
+      <div class="opts" id="c-sup">${supOpts}</div></div>
+    <div class="ctl"><div class="q">재건축은 어느 단계인가</div>
+      <div class="hint2">${rb0 ? `이 단지는 ${esc(rb0.bucketLabel)} 단계로 확인됩니다` : '재건축·리모델링 단지용 — 단계가 올라갈수록 확률이 커지고 기다리는 기간이 짧아집니다'}</div>
+      <div class="opts" id="c-rb">${rbOpts}</div></div>
+    <div class="ctl"><div class="q">교통 호재는 어느 단계인가</div>
+      <div class="hint2">${tr0 ? `이 단지는 ${esc(tr0.name)} ${esc(tr0.bucketLabel)} 상태입니다` : '확인된 교통 호재가 없습니다 — 아는 계획이 있으면 선택해 보세요'}</div>
+      <div class="opts" id="c-tr">${trOpts}</div></div>
+    <div class="liveout">
+      <div class="k">이 조건에서의 적정가</div>
+      <div class="v num" id="adj-v"></div>
+      <div class="lbar" id="adj-bar"></div>
+      <div class="cmp" id="adj-c"></div>
     </div>
-    <h3 class="mini-h">역 가치 구성 — 4축 (수도권 전체 역 대비 백분위)</h3>
-    ${sb('교통·네트워크 (30%)', p.comps.transit)}${sb('역세권 경제력 (35%)', p.comps.econ)}${sb('교육·주거 생활권 (20%)', p.comps.edu)}${sb('업무·도시 중심성 (15%)', p.comps.biz)}
-    <div class="chips" style="margin-top:10px">${goldenRows}</div>
-    ${hopViz}
-    <div class="op" style="margin-top:14px"><div class="ot">분석</div><p>${sentence}</p></div>
-    <button class="btn ghost" id="openMapFromResult" style="width:100%;margin-top:8px">🚇 역 가치 지도에서 ${esc(p.st)}역 보기</button>
-    <p class="subtle" style="margin-top:8px">역 가치는 그래프 이동시간·공개 데이터 기반 자동 계산(추정 포함)이며, 기존 교통점수를 대체할 뿐 별도 가산되지 않습니다. 역의 경제력 축은 거주민 소득·소비 수준 추정 등급(5단계)만 사용하고 아파트 시세는 쓰지 않습니다(순환 참조 차단). 아파트 평가에 쓰는 블렌드(svT)는 경제력·교육 축을 각 ${Math.round(CFG.station.v4.axesForValuation.econ * 100)}%·${Math.round(CFG.station.v4.axesForValuation.edu * 100)}%로 축소해, 추정 등급의 불확실성과 단지 교육점수와의 중복을 줄입니다.</p>
-  </div>`; })() : ''}
-
-  <div class="card">
-    <h2>가격을 움직이는 요인</h2>
-    <div class="factors">
-      <div class="fbox up"><div class="fh">가격을 올리는 요인</div><ul>${r.explain.up.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>
-      <div class="fbox down"><div class="fh">가격을 누르는 요인</div><ul>${r.explain.down.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>
-    </div>
-    <h3 class="mini-h">상대적 가치 기여도 <span style="font-weight:400">— 평균적 아파트(0) 대비 상대 지표. 실제 금액 반영 경로는 위 '왜 이 가격인가 → ④ 모델 종합가치'에 공개</span></h3>
-    <div class="contrib">${contribRows}</div>
-  </div>
-
-  <div class="card">
-    <h2>진단 요약</h2>
-    <div class="diag core"><div class="dt">이 아파트의 핵심 경쟁력</div><p>${esc(r.explain.diagnosis.core)}</p></div>
-    <div class="diag supp"><div class="dt">현재 가격을 지지하는 요소</div><p>${esc(r.explain.diagnosis.support)}</p></div>
-    <div class="diag weak"><div class="dt">현재 가격의 취약점</div><p>${esc(r.explain.diagnosis.weakness)}</p></div>
-    <div class="diag watch"><div class="dt">앞으로 볼 변수</div><p>${esc(r.explain.diagnosis.watch)}</p></div>
-  </div>
-
-  <div class="card">
-    <h2>현재 가격에 대한 해석</h2>
-    ${r.explain.interpretation.map(t => `<div class="op"><div class="ot">해석</div><p>${esc(t)}</p></div>`).join('')}
-    ${opt.scenario ? `<div class="notebox"><b>미래 옵션가치 ${opt.gradeLabel}</b> — ${esc(opt.scenario)}${opt.note ? `<br>※ ${esc(opt.note)}` : ''}${opt.premiumNote ? `<br>※ ${esc(opt.premiumNote)}` : ''}</div>` : ''}
-  </div>
-
-  <div class="card">
-    <h2>상세 분석</h2>
-    <p class="hint">다섯 개 엔진의 계산 근거를 각각 확인할 수 있습니다.</p>
-
-    <details class="acc" id="accA"><summary><span class="sumleft">시장 상대가치 — 비교거래 앵커</span><span class="sumr">${fmtEok(r.market.value)}</span></summary><div class="detail-body">
-      <p class="subtle">비교거래 앵커는 유사평형·비교단지까지 포함한 모델 계산용 기준으로, 상단의 '시장 기준가'(동일평형만의 기간창 가중중앙값)와는 정의가 다른 별도 지표입니다 (FR-06 — 같은 개념이 아니므로 이름을 분리).</p>
-      <div class="kv"><span>비교거래 가중중앙값</span><span>${fmtEokW(r.market.value)}</span></div>
-      <div class="kv"><span>가중 25~75분위</span><span>${fmtEok(r.market.p25)} ~ ${fmtEokW(r.market.p75)}</span></div>
-      <div class="kv"><span>비교거래 구성</span><span>동일평형 ${r.market.compCount}건 / 전체 ${r.market.compCountAll}건 (동일평형 비중 ${(r.market.compQuality * 100).toFixed(0)}%)</span></div>
-      <p class="subtle">거래시점이 오래될수록 가중치를 절반씩 감소(반감기 ${CFG.market.compHalfLifeMonths}개월), 타평형·타단지는 면적·특성 보정 후 낮은 유사도로 반영합니다.</p>
-      <div class="tblwrap"><table><thead><tr><th>시점</th><th>구분</th><th>거래가</th><th>보정가</th><th>가중치</th></tr></thead><tbody>${compRows}</tbody></table></div>
-    </div></details>
-
-    <details class="acc" id="accB"><summary><span class="sumleft">금융·임대 내재가치</span><span class="sumr">${fin ? fmtEok(fin.value) : '분석 보류'}</span></summary><div class="detail-body">
-      ${fin ? `
-      <div class="kv"><span>연간 주거서비스 가치 R</span><span>${fmtEokW(fin.R)} <span class="srcline" style="display:inline">(${esc(fin.rSourceText)})</span></span></div>
-      <div class="kv"><span>요구수익률 r</span><span>${fmtPct(fin.r)}</span></div>
-      <div class="kv"><span>장기 임대가치 성장률 g</span><span>${fmtPct(fin.g)}</span></div>
-      <div class="kv"><span>계산 방식</span><span>2단계 — 1~${fin.excessYears}년 g₁ 성장 후 물가(${(fin.growth.infl * 100).toFixed(1)}%)로 착지${fin.terminalGuarded ? ' (종결부 폭주 가드 적용)' : ''}</span></div>
-      <div class="kv"><span>순 임대가치 R</span><span>총 ${fmtRaw(fin.Rgross)}억 − 보유비용 ${(fin.ownerCostRate * 100).toFixed(0)}%(재산세·수리·공실) = <b>${fmtRaw(fin.R)}억</b></span></div>
-      ${r.decomp && r.decomp.rateSensitivity != null ? `<div class="kv"><span>금리 민감도 (k +1%p)</span><span class="strong">임대가치 ${(r.decomp.rateSensitivity * 100).toFixed(1)}%</span></div>
-      <p class="subtle">k−g가 작은 상급지일수록 이론상 금리에 더 취약합니다(채권과 같은 원리). 2022년에 반대로 보였던 건 대출 의존이 낮아 그 구간의 k가 덜 움직였고 희소성 기대가 상쇄했기 때문 — 자산의 성질이 아니라 규제·유동성 구조가 만든 조건부 방어력입니다.</p>` : ''}
-      <div class="kv"><span>임대 내재가치</span><span class="strong">${fmtEokW(fin.value)}</span></div>
-      <div class="kv"><span>현재가 유지에 필요한 성장률 (역산)</span><span class="strong">연 ${fmtPct(fin.impliedG)}</span></div>
-      <h3 class="mini-h">전세 = 자금조달 구조</h3>
-      <div class="kv"><span>전세가율</span><span>${fmtPct(fin.jeonseRatio, 0)}</span></div>
-      <div class="kv"><span>필요 자기자본 (매매가 − 전세가)</span><span>${fmtEokW(fin.equity)}</span></div>
-      ${r.support ? `<div class="kv"><span>전세지지력</span><span class="strong">${r.support.label} (${r.support.score}점)</span></div>
-      <p class="subtle">근거: ${r.support.factors.map(esc).join(' · ')}</p>` : ''}`
-      : '<p class="subtle">전세 실거래가 없어 금융·임대 지지가치와 전세지지력 산출을 보류했습니다. 임의 가정값으로 대체하지 않으며, STEP 2에서 전세 시세를 입력하면 제공됩니다. 시장·주거·수급·미래 분석은 정상 제공됩니다.</p>'}
-    </div></details>
-
-    <details class="acc" id="accC"><summary><span class="sumleft">주거·입지·상품가치</span><span class="sumr">주거가치 ${Math.round(r.scores.living.total)}점</span></summary><div class="detail-body">
-      ${sbRow('교통', hd.subs.transport)}${sbRow('직주근접', hd.subs.job)}${sbRow('교육', hd.subs.education)}${sbRow('생활편의', hd.subs.life)}${sbRow('자연환경', hd.subs.nature)}${sbRow('상품성', hd.subs.product)}
-      <h3 class="mini-h">교육가치 상세 (V2 — 생활권 구성요소)</h3>
-      ${ed ? Object.entries(ed.comps).map(([k, v]) => sbRow(ed.labels[k], v)).join('') : '<p class="subtle">교육 정보 미확인 — 평가 제외</p>'}
-      <p class="subtle">${esc(hd.notes.education.join(' / '))}</p>
-      <h3 class="mini-h">근거 메모</h3>
-      <ul style="margin:4px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink2);line-height:1.7">
-        ${['transport', 'job', 'life', 'nature', 'product'].map(k => (hd.notes[k] || []).map(x => `<li>${esc(x)}</li>`).join('')).join('')}
-      </ul>
-      <p class="subtle" style="margin-top:10px">겹치는 프리미엄(역세권·직주·학군 등)은 카테고리 안에서 점수화하고, 가격 반영은 카테고리별 상한(cap)과 총량 상한으로 제한해 중복가산을 막습니다. 동일단지 동일평형 실거래로 비교할 때는 이 조정이 이미 시장가격에 들어있다고 보고 잔차만 반영합니다(현재 잔차 ${signPct(r.combineOut.hRes)}).</p>
-    </div></details>
-
-    <details class="acc" id="accD"><summary><span class="sumleft">수요·공급·시장구조</span><span class="sumr">${sup.gradeLabel}</span></summary><div class="detail-body">
-      ${sup.notes.map(x => `<div class="kv"><span style="flex:1">${esc(x)}</span><span></span></div>`).join('')}
-      <div class="kv"><span>종합 공급부담 판정</span><span class="strong">${sup.gradeLabel}</span></div>
-      <div class="kv"><span>가격 반영(제한적)</span><span>${signPct(sup.adj)}</span></div>
-      <p class="subtle">간이 수요추정치(인구×${fmtPct(CFG.supply.demandRate, 1)})는 절대수요가 아닌 관행적 근사값입니다. 행정구역만이 아니라 인접 생활권·광역시장을 ${Math.round(CFG.supply.zoneWeights.local * 100)}:${Math.round(CFG.supply.zoneWeights.adjacent * 100)}:${Math.round(CFG.supply.zoneWeights.metro * 100)}으로 가중합니다.${isLive ? ' 자동수집 단지의 공급·인구는 시군구 간이 기본값입니다(STEP 2에서 수정 가능).' : ''}</p>
-      <h3 class="mini-h">규제 효과 (양면)</h3>
-      <div class="kv"><span>매수수요 압력</span><span style="text-align:left;flex:1.2">${esc(sup.regulation.demandSide)}</span></div>
-      <div class="kv"><span>매물잠김 압력</span><span style="text-align:left;flex:1.2">${esc(sup.regulation.lockinSide)}</span></div>
-    </div></details>
-
-    <details class="acc" id="accE"><summary><span class="sumleft">미래 옵션가치</span><span class="sumr">${opt.gradeLabel}</span></summary><div class="detail-body">
-      <div class="kv"><span>정비사업 단계</span><span>${opt.label}</span></div>
-      <div class="kv"><span>단계별 실현확률 가정</span><span>${(opt.prob * 100).toFixed(0)}%</span></div>
-      ${opt.headroom != null ? `<div class="kv"><span>용적률 여유</span><span>${cx.far}% → 허용 ${cx.allowedFar}% (+${(opt.headroom * 100).toFixed(0)}%)</span></div>` : ''}
-      <div class="kv"><span>내재가치 보정(제한적)</span><span>${opt.premium > 0 ? '+' + fmtPct(opt.premium) : '금액 미반영'}</span></div>
-      ${opt.scenario ? `<p class="subtle">${esc(opt.scenario)}</p>` : '<p class="subtle">현재 정비사업·리모델링 추진 단계가 아닙니다. 연식이 쌓이고 용적률 여유가 있으면 옵션가치가 생길 수 있습니다.</p>'}
-      <p class="subtle">연식에 따른 상품성 감점과 재건축 옵션가치는 분리해 계산합니다.</p>
-    </div></details>
-
-    <details class="acc" id="accI"><summary><span class="sumleft">투자가치 구성</span><span class="sumr">${Math.round(r.scores.invest.total)}점</span></summary><div class="detail-body">
-      ${r.scores.invest.subs.jeonseSupport != null ? sbRow('전세지지력', r.scores.invest.subs.jeonseSupport) : '<div class="sb"><div class="k">전세지지력</div><div style="font-size:11px;color:var(--muted)">전세 없음 — 보류·재정규화</div><div class="v">—</div></div>'}${sbRow('수급 구조', r.scores.invest.subs.supplyDemand)}${sbRow('희소성', r.scores.invest.subs.scarcity)}${sbRow('미래가치', r.scores.invest.subs.future)}${sbRow('핵심입지', r.scores.invest.subs.location)}${sbRow('유동성', r.scores.invest.subs.liquidity)}
-    </div></details>
-
-    <details class="acc" id="accF"><summary><span class="sumleft">미래가치 · 성장률 시나리오</span><span class="sumr">${FU.score}점</span></summary><div class="detail-body">
-      ${[['수요 지속성', FU.comps.demand], ['공급 희소성', FU.comps.scarcity], ['교통·일자리 변화', FU.comps.transitChange], ['교육·주거선호', FU.comps.eduPref], ['정비사업 옵션', FU.comps.redevOption]]
-        .map(([k, v]) => v == null ? `<div class="sb"><div class="k">${k}</div><div style="font-size:11px;color:var(--muted)">미확인 — 제외</div><div class="v">—</div></div>` : sbRow(k, v)).join('')}
-      <div class="kv"><span>장기 주거가치 성장률 시나리오</span><span class="strong">보수 ${fmtPct(FU.g.low)} · 기준 ${fmtPct(FU.g.base)} · 우호 ${fmtPct(FU.g.high)}</span></div>
-      <div class="kv"><span>현재가 유지에 필요한 성장률 (역산)</span><span class="strong">${r.financial ? `연 ${fmtPct(r.financial.impliedG)}` : '전세 없음 — 보류'}</span></div>
-      <p class="subtle">미래가치는 재건축 하나가 아니라 수요·공급·교통변화·교육선호·정비옵션 다섯 축으로 평가하며, 그 결과가 금융가치의 성장률 가정(g)을 결정합니다. 역산 성장률이 우호 시나리오보다 높으면 "미래 기대 반영도"가 높음/매우 높음으로 표시됩니다.</p>
-    </div></details>
-
-    <details class="acc" id="accP"><summary><span class="sumleft">가격 판정 산출 근거</span><span class="sumr">${V.market.label} · ${V.financial.label} · ${V.expectation.label}</span></summary><div class="detail-body">
-      <div class="kv"><span>① 시장 상대평가</span><span class="strong">${V.market.label}</span></div>
-      <p class="subtle">현재가 ${fmtEokW(r.currentPrice)} vs 시장 기준가 ${mref ? `${fmtEok(mref.low)}~${fmtEok(mref.high)}` : '—'} — 최근 실거래 여러 건의 가중중앙값 범위와 비교합니다. 최근 1건이 아니라 기간창(${mref ? mref.windowDays : 90}일) 거래로 판단합니다.</p>
-      <div class="kv"><span>② 금융 지지력</span><span class="strong">${V.financial.held ? V.financial.label : `${V.financial.label} (현재가의 ${Math.round(V.financial.ratio * 100)}%)`}</span></div>
-      ${r.financial
-        ? `<p class="subtle">순 임대가치 ${fmtRaw(r.financial.R)}억(전세 신규계약 ${fmtEok(r.financial.jeonse)} × 전환율 ${(r.financial.conv * 100).toFixed(1)}% − 보유비용) → 2단계 할인(k ${fmtPct(r.financial.r)}, ${r.financial.excessYears}년 성장 후 물가 착지) = ${fmtEok(r.financial.fsv.low)}~${fmtEok(r.financial.fsv.high)}. 금융수익률이 낮다고 '고평가'로 단정하지 않습니다 — 서울 핵심 아파트의 가격은 임대수익만으로 설명되지 않는 프리미엄(입지·교육·희소성·토지가치)을 포함할 수 있습니다.</p>`
-        : '<p class="subtle">전세 실거래가 없어 금융 지지력 판정을 보류했습니다. 전세 시세를 입력하면 판정이 포함됩니다.</p>'}
-      <div class="kv"><span>③ 미래 기대 반영도</span><span class="strong">${V.expectation.label}</span></div>
-      ${r.financial
-        ? `<p class="subtle">역산 필요성장률(10년) ${fmtPct(r.financial.impliedG)} vs 모델 시나리오(${fmtPct(r.financial.gScen.low)}~${fmtPct(r.financial.gScen.high)}) — 현재 가격이 어느 시나리오까지 미래를 당겨왔는지 봅니다.</p>`
-        : '<p class="subtle">역산 성장률 계산에 전세 기반 임대가치가 필요해, 전세 입력 전까지 보류합니다.</p>'}
-    </div></details>
-
-    <details class="acc" id="accConf"><summary><span class="sumleft">신뢰도 · 데이터 출처</span><span class="sumr">${conf.label} ${conf.score}/100</span></summary><div class="detail-body">
-      ${conf.penalties.length ? `<ul style="margin:0;padding-left:18px;font-size:12.5px;color:var(--ink2);line-height:1.7">${conf.penalties.map(p => `<li>${esc(p)}</li>`).join('')}</ul>` : '<p class="subtle">감점 요인이 없습니다.</p>'}
-      ${r.dataStatus ? `<h3 class="mini-h">자동 데이터 상태</h3>
-      <div class="chips">
-        <span class="stat ok">확인(VERIFIED) ${r.dataStatus.VERIFIED}</span>
-        <span class="stat info">사용자 확인(USER_VERIFIED) ${r.dataStatus.MANUAL}</span>
-        <span class="stat est">추정(ESTIMATED) ${r.dataStatus.ESTIMATED}</span>
-        <span class="stat" style="color:var(--muted);background:var(--raised);border:1px solid var(--line)">미확인(UNKNOWN) ${r.dataStatus.UNKNOWN}</span>
-      </div>
-      <p class="subtle">미확인 항목은 실제 값처럼 계산하지 않고 중립 처리하며, 그만큼 신뢰도를 낮춰 표시합니다.</p>` : ''}
-      ${r.gaps.length ? `<p class="subtle">데이터 공백: ${r.gaps.map(esc).join(' · ')}</p>` : ''}
-      <h3 class="mini-h">데이터 출처·기준일</h3>
-      ${srcRows}
-      <div class="kv"><span>금리·계수 설정</span><span>${esc(CFG.asOf)} 기준 (config)</span></div>
-      ${isLive ? '' : `<p class="subtle">${esc(DATA.meta.notice)}</p>`}
-    </div></details>
-  </div>
-
-  ${(() => {
-    const W = CFG.scores.living;
-    const cats = [['transport', '교통·역세권'], ['job', '직주근접'], ['education', '교육'], ['life', '생활편의'], ['nature', '자연환경'], ['product', '단지 경쟁력']];
-    const usedW = cats.reduce((a, [k]) => a + (hd.subs[k] != null ? W[k] : 0), 0);
-    const renorm = usedW < 0.999;
-    const rows = cats.map(([k, label]) => {
-      const s = hd.subs[k];
-      const reason = k === 'education' ? ((hd.notes.education || [])[1] || (hd.notes.education || [])[0] || '—') : ((hd.notes[k] || [])[0] || '—');
-      if (s == null) return `<tr style="color:var(--muted)"><td>${label}</td><td style="text-align:right">—</td><td style="text-align:right">${Math.round(W[k] * 100)}%</td><td style="text-align:right">제외</td><td>${esc(reason)}</td></tr>`;
-      const effW = W[k] / usedW;
-      return `<tr><td>${label}</td><td style="text-align:right"><b>${Math.round(s)}</b></td><td style="text-align:right">${Math.round(W[k] * 100)}%${renorm ? `→${Math.round(effW * 100)}%` : ''}</td><td style="text-align:right">${(s * effW).toFixed(1)}</td><td>${esc(reason)}</td></tr>`;
-    }).join('');
-    const lm = { transport: '교통·역세권', job: '직주근접', education: '교육', life: '생활편의', nature: '자연환경', product: '상품성', jeonseSupport: '전세지지력', supplyDemand: '수급', scarcity: '희소성', future: '미래가치', location: '입지', living: '교육·주거', liquidity: '유동성', transit: '교통' };
-    const wline = obj => Object.entries(obj).map(([k, v]) => `${lm[k] || k} ${Math.round(v * 100)}%`).join(' · ');
-    const cBadge = { '높음': 'green', '보통': 'blue', '낮음': 'amber' }[conf.label] || 'gray';
-    const AV = CFG.station.v4 ? CFG.station.v4.axesForValuation : null;
-    return `<div class="card" id="modelCard">
-    <h2>이 아파트의 가치는 어떻게 계산했나요?</h2>
-    <p class="hint">점수의 근거를 공개합니다 — 아래 가중치와 점수는 설명용 예시가 아니라 이번 계산에 실제 사용된 값(config)입니다.</p>
-    <p style="font-size:13.5px;color:var(--ink2);line-height:1.75;margin:0 0 12px">이 모델은 현재 가격만 보지 않습니다. 교통·역 가치·직주근접·교육·생활편의·주거환경·단지 규모·연식·브랜드·정비사업 가능성·미래 성장 시나리오를 함께 계산해, 같은 지역·수도권 아파트 대비 <b>상대가치</b>를 평가합니다. 그래서 결과도 하나의 '적정가'가 아니라 <b>시장 기준가 범위 · 금융 지지가치 · 판정 3종</b>으로 제시합니다.</p>
-    <h3 class="mini-h">① 이 단지의 주거가치 ${Math.round(r.scores.living.total)}점은 이렇게 나왔습니다</h3>
-    <div class="tblwrap"><table class="modeltbl"><thead><tr><th>평가항목</th><th>점수</th><th>가중치</th><th>기여도</th><th>평가 이유</th></tr></thead><tbody>${rows}
-      <tr style="font-weight:700;border-top:2px solid var(--line)"><td>주거가치 합계</td><td></td><td></td><td style="text-align:right">${Math.round(r.scores.living.total)}</td><td style="font-weight:400;color:var(--muted)">${renorm ? '미확인 항목은 제외하고 나머지 가중치를 재정규화한 합계' : '가중 평균'}</td></tr></tbody></table></div>
-    <h3 class="mini-h">② 전체 평가 구조 — 실제 가중치</h3>
-    <div class="kv"><span>주거가치</span><span style="text-align:left;flex:2.2">${wline(W)}</span></div>
-    <div class="kv"><span>투자가치</span><span style="text-align:left;flex:2.2">${wline(CFG.scores.invest)}</span></div>
-    <div class="kv"><span>구조 경쟁력</span><span style="text-align:left;flex:2.2">${wline(CFG.structuralV2.weights)}</span></div>
-    <div class="kv"><span>가격 판정</span><span style="text-align:left;flex:2.2">시장 상대평가(기준가 범위 대비) · 금융 지지력(전세·금리 기반) · 미래 기대 반영도(역산 성장률) — 근거는 위 '가격 판정 산출 근거'</span></div>
-    <h3 class="mini-h">③ 각 항목은 어떤 데이터로 계산되나</h3>
-    <ul style="margin:4px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink2);line-height:1.8">
-      <li><b>가격·시장 기준가</b> — 국토교통부 실거래가(매매·전월세 자동수집), 최근 ${mref ? mref.windowDays : 90}일 동일평형 가중중앙값 범위. 이상거래는 자동 저가중. 직전 거래가 시세 대비 이상 저가(특수거래 의심)면 현재가는 최근 3개월 최고가로 표기합니다.</li>
-      <li><b>교통·역세권</b> — 가장 가까운 역까지 도보시간 × 역 가치(Station Value: 교통·네트워크 30 / 역세권 경제력 35 / 교육·주거 20 / 업무·중심성 15). 역 경제력은 거주민 소득·소비 수준 추정 등급(5단계)이며 아파트 시세·업무·상권을 쓰지 않습니다. 환승·급행·복수역 보너스는 '새로 열리는 목적지'가 있을 때만.</li>
-      <li><b>직주근접</b> — 주요 업무지 10곳까지의 체감 이동시간(대기·환승·진입 포함).</li>
-      <li><b>교육</b> — 학교 접근성·학군 선호·학원가 허브 생활권·수요 지속성. 역 가치의 교육 축은 '생활권의 구조적 교육력', 이 항목은 '이 단지에서 실제 이용 가능한 정도'로 역할을 분리합니다.</li>
-      <li><b>단지 경쟁력</b> — 세대수·연식·브랜드·주차·임대비중. 정비사업 가능성은 미래 옵션가치에서 별도 평가.</li>
-      <li><b>미래가치</b> — 수요 지속·공급 희소·교통 변화·교육 선호·정비 옵션 5축 → 성장률 시나리오(g)로 연결.</li>
-    </ul>
-    ${AV ? `<p class="subtle" style="margin-top:8px">순환·중복 방지 — 역 경제력은 거주민 경제수준 추정 등급만 쓰고 아파트 시세를 쓰지 않아 '집값→역 가치→아파트 가치' 순환이 없습니다. 평가용 블렌드에서 경제력·교육 축은 각 ${Math.round(AV.econ * 100)}%·${Math.round(AV.edu * 100)}%로 축소 반영됩니다(추정 등급의 불확실성·단지 교육점수와의 중복 방지).</p>` : ''}
-    <h3 class="mini-h">④ 이 결과의 한계</h3>
-    <ul style="margin:4px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink2);line-height:1.8">
-      <li>감정평가 가격이 아닙니다 — 공개 데이터 기반의 상대가치 모델입니다.</li>
-      <li>거래량이 적거나 데이터가 부족한 단지·지역은 신뢰도가 낮을 수 있습니다 (아래 신뢰도 표시).</li>
-      <li>개발계획·재건축·정책 변화 등 미래 변수는 실제 결과와 다를 수 있습니다.</li>
-      <li>개별 동·층·향·내부상태는 반영되지 않습니다.</li>
-    </ul>
-    <div class="chips" style="margin-top:10px">
-      <span class="badge ${cBadge}">데이터 신뢰도 ${conf.label} (${conf.score}/100)</span>
-      <span class="badge gray">기준가 거래 ${mref ? mref.n : r.market.compCount}건</span>
-      <span class="badge gray">데이터 충족률 ${(r.fillRate * 100).toFixed(0)}%</span>
-    </div>
-  </div>`; })()}
-
-  </div><!-- /deepWrap -->
-
-  <div class="card" id="cmpCard">
-    <h2>다른 단지와 비교</h2>
-    <p class="hint">같은 돈으로 무엇을 사는 것인지 — 비교 단지도 메인 분석과 완전히 동일한 데이터 경로(최신 실거래 병합 → 동일 필터 → 동일 기준일)로 계산합니다.</p>
-    <div class="grid2">
-      <div><label class="mini">상세 프로필 단지<select id="cmpSel"><option value="">선택하세요</option>${DATA.complexes.filter(c => c.id !== cx.id).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label></div>
-      <div><label class="mini">평형<select id="cmpArea" disabled></select></label></div>
-    </div>
-    ${LIVE.status === 'ready' ? `<label class="mini" style="display:block;margin-top:8px">또는 전체 단지 검색 (실거래 자동수집)<input type="text" class="box" id="cmpQ" placeholder="예: 고덕아르테온, 래미안대치팰리스"></label>
-    <div id="cmpQOut"></div>` : ''}
-    <div id="cmpOut"></div>
-  </div>
-
-  <div class="card" id="shareCard">
-    <h2>결과 카드 공유</h2>
-    <p class="hint">핵심만 담은 1장 카드를 이미지로 저장해 공유하세요 — 점수 자랑이 아니라 "이 가격이 왜 이 가격인지"가 담깁니다.</p>
-    <button class="btn ghost" id="shareGen" style="width:100%">📸 결과 카드 만들기</button>
-    <div id="shareOut" style="margin-top:10px;text-align:center"></div>
-  </div>
-
-  <div class="warnbox"><b>이 결과를 읽는 법</b> — 본 진단은 미래 집값 예측이 아니라, 현재 가격이 어떤 요인으로 설명되며 어떤 조건이 무너지면 취약해지는지 이해를 돕는 도구입니다. 모델의 판단은 사실이 아니라 해석이며, 가격은 항상 범위로 제시합니다. 개별 동·층·향·내부상태는 반영되지 않으며 투자 권유가 아닙니다.</div>
-
-  ${DEBUG_MODE ? `<div class="card"><h2>🛠 Calculation Trace (debug)</h2>
-    <p class="hint">?debug=true — 개발자용 전체 계산 경로. 일반 결과 화면에는 노출되지 않습니다.</p>
-    <div class="tblwrap"><table><tbody>${r.trace.map(([k, v]) => `<tr><td style="white-space:nowrap">${esc(k)}</td><td style="text-align:left;white-space:normal">${esc(String(v))}</td></tr>`).join('')}</tbody></table></div>
-  </div>` : ''}`;
-
-  $('report').querySelectorAll('.t3[data-acc]').forEach(b => b.onclick = () => {
-    const acc = $(b.dataset.acc); if (!acc) return;
-    acc.open = true; acc.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-  const omr = $('openMapFromResult');
-  if (omr && r.transit) omr.onclick = () => openMap(r.transit.primary.st);
-
-  /* V2 내비: 왜 버튼 → 화면②로, 상세 계산 토글 */
-  const wj = $('whyJump');
-  if (wj) wj.onclick = () => $('scr2').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  const dt = $('deepToggle');
-  if (dt) dt.onclick = () => {
-    const w = $('deepWrap');
-    w.hidden = !w.hidden;
-    dt.textContent = w.hidden ? '🔍 상세 계산 근거 보기 — 거래 샘플·가중치·공식·전체 엔진' : '상세 계산 근거 접기 ↑';
-    if (!w.hidden) w.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    <div class="cap" style="margin-top:12px">할인율은 금리에 연동해 움직입니다. 재건축·교통 호재는 '성공 확률 × 예상 상승분 ÷ 기다리는 기간'으로 계산합니다 (상승분 기본값: 재건축 ${V.uplift.redev}억 · 교통 ${V.uplift.transit}억, 가격 대비 상한 적용).</div>
+  </div>`;
+}
+function wireV4Adjust(r) {
+  const v = r.v4, V = CFG.v4;
+  const tr0 = v.events.find(e => e.id === 'transit');
+  const rb0 = v.events.find(e => e.id === 'redev');
+  const st = {
+    k: V.k, g: V.gBase, sup: 0,
+    rbP: rb0 ? rb0.p : 0, rbY: rb0 ? rb0.y : 0,
+    trP: tr0 ? tr0.p : 0, trY: tr0 ? tr0.y : 0
   };
+  const calc = () => {
+    const evs = [];
+    if (st.rbP > 0) evs.push({ p: st.rbP, y: st.rbY, up: Math.min(V.uplift.redev, V.upliftCapPct.redev * v.P) });
+    if (st.trP > 0) evs.push({ p: st.trP, y: st.trY, up: Math.min(V.uplift.transit, V.upliftCapPct.transit * v.P) });
+    const O = evs.reduce((s, e) => s + e.p * e.up / Math.pow(1 + st.k, e.y), 0);
+    const Vrent = AptEngine.pv2Stage(v.R, st.k, st.g + st.sup, V.gTerm, V.years, V.termMinSpread).v;
+    return { fair: Vrent + O, Vrent, O, L1: v.R / st.k };
+  };
+  const render = () => {
+    const c = calc();
+    const d = v.P - c.fair;
+    const resid = Math.round(d / v.P * 100);
+    $('adj-v').textContent = fmtEok(c.fair);
+    $('adj-c').innerHTML = `${v.manualPrice ? '입력 시세' : '최근 실거래'} ${fmtEok(v.P)}보다 <b>${fmtEok(Math.abs(d))} ${d > 0.049 ? '낮습니다' : d < -0.049 ? '높습니다' : '와 비슷합니다'}</b> · 설명되지 않는 비중 <b>${resid > 0 ? resid + '%' : '없음'}</b>`;
+    const inc = Math.max(0, c.Vrent - c.L1), un = Math.max(0, d);
+    const tot = c.L1 + inc + c.O + un || 1;
+    $('adj-bar').innerHTML =
+      `<span style="background:#8FB4DA;flex:${(c.L1 / tot).toFixed(3)}"></span>` +
+      `<span style="background:#4E86BE;flex:${(inc / tot).toFixed(3)}"></span>` +
+      (c.O > 0 ? `<span style="background:#2E8B7A;flex:${(c.O / tot).toFixed(3)}"></span>` : '') +
+      (un > 0 ? `<span style="background:rgba(255,255,255,.28);flex:${(un / tot).toFixed(3)}"></span>` : '');
+  };
+  const group = (id, fn) => {
+    const el = $(id);
+    if (!el) return;
+    el.addEventListener('click', e => {
+      const b = e.target.closest('.opt');
+      if (!b) return;
+      el.querySelectorAll('.opt').forEach(x => x.setAttribute('aria-pressed', 'false'));
+      b.setAttribute('aria-pressed', 'true');
+      fn(b); render();
+    });
+  };
+  group('c-rate', b => { st.k = parseFloat(b.dataset.k); });
+  group('c-inc', b => { st.g = parseFloat(b.dataset.g); });
+  group('c-sup', b => { st.sup = parseFloat(b.dataset.d); });
+  group('c-rb', b => { st.rbP = parseFloat(b.dataset.p); st.rbY = parseFloat(b.dataset.y); });
+  group('c-tr', b => { st.trP = parseFloat(b.dataset.p); st.trY = parseFloat(b.dataset.y); });
+  render();
+}
+
+/* ── G. 계산 밖의 가치 — 단지 제원 + 역 가치 패널 + 정성 3장 ── */
+function v4QualCards(r) {
+  const cx = r.cx, v = r.v4, ed = r.hedonic.eduDetail, t = r.transit;
+  const cards = [];
+  const age = cx.builtYear ? (new Date().getFullYear() - cx.builtYear) : null;
+  // 1) 상품성 — 대단지·신축·주차
+  if ((cx.households || 0) >= 1000 || (age != null && age <= 10) || (cx.parkingRatio || 0) >= 1.2) {
+    const bits = [];
+    if ((cx.households || 0) >= 1000) bits.push(`${cx.households.toLocaleString()}세대 대단지는 커뮤니티·관리 인력의 분담 규모가 커서 같은 시설도 세대당 부담이 작습니다`);
+    if (age != null && age <= 10) bits.push(`준공 ${age}년차 신축급 상품은 설계·커뮤니티에서 구축과 체감 차이가 큽니다`);
+    if ((cx.parkingRatio || 0) >= 1.2) bits.push(`주차 ${cx.parkingRatio}대/세대는 여유 있는 수준입니다`);
+    cards.push({
+      t: (age != null && age <= 10 ? '신축 ' : '') + ((cx.households || 0) >= 1000 ? '대단지 상품성' : '상품성'),
+      d: bits.join('. ') + '. 상품성은 세입자보다 소유자가 값을 치르는 항목이라, 임대료보다 매매가에 먼저 반영됩니다.',
+      tags: [(cx.households || 0) >= 1000 ? `${cx.households.toLocaleString()}세대` : null, cx.parkingRatio ? `주차 ${cx.parkingRatio}대` : null, age != null && age <= 10 ? `${cx.builtYear}년 준공` : null].filter(Boolean)
+    });
+  }
+  // 2) 교육환경 — 생활권
+  if (ed && ed.zoneName) {
+    cards.push({
+      t: `${ed.zoneName} 교육환경`,
+      d: `${ed.zoneName} 교육생활권${ed.adjacent ? ' 인접권' : ''}에 있습니다. 학군 수요는 전세(거주)보다 매매(정착)로 들어오는 경향이 있어, 임대료에는 덜 잡히고 가격에는 잡히는 대표 항목입니다.`,
+      tags: [ed.zoneName, t ? `역 교육환경 ${Math.round(t.primary.comps.edu)}` : null].filter(Boolean)
+    });
+  }
+  // 3) 자연·생활권 (상세 프로필) 또는 역세권 거주민 경제력 (자동)
+  const nat = cx.nature;
+  if (nat && (nat.hanRiver || nat.bigPark || nat.parkMin <= 10)) {
+    const bits = [];
+    if (nat.bigPark || nat.parkMin <= 10) bits.push(`대형 공원·녹지가 도보권(${nat.parkMin}분)에 있습니다`);
+    if (nat.hanRiver) bits.push(`한강 접근 ${nat.riverMin}분${nat.hanRiverView ? ' · 조망 세대 보유' : ''}`);
+    cards.push({
+      t: '녹지·수변 환경',
+      d: bits.join('. ') + '. 녹지와 조망은 매일 쓰는 가치인데도 월세로 따로 청구되지 않아, 임대료보다 매매가에 먼저 반영되는 항목입니다.',
+      tags: [nat.bigPark ? '대형 공원' : null, nat.hanRiver ? '한강 접근' : null].filter(Boolean)
+    });
+  } else if (t && t.primary.comps.econ >= 80) {
+    cards.push({
+      t: '생활권 거주민 경제력',
+      d: `${t.primary.st}역 생활권의 거주민 소득·소비 수준이 수도권 상위권입니다. 구매력 높은 이웃과 상권은 임대료보다 매매 선호에 먼저 반영되는 항목입니다.`,
+      tags: [`${t.primary.st}역 생활권`, '경제력 상위']
+    });
+  }
+  return cards.slice(0, 3);
+}
+function v4BeyondHtml(r) {
+  const cx = r.cx, v = r.v4, t = r.transit;
+  const cell = (k, val) => `<div><div class="k">${k}</div><div class="v num">${val}</div></div>`;
+  const grid = [
+    cell('세대수', cx.households != null ? `${cx.households.toLocaleString()}<small>세대</small>` : '<small>미확인</small>'),
+    cell('용적률', cx.far != null ? `${cx.far}<small>%</small>` : '<small>미확인</small>'),
+    cell('주차', cx.parkingRatio != null ? `${cx.parkingRatio}<small>대/세대</small>` : '<small>미확인</small>'),
+    cell('준공', cx.builtYear ? `${cx.builtYear}<small>년</small>` : '<small>미확인</small>')
+  ].join('');
+  const stFull = t
+    ? `<div class="full"><div class="k">교통</div><div class="v">${t.primary.lines.map(esc).join('·')} ${esc(t.primary.st)}역 <small>도보 ${t.primary.min}분${t.primary.status === 'ESTIMATED' ? ' (추정)' : ''}</small></div>
+       <button class="maplink" id="btn-stn" aria-expanded="false">🚇 역 가치지도 보기</button></div>`
+    : `<div class="full"><div class="k">교통</div><div class="v"><small>역 연결 미확인</small></div></div>`;
+  const rdFull = `<div class="full"><div class="k">정비사업</div><div class="v">${esc(CFG.option.stageLabels[(cx.redev && cx.redev.stage) || 'none'])} <small>${cx.builtYear ? cx.builtYear + '년 준공' : ''}</small></div></div>`;
+  const quals = v4QualCards(r);
+  const residTxt = v && !v.residNone ? fmtEok(v.resid) : null;
+  const qualHtml = quals.length ? quals.map((q, i) => `
+    <div class="qual">
+      <div class="qh"><span class="qn">${i + 1}</span><span class="qt">${esc(q.t)}</span></div>
+      <div class="qd">${q.d}</div>
+      <div>${q.tags.map(tg => `<span class="qtag">${esc(tg)}</span>`).join('')}</div>
+    </div>`).join('')
+    : '<p class="subtle">자동 확인 데이터로는 계산 밖 가치 후보를 특정하지 못했습니다 — 조망·브랜드·커뮤니티 같은 요소는 현장 확인이 필요합니다.</p>';
+  return `
+  <div class="card v4card" id="beyondCard">
+    <div class="eyebrow">계산 밖의 가치</div>
+    <h2>${residTxt ? `설명되지 않는 ${residTxt},<br>어디서 왔을까` : '숫자에 안 잡히는 가치들'}</h2>
+    <div class="spec">${grid}${stFull}${rdFull}</div>
+    <div id="stnpanel" class="stnpanel">${t ? v4StationPanel(r) : ''}</div>
+    <div style="margin:22px 0 14px;font-size:14px;color:var(--ink2);line-height:1.65">
+      앞의 계산은 임대료로 설명되는 부분까지입니다.
+      아래는 <b style="color:var(--ink)">아직 임대료에 다 반영되지 않았지만 매수자는 값을 치르는 것</b>들입니다.
+      숫자로 못 잡아 계산에서 뺐고${residTxt ? `, 그래서 ${residTxt}이 남았습니다` : ''}.
+    </div>
+    ${qualHtml}
+    <div class="readout">${residTxt
+      ? `이런 요소를 인정한다면 ${residTxt}은 거품이 아니라 <b>아직 계산에 못 담은 가치</b>입니다. 인정하지 않는다면 그만큼 비싼 값입니다. <b>그 판단까지는 이 도구가 대신 해드릴 수 없습니다.</b>`
+      : `이 단지는 임대료와 소득 상승만으로 가격이 설명되는 구간입니다 — 위 요소들은 그 위에 얹힌 덤에 가깝습니다.`}</div>
+  </div>`;
+}
+function v4StationPanel(r) {
+  const t = r.transit, p = t.primary, v = r.v4;
+  const lineName = p.lines[0];
+  const lineColor = (typeof LINE_COLOR !== 'undefined' && LINE_COLOR[lineName]) || 'var(--accent)';
+  const lineMates = RAIL_LINES.filter(l => l.name === lineName && !l.overlay).flatMap(l => l.stations).filter(s => STN.stations[s]);
+  const lineRank = lineMates.length ? lineMates.slice().sort((a, b) => STN.stations[b].sv - STN.stations[a].sv).indexOf(p.st) + 1 : null;
+  const vrow = (k, val) => `<div class="vrow"><span class="vl">${k}</span><span class="vtrack"><span class="vfill" style="width:${Math.round(val)}%;background:${lineColor}"></span></span><span class="vn num">${Math.round(val)}</span></div>`;
+  const jm = t.jobMinutes || p.jobMinutes || {};
+  const timeRows = [['JAMSIL', '잠실'], ['GBD', '강남'], ['YBD', '여의도'], ['CBD', '광화문']]
+    .filter(([id]) => jm[id] != null)
+    .map(([id, nm]) => `<div class="timerow"><span class="tl">${nm}</span><span class="tr num">${jm[id]}분</span></div>`).join('');
+  const ev = v ? v.events.find(e => e.id === 'transit') : null;
+  const evNote = ev
+    ? `<div class="stnnote"><b>${esc(ev.name)}</b> — ${esc(ev.bucketLabel)} 단계입니다. 개통되면 이 역의 업무지 접근이 좋아집니다. 이 효과는 위 명세의 '${esc(ev.name)} ${fmtEok(ev.amt || 0)}'에 이미 반영돼 있습니다.</div>`
+    : '';
+  return `
+    <div class="stnhead" style="background:${lineColor}">
+      <div class="n">${esc(p.st)}역 · ${p.lines.map(esc).join('·')}</div>
+      <div class="r">${lineRank ? `${esc(lineName)} ${lineMates.length}개 역 중 <b>${lineRank}위</b> · ` : ''}수도권 전체 <b>${p.rank}위</b> / ${Object.keys(STN.stations).length}개 역</div>
+    </div>
+    <div class="stnbody">
+      <div class="sect">역 가치 산정 변수</div>
+      ${vrow('강남권 접근', t.gangnamScore)}
+      ${vrow('일자리 접근', t.jobScore)}
+      ${vrow('교육환경', p.comps.edu)}
+      ${vrow('역세권 경제력', p.comps.econ)}
+      <div class="sect" style="margin-top:16px">주요 업무지구까지 (대기·환승 포함 체감시간)</div>
+      ${timeRows}
+      ${evNote}
+      <button class="maplink" id="btn-fullmap" style="margin-top:12px">🗺 수도권 전체 역 가치지도 열기</button>
+    </div>`;
+}
+
+/* ── H. 접힘 4종 ── */
+function v4CollapsesHtml(r, bm) {
+  const v = r.v4, V = CFG.v4;
+  const rentRows = [];
+  rentRows.push(`<tr><td>기준 가격 (${v.manualPrice ? '입력 시세' : '최근 실거래'})</td><td>${fmtEok(v.P)}${v.deal && !v.manualPrice ? ` (${esc(v.deal.date)}${v.deal.floor ? ' · ' + v.deal.floor + '층' : ''})` : ''}</td></tr>`);
+  if (v.rent.jeonse) rentRows.push(`<tr><td>전세 신규계약 ${v.rent.jeonse.manual ? '(입력값)' : `(${v.rent.jeonse.n}건 평균 · ${v.rent.jeonse.windowMo}개월)`}</td><td>${fmtEok(v.rent.jeonse.v)}</td></tr>`);
+  if (v.rent.wolse) rentRows.push(`<tr><td>월세 신규계약 (${v.rent.wolse.n}건 평균 · ${v.rent.wolse.windowMo}개월)</td><td>보증 ${fmtEok(v.rent.wolse.dep)} / 월 ${fmtMan(v.rent.wolse.mr)}</td></tr>`);
+  rentRows.push(`<tr><td>전월세전환율 (${esc(r.cx.district || '지역')})</td><td>${(v.conv * 100).toFixed(1)}%</td></tr>`);
+  rentRows.push(`<tr><td>채택 임대료 (${v.rent.picked === 'wolse' ? '월세' : '전세'} 기준, 높은 쪽)</td><td>연 ${fmtMan(v.Rgross * 10000)}</td></tr>`);
+  rentRows.push(`<tr><td>세금·수리비·공실 차감</td><td>−${(v.costRate * 100).toFixed(0)}%</td></tr>`);
+  rentRows.push(`<tr><td>요구수익률 (할인율)</td><td>${(v.k * 100).toFixed(1)}%</td></tr>`);
+  rentRows.push(`<tr><td>기준 성장률</td><td>연 ${fmtG(v.g)}</td></tr>`);
+  rentRows.push(`<tr><td>계산 방식</td><td>10년 성장 + 이후 물가(${fmtG(v.gTerm)}) 수렴</td></tr>`);
+  for (const e of v.events) rentRows.push(`<tr><td>${esc(e.name)} 옵션가치</td><td>${(e.p * 100).toFixed(0)}% × ${fmtEok(e.upliftEff != null ? e.upliftEff : e.uplift)} ÷ ${e.y}년 할인 = ${fmtEok(e.amt || 0)}</td></tr>`);
+  return `
+  <details class="v4acc"><summary>숫자는 어떻게 나왔나</summary><div class="dbody">
+    전세와 월세를 각각 신규계약 실거래로 환산해 높은 쪽을 임대료로 잡고, 소유자가 부담하는 세금·수리비·공실 몫을 뺀 뒤,
+    그 금액이 매년 얼마나 올라야 지금 가격이 나오는지를 거꾸로 계산했습니다. 역산은 '10년 성장 + 이후 물가 수렴' 방식 하나만 씁니다 —
+    영구 성장 가정의 한 줄 나눗셈은 성장률 0.1%p에 답이 널뛰어 쓰지 않습니다.
+    <table>${rentRows.join('')}</table>
+    <div class="src2">국토교통부 실거래가 공개 API (매매·전월세, 갱신계약 제외) · ${esc(state.liveSel ? liveAsOf() : DATA.meta.asOf)} 기준</div>
+  </div></details>
+  <details class="v4acc"><summary>백데이터 — 소득은 실제로 얼마나 올랐나</summary><div class="dbody">
+    <b>전국 가구 평균소득</b>
+    <table>
+      <tr><th>연도</th><th>평균소득</th><th>전년비</th></tr>
+      <tr><td>2022년</td><td>6,762만원</td><td>+4.5%</td></tr>
+      <tr><td>2023년</td><td>7,185만원</td><td>+6.3%</td></tr>
+      <tr><td>2024년</td><td>7,427만원</td><td>+3.4%</td></tr>
+    </table>
+    <div class="src2">국가데이터처·한국은행·금감원 가계금융복지조사</div>
+    <div style="margin-top:16px"><b>지역별 가구소득 (2024년)</b></div>
+    <table>
+      <tr><td>수도권</td><td>8,118만원</td></tr>
+      <tr><td>비수도권</td><td>6,752만원</td></tr>
+      <tr><td>격차</td><td>+20.2%</td></tr>
+    </table>
+    <div class="src2">전국 하나로 묶으면 서울이 과소평가되는 이유입니다. 구 단위 소득 분리는 다음 작업입니다.</div>
+    <div style="margin-top:16px"><b>임금과 집값 (2015 → 2025)</b></div>
+    <table>
+      <tr><td>근로자 월평균 임금</td><td>+39% (연 3.4%)</td></tr>
+      <tr><td>서울 아파트 ㎡당 실거래</td><td>644만 → 1,650만 (2.5배, 연 9.9%)</td></tr>
+    </table>
+    <div class="src2">집값이 소득보다 3배 빠르게 올랐습니다. 이 모형이 집값이 아니라 임대료를 기준으로 삼는 이유입니다.</div>
+    <div style="margin-top:16px"><b>전월세전환율</b> — 법정 상한(기준금리+2%p)은 갱신·조건변경에만 강제되고 신규계약은 제한이 없습니다. 계산에는 지역·유형별 시장 전환율을 씁니다.</div>
+    ${v.hist ? `<div style="margin-top:16px"><b>이 단지 10년 실적의 근거</b> — ${v.hist.src === 'self'
+      ? `${esc(v.hist.oldQ || '')} 분기 전세 실거래 ${v.hist.nOld}건 중앙값 ${fmtEok(v.hist.oldDep)} → 현재 신규계약 ${fmtEok(v.hist.nowDep)} (같은 평형·같은 방식). 전환율 변화는 반영하지 않은 보증금 기준 비교입니다.`
+      : `이 단지의 10년 전 실거래가 없어 ${esc(v.hist.guName || '')} ㎡당 전세 중앙값(${esc(v.hist.oldQ || '')} → 현재)을 썼습니다. 신축 입주 등 구성 변화가 섞인 참고치입니다.`}</div>` : ''}
+  </div></details>
+  <details class="v4acc"><summary>왜 전국 물가를 안 쓰나</summary><div class="dbody">
+    알고 싶은 건 '이 집 임대료가 얼마나 오르나'이고, 임대료는 그 동네 사람들의 소득을 따라갑니다.<br><br>
+    <b>첫째, 물가지수에는 자가주거비가 거의 빠져 있습니다.</b> 집값·집세 반영 비중이 낮아 주거 부담의 상승을 잡아내지 못합니다.<br><br>
+    <b>둘째, 전국 물가는 서울과 지방을 하나로 묶습니다.</b> 수도권 가구소득이 비수도권보다 20% 높은데 같은 숫자를 쓰면 서울은 항상 비싸 보이고 지방은 항상 싸 보입니다.<br><br>
+    그래서 기준 성장률은 물가(2.0%)가 아니라 가구소득 증가율(3.4%)을 씁니다. 물가를 쓰면 같은 집의 설명되지 않는 부분이 훨씬 커집니다 — 위 적정가 표의 '전국 물가만큼만' 행이 그 값입니다.
+  </div></details>
+  <details class="v4acc"><summary>이 진단이 못 하는 것</summary><div class="dbody">
+    내년에 오를지 내릴지는 알 수 없습니다. 지금 가격이 무엇에 기대고 있는지만 봅니다.<br><br>
+    호가(매물 가격)는 수집하지 않습니다. 거래로 확인되지 않은 가격이라 실제보다 높거나 낮을 수 있고, 명세는 실거래만 씁니다.<br><br>
+    요구수익률(할인율) ${(CFG.v4.k * 100).toFixed(1)}%는 판단으로 정한 숫자입니다. 위 '직접 조정하기'에서 금리를 바꾸면 이 값이 함께 움직이고, 적정가가 얼마나 민감한지 바로 볼 수 있습니다.<br><br>
+    인근 단지 비교에는 각 단지의 재건축·교통 호재를 반영하지 못했습니다(자동 확인 불가) — 호재가 있는 단지는 실제보다 오른쪽(설명 안 되는 쪽)에 있을 수 있습니다.<br><br>
+    맨 아래 정성 요소(상품성·환경·교육)는 숫자로 환산하지 않았습니다. 환산하려 들면 근거 없는 가중치를 만들게 되고, 그러면 모형 전체가 조작 가능해집니다. 그래서 계산에서 빼고 판단 재료로만 제시합니다.
+  </div></details>`;
+}
+
+/* ── v4 데이터 없음(전월세 실거래 없음) 폴백 ── */
+function v4FallbackHtml(r) {
+  return `
+  <div class="warnbox" style="margin-bottom:12px"><b>임대 기반 명세를 만들 수 없습니다</b> —
+  이 평형은 전월세 실거래가 확인되지 않아 가격 명세(실거주가치·성장·잔여)를 계산하지 못했습니다.
+  임의 가정값으로 채우지 않습니다. STEP 2에서 전세 시세를 입력하면 같은 명세로 분석합니다.</div>`;
+}
+
+/* ── 결과 렌더 (전체 조립) ── */
+function renderReport(r) {
+  const v = r.v4;
+  const bm = v ? v4BenchmarkOf(r) : null;
+  $('report').innerHTML = `
+  <div class="v4wrap">
+    ${v4HeadHtml(r)}
+    ${v ? v4SpecHtml(r, bm) : v4FallbackHtml(r)}
+    ${v ? v4HistHtml(r) : ''}
+    ${v ? v4NearHtml(r, bm) : ''}
+    ${v ? v4FairHtml(r, bm) : ''}
+    ${v ? v4AdjustHtml(r) : ''}
+    ${v4BeyondHtml(r)}
+    ${v ? v4CollapsesHtml(r, bm) : ''}
+
+    <div class="card v4card" id="cmpCard">
+      <div class="eyebrow">비교</div>
+      <h2>다른 단지와 같은 잣대로</h2>
+      <p class="hint">같은 돈으로 무엇을 사는 것인지 — 비교 단지도 완전히 동일한 데이터 경로와 계산으로 봅니다.</p>
+      <div class="grid2">
+        <div><label class="mini">상세 프로필 단지<select id="cmpSel"><option value="">선택하세요</option>${DATA.complexes.filter(c => c.id !== r.cx.id).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label></div>
+        <div><label class="mini">평형<select id="cmpArea" disabled></select></label></div>
+      </div>
+      ${LIVE.status === 'ready' ? `<label class="mini" style="display:block;margin-top:8px">또는 전체 단지 검색 (실거래 자동수집)<input type="text" class="box" id="cmpQ" placeholder="예: 고덕아르테온, 래미안대치팰리스"></label>
+      <div id="cmpQOut"></div>` : ''}
+      <div id="cmpOut"></div>
+    </div>
+
+    <div class="card v4card" id="shareCard">
+      <div class="eyebrow">공유</div>
+      <h2>결과 카드 저장</h2>
+      <p class="hint">가격 명세를 1장 이미지로 저장해 공유하세요.</p>
+      <button class="btn ghost" id="shareGen" style="width:100%">📸 결과 카드 만들기</button>
+      <div id="shareOut" style="margin-top:10px;text-align:center"></div>
+    </div>
+
+    <div class="v4foot">
+      국토교통부 실거래가 공개 API · K-apt 공동주택 정보 · 지역별 전월세전환율 · 가계금융복지조사 기준 · ${esc(state.liveSel ? liveAsOf() : DATA.meta.asOf)}<br>
+      이 진단은 현재 가격이 무엇에 기대고 있는지 이해를 돕는 참고자료이며, 미래 예측이나 투자 권유가 아닙니다.
+      개별 동·층·향·내부 상태는 반영되지 않습니다.
+    </div>
+    ${DEBUG_MODE ? `<div class="card"><h2>🛠 Calculation Trace (debug)</h2>
+    <div class="tblwrap"><table><tbody>${r.trace.map(([k, val]) => `<tr><td style="white-space:nowrap">${esc(k)}</td><td style="text-align:left;white-space:normal">${esc(String(val))}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
+  </div>`;
+
+  if (v) wireV4Adjust(r);
+  const bs = $('btn-stn');
+  if (bs) bs.onclick = () => {
+    const panel = $('stnpanel');
+    const open = panel.classList.toggle('open');
+    bs.setAttribute('aria-expanded', open);
+    bs.textContent = open ? '🚇 역 가치지도 닫기' : '🚇 역 가치지도 보기';
+  };
+  const bf = $('btn-fullmap');
+  if (bf && r.transit) bf.onclick = () => openMap(r.transit.primary.st);
   const sg = $('shareGen');
   if (sg) sg.onclick = () => renderShareCard(r);
-
-  $('stressBtns').querySelectorAll('.sbtn').forEach(b => b.onclick = () => {
-    const id = b.dataset.sid;
-    const preset = CFG.stress.presets.find(p => p.id === id);
-    if (state.stress.has(id)) state.stress.delete(id);
-    else {
-      (preset.excludes || []).forEach(x => state.stress.delete(x));
-      state.stress.add(id);
-    }
-    $('stressBtns').querySelectorAll('.sbtn').forEach(x => x.setAttribute('aria-pressed', state.stress.has(x.dataset.sid) ? 'true' : 'false'));
-    renderStress();
-  });
-  $('stressReset').onclick = () => {
-    state.stress.clear();
-    $('stressBtns').querySelectorAll('.sbtn').forEach(x => x.setAttribute('aria-pressed', 'false'));
-    renderStress();
-  };
 
   $('cmpSel').onchange = async () => {
     const id = $('cmpSel').value;
@@ -1283,7 +1242,7 @@ async function prepareComplexForAnalysis(ref) {
     edits: {}, ovPrice: null, ovJeonse: null, areaKey: null, conv: null,
     asOf: liveAsOf(), stations: STN, hubs: HUBS,
     dongLink: dongLinkFor(e.g, entry.dong),
-    kapt: AptEngine.matchKaptInfo(KAPT.shards[e.g], entry.name, ((typeof ALIASES !== 'undefined' && ALIASES.aliases) || {})[ref.id]),
+    kapt: AptEngine.kaptResolve(KAPT.shards[e.g], entry.name, ref.id, typeof ALIASES !== 'undefined' ? ALIASES : null),
     liveId: ref.id
   });
   return { cx, live: true, fallback: false };
@@ -1293,6 +1252,8 @@ async function setCompareTarget(ref) {
   try {
     const prep = await prepareComplexForAnalysis(ref);
     state.cmpRef = ref; state.cmpPrep = prep;
+    state.cmpCode = ref.kind === 'sample' ? (prep.cx.regionCode || null) : ref.id.split('|')[0];
+    if (state.cmpCode) { try { await getRentHist(state.cmpCode); } catch (e) {} }
     const sel = $('cmpArea');
     const traded = prep.cx.areas;
     sel.innerHTML = traded.map(a => `<option value="${a.key}">${esc(a.label)}${(a.trades || []).length ? '' : ' (거래 없음)'}</option>`).join('');
@@ -1305,18 +1266,18 @@ async function setCompareTarget(ref) {
   }
 }
 
-/* ── 스트레스 렌더 ── */
-/* ═══ V2 §34 결과 공유 카드 — 모바일 1장 이미지 (점수 자랑이 아니라 가격 해석 요약) ═══ */
+/* ═══ 결과 공유 카드 — 가격 명세 1장 이미지 ═══ */
 function renderShareCard(r) {
-  const W = 680, H = 940, P = 44;
+  const v = r.v4;
+  const W = 680, H = v ? 900 : 520, P = 44;
   const cv = document.createElement('canvas');
   cv.width = W * 2; cv.height = H * 2;
   const g = cv.getContext('2d');
   g.scale(2, 2);
-  const ink = '#221d1b', mut = '#8a7f7a', acc = '#A8252C', line = '#e7ddd7';
-  g.fillStyle = '#faf6f2'; g.fillRect(0, 0, W, H);
-  g.fillStyle = '#fff';
-  g.strokeStyle = line;
+  const ink = '#15171C', mut = '#8a8f98', acc = '#A8252C', line = '#e4e7ec';
+  const LCOL = { live: '#1B3A6B', income: '#4E86BE', fixed: '#2E8B7A', unknown: '#C3C9D2' };
+  g.fillStyle = '#F6F7F9'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#fff'; g.strokeStyle = line;
   const rr = (x, y, w, h, rad) => { g.beginPath(); g.roundRect(x, y, w, h, rad); g.fill(); g.stroke(); };
   rr(16, 16, W - 32, H - 32, 20);
   const txt = (s, x, y, size, color, bold, align) => {
@@ -1324,140 +1285,120 @@ function renderShareCard(r) {
     g.font = `${bold ? '700' : '400'} ${size}px "Apple SD Gothic Neo", "Noto Sans KR", sans-serif`;
     g.fillText(s, x, y);
   };
-  const wrap = (s, x, y, size, color, maxW, lh) => {
-    g.font = `400 ${size}px "Apple SD Gothic Neo", sans-serif`;
+  const wrap = (s, x, y, size, color, maxW, lh, bold) => {
+    g.font = `${bold ? '700' : '400'} ${size}px "Apple SD Gothic Neo", sans-serif`;
     const words = String(s).split(' ');
     let lineS = '', yy = y;
     for (const w of words) {
       const t = lineS ? lineS + ' ' + w : w;
-      if (g.measureText(t).width > maxW && lineS) { txt(lineS, x, yy, size, color); lineS = w; yy += lh; }
+      if (g.measureText(t).width > maxW && lineS) { txt(lineS, x, yy, size, color, bold); lineS = w; yy += lh; }
       else lineS = t;
     }
-    if (lineS) txt(lineS, x, yy, size, color);
+    if (lineS) txt(lineS, x, yy, size, color, bold);
     return yy + lh;
   };
-  const stars = sc => { const n = Math.max(0, Math.min(5, Math.round((sc || 0) / 20))); return '★'.repeat(n) + '☆'.repeat(5 - n); };
-  const mref = r.marketRef, pv = r.explain.priceView, ST = r.structural;
   let y = 78;
-  txt('아파트 가치진단', P, y, 15, acc, true); y += 34;
-  txt(`${r.cx.name}`, P, y, 27, ink, true); y += 26;
-  txt(`${r.area.label} · ${r.cx.district} ${r.cx.dong}`, P, y, 14, mut); y += 34;
-  txt('현재 시장가격', P, y, 13, mut); txt('최근 거래', W / 2 + 10, y, 13, mut); y += 27;
-  txt(mref ? `${fmtEok(mref.low)}~${fmtEok(mref.high)}` : `${fmtEok(r.range.low)}~${fmtEok(r.range.high)}`, P, y, 24, acc, true);
-  txt(`${fmtEok(r.currentPrice)}${mref ? ` (${mref.latest.date.slice(0, 7)})` : ''}`, W / 2 + 10, y, 24, ink, true); y += 40;
-  g.strokeStyle = line; g.beginPath(); g.moveTo(P, y); g.lineTo(W - P, y); g.stroke(); y += 34;
-  const row = (k, v, vc) => { txt(k, P, y, 15, mut); txt(v, W - P, y, 17, vc || ink, true, 'right'); g.textAlign = 'left'; y += 34; };
-  row('구조 경쟁력', ST.score != null ? `${stars(ST.score)}  ${ST.band}` : '판단 보류');
-  row('가격매력도', `${stars(r.scores.attract.score)}  ${r.scores.attract.score}/100`, acc);
-  row('전세 지지력', r.support ? `${stars(r.support.score)}  ${r.support.label}` : '보류(전세 미확인)');
-  row('데이터 신뢰도', `${r.fulfillment.overall}% · ${r.fulfillment.band}`);
-  y += 4;
-  g.strokeStyle = line; g.beginPath(); g.moveTo(P, y); g.lineTo(W - P, y); g.stroke(); y += 32;
-  txt('가장 강한 요소', P, y, 13, mut); y += 24;
-  y = wrap(pv.explains.slice(0, 2).join(' · ') || '—', P, y, 15, ink, W - P * 2, 24) + 8;
-  txt('가장 큰 위험', P, y, 13, mut); y += 24;
-  y = wrap(pv.risks[0] || '—', P, y, 15, ink, W - P * 2, 24) + 10;
-  g.fillStyle = '#f6eee8'; g.strokeStyle = '#eadfd7';
-  const boxY = y; const boxH = 108;
-  rr(P - 10, boxY, W - (P - 10) * 2, boxH, 12);
-  y = wrap(`“${r.explain.oneLiner}”`, P + 6, boxY + 34, 15.5, ink, W - P * 2 - 12, 26);
-  y = boxY + boxH + 40;
-  txt('닥터마빈 · 아파트 가치진단기', P, H - 58, 13, mut);
-  txt('모델의 해석이며 투자 권유가 아닙니다', W - P, H - 58, 12, mut, false, 'right');
+  txt('아파트 가격 명세', P, y, 15, acc, true); y += 34;
+  txt(r.cx.name, P, y, 27, ink, true); y += 26;
+  txt(`${r.area.label} · ${r.cx.district || ''} ${r.cx.dong || ''}`, P, y, 14, mut); y += 38;
+  if (v) {
+    txt(v.manualPrice ? '입력 시세' : '최근 실거래', P, y, 13, mut); y += 30;
+    txt(fmtEok(v.P), P, y, 30, ink, true);
+    if (v.deal && !v.manualPrice) txt(`${v.deal.ym.replace('-', '.')}${v.deal.floor ? ' · ' + v.deal.floor + '층' : ''}`, W - P, y, 13, mut, false, 'right');
+    y += 30;
+    // 4층 스택 바
+    const barY = y, barH = 30, barW = W - P * 2;
+    let x0 = P;
+    for (const l of v.layers) {
+      const w = Math.max(0, l.amt / v.P) * barW;
+      if (w <= 0) continue;
+      g.fillStyle = LCOL[l.id]; g.fillRect(x0, barY, w, barH);
+      x0 += w;
+    }
+    y = barY + barH + 28;
+    for (const l of v.layers) {
+      g.fillStyle = LCOL[l.id]; g.fillRect(P, y - 10, 10, 10);
+      txt(l.label, P + 18, y, 14.5, ink, false);
+      txt(`${l.id === 'unknown' && v.residNone ? '없음' : fmtEok(l.amt) + ' · ' + l.pct + '%'}`, W - P, y, 15, ink, true, 'right');
+      y += 30;
+    }
+    y += 6;
+    g.strokeStyle = line; g.beginPath(); g.moveTo(P, y); g.lineTo(W - P, y); g.stroke(); y += 30;
+    const rowsS = [
+      ['비관적', fmtEok(v.scen.pess.v)], ['보수적', fmtEok(v.scen.cons.v)],
+      ['기준 (현 금리 + 소득)', fmtEok(v.scen.base.v)], ['낙관적', fmtEok(v.scen.opti.v)]
+    ];
+    txt('적정가 시나리오', P, y, 13, mut); y += 26;
+    for (const [k2, val] of rowsS) { txt(k2, P, y, 14, ink); txt(val, W - P, y, 15, ink, true, 'right'); y += 27; }
+    y += 8;
+    g.fillStyle = '#F2F5F9'; g.strokeStyle = '#E1E7EE';
+    const boxY = y, boxH = 116;
+    rr(P - 10, boxY, W - (P - 10) * 2, boxH, 12);
+    const needTxt = v.gReqSat === 'high' ? `연 ${(v.gReq * 100).toFixed(0)}% 이상` : `연 ${(v.gReq * 100).toFixed(1)}%`;
+    wrap(`이 가격을 믿으려면 — 임대료가 앞으로 10년간 ${needTxt}씩 올라야 합니다. 소득이 설명하는 건 연 ${fmtG(v.gIncome)}입니다.`, P + 6, boxY + 34, 15.5, ink, W - P * 2 - 12, 27);
+  } else {
+    txt('전월세 실거래가 없어 명세를 만들지 못했습니다', P, y, 15, mut); y += 30;
+  }
+  txt('닥터마빈 · 아파트 가치진단', P, H - 56, 13, mut);
+  txt('실거래 기반 참고자료 · 투자 권유 아님', W - P, H - 56, 12, mut, false, 'right');
   g.textAlign = 'left';
   const url = cv.toDataURL('image/png');
   $('shareOut').innerHTML = `<img src="${url}" alt="결과 카드" style="max-width:340px;width:100%;border:1px solid var(--line);border-radius:12px">
-    <div style="margin-top:8px"><a class="btn ghost" style="display:inline-block;text-decoration:none;padding:8px 18px" href="${url}" download="${esc(r.cx.name)}_가치진단.png">이미지 저장</a></div>`;
+    <div style="margin-top:8px"><a class="btn ghost" style="display:inline-block;text-decoration:none;padding:8px 18px" href="${url}" download="${esc(r.cx.name)}_가격명세.png">이미지 저장</a></div>`;
 }
 
-function renderStress() {
-  const out = $('stressOut');
-  if (!state.stress.size) { out.innerHTML = ''; return; }
-  const ids = Array.from(state.stress);
-  let sr;
-  try { sr = AptEngine.applyStress(state.baseInput, ids, CFG, HUBS, JOBS, STN); }
-  catch (e) { out.innerHTML = `<div class="warnbox">${esc(e.message)}</div>`; return; }
-  const b = state.result;
-  const dArrow = (a, c) => {
-    const d = c - a;
-    if (Math.abs(d) < 0.05) return '<span style="color:var(--muted)">변화 없음</span>';
-    const up = d > 0;
-    return `<span class="${up ? 'd-up' : 'd-down'}">${up ? '▲' : '▼'} ${Math.abs(d) < 1 ? Math.abs(d).toFixed(1) : Math.round(Math.abs(d))}</span>`;
-  };
-  const labels = ids.map(id => CFG.stress.presets.find(p => p.id === id).label).join(' + ');
-  out.innerHTML = `
-    <div class="notebox" style="margin-top:14px"><b>시나리오: ${esc(labels)}</b></div>
-    <div class="tblwrap"><table class="deltatbl">
-      <thead><tr><th>지표</th><th>기본</th><th>시나리오</th><th>변화</th></tr></thead><tbody>
-      <tr><td>금융 지지가치</td><td>${b.financial ? `${fmtEok(b.financial.fsv.low)}~${fmtEok(b.financial.fsv.high)}` : '보류'}</td><td class="strong">${sr.financial ? `${fmtEok(sr.financial.fsv.low)}~${fmtEok(sr.financial.fsv.high)}` : '보류'}</td><td class="delta">${b.financial && sr.financial ? dArrow(b.financial.fsv.base, sr.financial.fsv.base) + '억' : ''}</td></tr>
-      <tr><td>금융 지지력</td><td>${b.verdicts.financial.held ? b.verdicts.financial.label : `${b.verdicts.financial.label} ${Math.round(b.verdicts.financial.ratio * 100)}%`}</td><td class="strong">${sr.verdicts.financial.held ? sr.verdicts.financial.label : `${sr.verdicts.financial.label} ${Math.round(sr.verdicts.financial.ratio * 100)}%`}</td><td></td></tr>
-      <tr><td>미래 기대 반영도</td><td>${b.verdicts.expectation.label}</td><td class="strong">${sr.verdicts.expectation.label}</td><td></td></tr>
-      <tr><td>필요 성장률(역산)</td><td>${b.financial ? fmtPct(b.financial.impliedG) : '—'}</td><td class="strong">${sr.financial ? fmtPct(sr.financial.impliedG) : '—'}</td><td></td></tr>
-      <tr><td>전세지지력</td><td>${b.support ? b.support.label : '보류'}</td><td class="strong">${sr.support ? sr.support.label : '보류'}</td><td></td></tr>
-      <tr><td>투자가치</td><td>${Math.round(b.scores.invest.total)}</td><td class="strong">${Math.round(sr.scores.invest.total)}</td><td class="delta">${dArrow(b.scores.invest.total, sr.scores.invest.total)}</td></tr>
-      <tr><td>미래가치 점수</td><td>${b.future.score}</td><td class="strong">${sr.future.score}</td><td class="delta">${dArrow(b.future.score, sr.future.score)}</td></tr>
-      </tbody></table></div>
-    <p class="subtle">시나리오는 해당 변수만 바꾼 조건부 재계산입니다. 실제 시장에서는 변수들이 함께 움직일 수 있습니다.</p>`;
-}
-
-/* ── 비교 렌더 — §1: 메인과 동일 전처리(prepareComplexForAnalysis)·동일 기준일·동일 필터 ── */
+/* ── 비교 렌더 — 메인과 동일 전처리(prepareComplexForAnalysis)·동일 계산 ── */
 function renderCompare() {
   if (!state.cmpPrep) return;
   const prep = state.cmpPrep, c2 = prep.cx;
   const areaKey = $('cmpArea').value || c2.areas[0].key;
+  const hist2 = state.cmpCode ? histResolve(state.cmpCode, c2, areaKey, []) : null;
   let r2;
-  try { r2 = AptEngine.analyze({ complex: c2, areaKey, asOfYM: state.baseInput.asOfYM, overrides: {} }, CFG, HUBS, JOBS, STN); }
+  try { r2 = AptEngine.analyze({ complex: c2, areaKey, asOfYM: state.baseInput.asOfYM, overrides: {}, rentHist: hist2 }, CFG, HUBS, JOBS, STN); }
   catch (e) {
     $('cmpOut').innerHTML = `<div class="warnbox">${esc(e.user ? e.message : '이 평형은 분석할 수 없습니다 — 다른 평형을 선택해 보세요.')}</div>`;
     return;
   }
   const a = state.result, b = r2;
-  // §1 비교화면 표시: 각 단지의 데이터 기준(기간·건수·출처)을 가격과 함께 공개
+  const av = a.v4, bv = b.v4;
   const basisOf = (r, isFallback) => {
     const m = r.marketRef;
     if (!m) return '<span class="stat est">실거래 데이터 부족</span>';
     const from = m.items.length ? m.items[m.items.length - 1].date.slice(0, 7).replace('-', '.') : '';
     const to = m.latest.date.slice(0, 7).replace('-', '.');
-    return `${from && from !== to ? `${from}~${to}` : to} · ${m.n}건${isFallback ? ' <span class="stat est">실거래 데이터 부족 — 등재 샘플 기준</span>' : ''}`;
+    return `${from && from !== to ? `${from}~${to}` : to} · ${m.n}건${isFallback ? ' <span class="stat est">등재 샘플 기준</span>' : ''}`;
   };
   const aFallback = !state.liveSel && !state.manual && !a.cx.liveLinked;
   const row = (k, va, vb, strong) => `<tr><td>${k}</td><td${strong ? ' class="strong"' : ''}>${va}</td><td${strong ? ' class="strong"' : ''}>${vb}</td></tr>`;
-  const diff = b.currentPrice - a.currentPrice;
+  const vOf = (x, f) => x ? f(x) : '—';
+  const residTxt = x => !x ? '—' : (x.residNone ? '없음' : `${Math.max(0, x.residPct)}% (${fmtEok(Math.max(0, x.resid))})`);
+  const needTxt = x => !x || x.gReq == null ? '—' : (x.gReqSat === 'high' ? `연 ${(x.gReq * 100).toFixed(0)}% 이상` : `연 ${(x.gReq * 100).toFixed(1)}%`);
+  const diff = (bv ? bv.P : b.currentPrice) - (av ? av.P : a.currentPrice);
   let sentence;
-  const dl = Math.round(b.scores.living.total - a.scores.living.total);
-  const di = Math.round(b.scores.invest.total - a.scores.invest.total);
-  const nm = x => `<b>${esc(x.cx.name)}</b>`;
-  if (Math.abs(diff) < 0.05) sentence = `두 단지의 현재 가격이 비슷합니다. 주거가치 ${dl >= 0 ? '+' : ''}${dl} · 투자가치 ${di >= 0 ? '+' : ''}${di} 차이로 판단해 보세요.`;
-  else {
-    const hi = diff > 0 ? b : a, lo2 = diff > 0 ? a : b;
-    const hl = Math.round(hi.scores.living.total - lo2.scores.living.total);
-    const hv = Math.round(hi.scores.invest.total - lo2.scores.invest.total);
-    sentence = `${fmtEok(Math.abs(diff))}을 더 주고 ${nm(hi)}를 선택한다면 — 주거가치 ${hl >= 0 ? '+' : ''}${hl}점, 투자가치 ${hv >= 0 ? '+' : ''}${hv}점의 차이에 값을 지불하는 셈입니다. `;
-    const optEdge = hi.option.gradeIdx <= 1 && lo2.option.gradeIdx >= 2;
-    if (optEdge) sentence += `점수 차이보다도, 정비사업 기대(미래 옵션 ${hi.option.gradeLabel})가 이 프리미엄의 큰 부분을 설명합니다 — 사업 지연 시나리오의 변동성도 함께 고려하세요.`;
-    else if (hl <= 0 && hv <= 0) sentence += '지표상으로는 추가 지불의 근거가 뚜렷하지 않습니다 — 개별 요인(동·층·향, 실물 상태)을 확인하세요.';
-    else if (hi.scores.attract.score < lo2.scores.attract.score - 8) sentence += `다만 가격매력도는 ${nm(lo2)} 쪽이 높아, 프리미엄의 상당 부분이 이미 가격에 반영되어 있습니다.`;
-    else if (hl + hv <= 8) sentence += '지표상 점수 차이는 크지 않습니다 — 희소성·상징성 등 지표 밖 프리미엄에 값을 지불하는 것인지 확인해 보세요.';
-    else sentence += '점수 차이가 가격 차이를 상당 부분 뒷받침합니다.';
+  if (!av || !bv) sentence = '한쪽 단지의 전월세 실거래가 없어 잔여 비교는 생략합니다 — 실거래 가격 기준으로만 비교하세요.';
+  else if (Math.abs(diff) < 0.05) {
+    sentence = `두 단지의 최근 실거래가 비슷합니다. 설명되지 않는 비중(${a.cx.name} ${Math.max(0, av.residPct)}% vs ${b.cx.name} ${Math.max(0, bv.residPct)}%)이 작은 쪽이 임대료가 가격을 더 든든하게 받치는 쪽입니다.`;
+  } else {
+    const hi = diff > 0 ? { r: b, v: bv } : { r: a, v: av };
+    const lo2 = diff > 0 ? { r: a, v: av } : { r: b, v: bv };
+    sentence = `${fmtEok(Math.abs(diff))}을 더 주고 <b>${esc(hi.r.cx.name)}</b>를 선택한다면 — 임대가치 차이 연 ${fmtMan((hi.v.Rgross - lo2.v.Rgross) * 10000)}과 설명되지 않는 부분 ${fmtEok(Math.max(0, hi.v.resid))} vs ${fmtEok(Math.max(0, lo2.v.resid))}의 차이에 값을 지불하는 셈입니다. `;
+    if (Math.max(0, hi.v.residPct) > Math.max(0, lo2.v.residPct) + 8) sentence += '비싼 쪽의 가격에는 임대료 밖의 기대(환경·상품성·개발)가 더 크게 들어 있습니다 — 그 기대를 인정하는지가 판단의 핵심입니다.';
+    else sentence += '가격 차이의 상당 부분이 임대가치 차이로 뒷받침됩니다.';
   }
   $('cmpOut').innerHTML = `
     <div class="tblwrap"><table>
       <thead><tr><th></th><th>${esc(a.cx.name)} ${esc(a.area.key)}㎡</th><th>${esc(b.cx.name)} ${esc(b.area.key)}㎡</th></tr></thead><tbody>
-      ${row('현재 가격', fmtEokW(a.currentPrice), fmtEokW(b.currentPrice), true)}
+      ${row('최근 실거래', vOf(av, x => fmtEok(x.P)) , vOf(bv, x => fmtEok(x.P)), true)}
       ${row('실거래 기준', basisOf(a, aFallback), basisOf(b, prep.fallback))}
-      ${row('기준일', esc(state.baseInput.asOfYM), esc(state.baseInput.asOfYM))}
-      ${row('시장 기준가', a.marketRef ? `${fmtEok(a.marketRef.low)}~${fmtEok(a.marketRef.high)}` : '—', b.marketRef ? `${fmtEok(b.marketRef.low)}~${fmtEok(b.marketRef.high)}` : '—')}
-      ${row('금융 지지가치', a.financial ? `${fmtEok(a.financial.fsv.low)}~${fmtEok(a.financial.fsv.high)}` : '보류', b.financial ? `${fmtEok(b.financial.fsv.low)}~${fmtEok(b.financial.fsv.high)}` : '보류')}
-      ${row('판정', `${a.verdicts.market.label}·${a.verdicts.financial.label}·기대 ${a.verdicts.expectation.label}`, `${b.verdicts.market.label}·${b.verdicts.financial.label}·기대 ${b.verdicts.expectation.label}`)}
-      ${row('구조 경쟁력', a.structural.score != null ? `${a.structural.score} (${a.structural.band})` : '보류', b.structural.score != null ? `${b.structural.score} (${b.structural.band})` : '보류')}
-      ${row('교육 (생활권)', a.hedonic.eduDetail ? `${a.hedonic.eduDetail.score} ${a.hedonic.eduDetail.tier}${a.hedonic.eduDetail.zoneName ? ` · ${esc(a.hedonic.eduDetail.zoneName)}` : ''}` : '미확인', b.hedonic.eduDetail ? `${b.hedonic.eduDetail.score} ${b.hedonic.eduDetail.tier}${b.hedonic.eduDetail.zoneName ? ` · ${esc(b.hedonic.eduDetail.zoneName)}` : ''}` : '미확인')}
-      ${row('주거가치', Math.round(a.scores.living.total), Math.round(b.scores.living.total))}
-      ${row('투자가치', Math.round(a.scores.invest.total), Math.round(b.scores.invest.total))}
-      ${row('미래가치', a.future.score, b.future.score)}
-      ${row('전세지지력', a.support ? a.support.label : '보류', b.support ? b.support.label : '보류')}
-      ${row('수급', a.supplyE.gradeLabel, b.supplyE.gradeLabel)}
-      ${row('미래 옵션', a.option.gradeLabel, b.option.gradeLabel)}
-      ${row('신뢰도', a.confidence.label, b.confidence.label)}
+      ${row('임대가치 (연)', vOf(av, x => fmtMan(x.Rgross * 10000)), vOf(bv, x => fmtMan(x.Rgross * 10000)))}
+      ${row('지금 이 집에 사는 값', vOf(av, x => fmtEok(x.layers[0].amt)), vOf(bv, x => fmtEok(x.layers[0].amt)))}
+      ${row('적정가 (기준 시나리오)', vOf(av, x => fmtEok(x.scen.base.v)), vOf(bv, x => fmtEok(x.scen.base.v)))}
+      ${row('설명되지 않는 비중', residTxt(av), residTxt(bv))}
+      ${row('가격이 요구하는 임대료 상승', needTxt(av), needTxt(bv))}
+      ${row('지난 10년 실적', av && av.hist ? `연 ${fmtG(av.hist.g)}${av.hist.src === 'gu' ? ' (지역 평균)' : ''}` : '—', bv && bv.hist ? `연 ${fmtG(bv.hist.g)}${bv.hist.src === 'gu' ? ' (지역 평균)' : ''}` : '—')}
+      ${row('세대수', a.cx.households != null ? a.cx.households.toLocaleString() : '미확인', b.cx.households != null ? b.cx.households.toLocaleString() : '미확인')}
+      ${row('준공', a.cx.builtYear || '—', b.cx.builtYear || '—')}
+      ${row('가까운 역', a.transit ? `${esc(a.transit.primary.st)} ${a.transit.primary.min}분` : '—', b.transit ? `${esc(b.transit.primary.st)} ${b.transit.primary.min}분` : '—')}
       </tbody></table></div>
     <div class="op"><div class="ot">비교 해석</div><p>${sentence}</p></div>`;
 }
@@ -1473,7 +1414,7 @@ function repLinesOf(s) {
   for (const n of (s.lines || [])) if (!ord.includes(n)) ord.push(n);
   return ord;
 }
-/* 원 크기: 점수 구간이 즉시 구분되도록 비선형 곡선 (하위 ~5px → 최상위 22px 상한) */
+/* 원 크기: 값 구간이 즉시 구분되도록 비선형 곡선 (하위 ~5px → 최상위 22px 상한) */
 function svRadius(v) {
   const t = Math.max(0, Math.min(1, (v - 24) / 74));
   return 5 + 17 * Math.pow(t, 1.6);
@@ -1505,10 +1446,10 @@ $('mapBack').onclick = closeMap;
 /* 지도·역 카테고리(V2 §19 관점 선택): 균형형 + 4개 관점 — 선택하면 원 크기·목록·상세가 모두 그 기준으로 바뀐다 */
 const CAT = {
   sv: { short: '균형형', label: '균형형 역 가치', hint: '균형형 — 교통·네트워크 30% · 역세권 경제력 35% · 교육·주거 생활권 20% · 업무·도시 중심성 15%의 가중합입니다. 절대 순위가 아니라 관점 하나의 결과이며, 아래 탭으로 관점을 바꾸면 평가가 달라집니다. 원의 크기 = 역 가치, 원의 색 = 노선.' },
-  transit: { short: '교통', label: '교통·네트워크', hint: '교통·네트워크 — 강남·도심·여의도 체감 이동시간(대기·환승 포함), 환승 노선 수, 급행, 배차·심도. 전체 역 대비 백분위입니다. 원의 크기 = 교통 점수.' },
-  econ: { short: '경제력', label: '역세권 경제력', hint: '역세권 경제력 — 그 역 생활권에 거주하는 주민들의 경제 수준(소득·소비) 추정 등급(5단계)의 백분위입니다. 아파트 시세·업무지·상권·유동인구는 반영하지 않습니다(업무는 "업무" 탭, 시세는 검증용 참고로만 표시). 원의 크기 = 경제력 점수.' },
-  edu: { short: '교육·주거', label: '교육·주거 생활권', hint: '교육·주거 생활권 — 대표 학원가 접근(거리감쇠)과 아파트 단지 밀집도. 대치·목동·중계·평촌 같은 학군·주거 지역이 여기서 높습니다. 원의 크기 = 교육·주거 점수.' },
-  biz: { short: '직주·업무', label: '업무·도시 중심성', hint: '직주·업무 관점 — 업무·상업·문화 시설과 도시 중심성. 업무가 강한 역과 종합 부동산 가치가 높은 역을 구분해 보세요. 원의 크기 = 업무 점수.' }
+  transit: { short: '교통', label: '교통·네트워크', hint: '교통·네트워크 — 강남·도심·여의도 체감 이동시간(대기·환승 포함), 환승 노선 수, 급행, 배차·심도. 전체 역 대비 백분위입니다. 원의 크기 = 교통 값.' },
+  econ: { short: '경제력', label: '역세권 경제력', hint: '역세권 경제력 — 그 역 생활권에 거주하는 주민들의 경제 수준(소득·소비) 추정 구간(5단계)의 백분위입니다. 아파트 시세·업무지·상권·유동인구는 반영하지 않습니다(업무는 "업무" 탭, 시세는 검증용 참고로만 표시). 원의 크기 = 경제력 값.' },
+  edu: { short: '교육·주거', label: '교육·주거 생활권', hint: '교육·주거 생활권 — 대표 학원가 접근(거리감쇠)과 아파트 단지 밀집도. 대치·목동·중계·평촌 같은 학군·주거 지역이 여기서 높습니다. 원의 크기 = 교육·주거 값.' },
+  biz: { short: '직주·업무', label: '업무·도시 중심성', hint: '직주·업무 관점 — 업무·상업·문화 시설과 도시 중심성. 업무가 강한 역과 종합 부동산 가치가 높은 역을 구분해 보세요. 원의 크기 = 업무 값.' }
 };
 function metricOf(s) { return mapState.mode === 'sv' ? s.sv : ((s.comps || {})[mapState.mode] ?? 0); }
 /* 카테고리별 순위 (동률은 같은 순위) — 역 클릭 카드·TOP10에 사용 */
@@ -1709,7 +1650,7 @@ function selectStation(name) {
   {
     const diff = s.comps.transit - s.comps.econ;
     let msg;
-    if (diff >= 20) msg = '교통·네트워크 가치 대비 거주민 경제수준 등급이 낮습니다 — 교통 인프라에 비해 주거지 프리미엄이 아직 낮은 생활권입니다.';
+    if (diff >= 20) msg = '교통·네트워크 가치 대비 거주민 경제수준이 낮습니다 — 교통 인프라에 비해 주거지 프리미엄이 아직 낮은 생활권입니다.';
     else if (diff <= -20) msg = '거주민 경제수준이 교통·네트워크 가치보다 높습니다 — 교통보다 학군·환경·선호도가 만드는 주거 프리미엄 생활권입니다.';
     else msg = '교통·네트워크 가치와 거주민 경제수준이 대체로 부합하는 생활권입니다.';
     rel = `<p class="subtle" style="margin-top:8px">${msg}</p>`;
@@ -1726,17 +1667,17 @@ function selectStation(name) {
     <div class="stnhead"><b>${esc(name)}</b>
       <span>${s.lines.map(l => `<i style="width:9px;height:9px;border-radius:50%;background:${LINE_COLOR[l] || 'var(--muted)'};display:inline-block;margin-right:3px"></i>${esc(l)}`).join(' ')}${s.express ? ' · 급행/광역' : ''}</span></div>
     <div class="tiles3" style="grid-template-columns:1fr 1fr;margin-top:10px">
-      <div class="t3" style="cursor:default"><div class="k">균형형 기준 <span class="badge ${tierCls}" style="vertical-align:1px">${tier.label} 등급</span></div><div class="v g${gradeCls(s.sv)}">${Math.round(s.sv)}<em> /100</em></div><div class="s">수도권 ${total}개 역 중 상위 ${s.rankPct}%${catPct != null ? `<br>현재 선택 <b>${CAT[mapState.mode].short}</b> 관점 상위 ${catPct}%` : ''}</div></div>
-      <div class="t3" style="cursor:default"><div class="k">역세권 경제력${srcTag}</div><div class="v">${s.wealth}<em> /100</em></div><div class="s">근거: 거주민 소득·소비 수준 <b>${GRADE_LABEL[s.econGrade] || '중간권'}</b> (등급 ${s.econGrade ?? 3}/5) — 시세·업무·상권 미반영${s.priceLevel != null ? `<br>참고: 주변 시세 백분위 ${s.priceLevel}${s.priceN ? ` · ${s.priceN}개 단지` : ''} (평가 미반영 · 검증용)` : ''}</div></div>
+      <div class="t3" style="cursor:default"><div class="k">균형형 기준 <span class="badge ${tierCls}" style="vertical-align:1px">${tier.label} Tier</span></div><div class="v ">${Math.round(s.sv)}<em> /100</em></div><div class="s">수도권 ${total}개 역 중 상위 ${s.rankPct}%${catPct != null ? `<br>현재 선택 <b>${CAT[mapState.mode].short}</b> 관점 상위 ${catPct}%` : ''}</div></div>
+      <div class="t3" style="cursor:default"><div class="k">역세권 경제력${srcTag}</div><div class="v">${s.wealth}<em> /100</em></div><div class="s">근거: 거주민 소득·소비 수준 <b>${GRADE_LABEL[s.econGrade] || '중간권'}</b> (구간 ${s.econGrade ?? 3}/5) — 시세·업무·상권 미반영${s.priceLevel != null ? `<br>참고: 주변 시세 백분위 ${s.priceLevel}${s.priceN ? ` · ${s.priceN}개 단지` : ''} (평가 미반영 · 검증용)` : ''}</div></div>
     </div>
-    <h3 class="mini-h">점수 구성 — 4축 (전체 역 대비 백분위)</h3>
+    <h3 class="mini-h">구성 지표 — 4축 (전체 역 대비 백분위)</h3>
     ${sb('교통·네트워크 30%', s.comps.transit)}${sb('역세권 경제력 35%', s.comps.econ)}${sb('교육·주거 생활권 20%', s.comps.edu)}${sb('업무·도시 중심성 15%', s.comps.biz)}
     <p class="subtle" style="margin-top:6px">교통: 핵심지 체감접근 ${sub.core ?? '—'} · 네트워크 ${sub.net ?? '—'} · 운행편의 ${sub.fric ?? '—'} /
       교육·주거: 학원가 접근 ${sub.hubEdu ?? '—'}${s.hubName ? ` (${esc(s.hubName)})` : ''} · 단지 밀집 ${sub.density ?? '—'}</p>
-    <div class="op" style="margin-top:10px"><div class="ot">왜 이 등급인가</div><p>${esc(reason)} 관점(교통·경제력·교육주거·직주)을 바꾸면 이 역의 위치도 달라집니다 — 위 탭에서 직접 확인하세요.</p></div>
+    <div class="op" style="margin-top:10px"><div class="ot">왜 이 자리인가</div><p>${esc(reason)} 관점(교통·경제력·교육주거·직주)을 바꾸면 이 역의 위치도 달라집니다 — 위 탭에서 직접 확인하세요.</p></div>
     <div class="kv"><span>강남 핵심 업무지</span><span>약 ${s.gangnamMin}분 (대기·환승 포함 체감시간)</span></div>
     ${hop}${rel}
-    <p class="subtle">아파트 평가에는 이 역의 교통·업무 축을 중심으로 반영하고, 경제력 축은 추정 등급이라 축소 반영합니다(중복·과신 방지).</p>`;
+    <p class="subtle">아파트 평가에는 이 역의 교통·업무 축을 중심으로 반영하고, 경제력 축은 추정치라 축소 반영합니다(중복·과신 방지).</p>`;
   $('stnCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -1757,7 +1698,7 @@ function renderLineCard() {
   if ((B.uniqueness ?? 0) >= 65) strengths.push(`대체 불가 — 이 노선이 없어지면 소속 역의 핵심지 도달시간이 크게 늘어남 (우회 부담 ${B.detour}/100)`);
   const exHubs = hubs.filter(h => h.ex).map(h => h.n);
   if (exHubs.length >= 2) strengths.push(`${exHubs.slice(0, 4).join('·')}${exHubs.length > 4 ? ' 등' : ''}은 사실상 이 노선(±1개)만 연결`);
-  if (!strengths.length) strengths.push('구조적 강점이 뚜렷하지 않음 — 세부 축 점수를 확인하세요');
+  if (!strengths.length) strengths.push('구조적 강점이 뚜렷하지 않음 — 세부 축 값을 확인하세요');
   const weaknesses = [];
   if ((B.station ?? 0) < 55) weaknesses.push(`역세권 가치 ${B.station} — 외곽·저수요 구간 비중이 큼 (중앙값 ${B.medianDecayed})`);
   if ((B.hub ?? 0) < 55) weaknesses.push(`핵심 생활권 연결 ${B.hub} — 직결하는 고가치 생활권이 적음`);
@@ -1777,7 +1718,7 @@ function renderLineCard() {
   $('lineCard').hidden = false;
   $('lineCard').innerHTML = `
     <h2><i style="width:10px;height:10px;border-radius:50%;background:${L.color};display:inline-block;margin-right:6px"></i>${esc(nm)} — 노선 가치 ${L.golden} / 100${L.tier ? ` <span class="badge ${L.tier === 'S' ? 'green' : L.tier === 'A' ? 'blue' : 'gray'}" style="vertical-align:2px">${L.tier} Tier</span>` : ''} <span style="font-size:12px;color:var(--muted)">(${LINEI.lines.findIndex(x => x.name === nm) + 1}위)</span></h2>
-    <p class="hint"><b>노선 가치는 역 평균이 아닙니다.</b> 역세권 가치 30%(환승역 편승 감쇄) + 핵심 생활권 연결력 25%(추가 생활권은 한계효용 체감) + 도시 횡단·네트워크 20%(환승·관문·횡단성만 — 생활권과 중복 가산 없음) + 이동 효율 15% + 대체불가능성 10%(노선 제거 시 우회 시간 실측)로 평가하며, 점수는 계산값 그대로입니다(순위 강제 확대 없음). 점수차가 작은 노선은 같은 Tier로 묶입니다.</p>
+    <p class="hint"><b>노선 가치는 역 평균이 아닙니다.</b> 역세권 가치 30%(환승역 편승 감쇄) + 핵심 생활권 연결력 25%(추가 생활권은 한계효용 체감) + 도시 횡단·네트워크 20%(환승·관문·횡단성만 — 생활권과 중복 가산 없음) + 이동 효율 15% + 대체불가능성 10%(노선 제거 시 우회 시간 실측)로 평가하며, 값은 계산 결과 그대로입니다(순위 강제 확대 없음). 값 차이가 작은 노선은 같은 Tier로 묶입니다.</p>
     ${axBars}
     <div class="chips" style="margin:10px 0 2px"><span style="font-size:12px;color:var(--muted)">주요 연결 생활권 (★ 최상위 ◆ 독점)</span> ${hubChips || '<span class="badge gray">—</span>'}</div>
     <div class="kv"><span>역세권 가치 산출</span><span style="text-align:left;flex:2">환승 감쇄 SV 중앙값 <b>${B.medianDecayed ?? '—'}</b> · 상위 25%(${B.topN}개 역) <b>${B.topAvgDecayed ?? '—'}</b> · SV 80+ 역 비율 <b>${B.share80}%</b> · ${L.count}개 역</span></div>
@@ -1795,16 +1736,16 @@ function renderRank() {
   const m = mapState.mode;
   const inLine = mapState.line ? new Set((RAIL_LINES.filter(l => l.name === mapState.line)).flatMap(l => l.stations)) : null;
   const names = Object.keys(STN.stations).filter(n => !inLine || inLine.has(n));
-  // 동률(백분위 같은 점수)은 해당 축의 세부 점수로 정렬 — 교육·주거 탭에서 학원가 핵심지가 위로
+  // 동률(백분위 같은 값)은 해당 축의 세부 값으로 정렬 — 교육·주거 탭에서 학원가 핵심지가 위로
   const subKey = { transit: 'core', edu: 'hubEdu', biz: 'dest' }[m];
   const tie = n => subKey ? ((STN.stations[n].sub || {})[subKey] || 0) : 0;
   const ranked = names.sort((a, b) => metricOf(STN.stations[b]) - metricOf(STN.stations[a]) || tie(b) - tie(a) || STN.stations[a].rank - STN.stations[b].rank);
-  // V2 §16·18: 절대순위(1위·2위…) 대신 Tier 그룹 — 균형형 점수 기준 등급
+  // V2 §16·18: 절대순위(1위·2위…) 대신 Tier 그룹 — 균형형 값 기준 Tier
   const rowOf = n => {
     const s = STN.stations[n];
     const c = s.comps || {};
     const dot = `<i style="width:8px;height:8px;border-radius:50%;background:${LINE_COLOR[repLinesOf(s)[0]] || 'var(--muted)'};display:inline-block;margin-right:4px;flex:none"></i>`;
-    const lowN = m === 'econ' && s.econGrade ? ` <span class="stat est">등급 ${s.econGrade}/5</span>` : '';
+    const lowN = m === 'econ' && s.econGrade ? ` <span class="stat est">구간 ${s.econGrade}/5</span>` : '';
     const tier = AptEngine.stationTier(s.sv, CFG);
     const tCls = tier.label === 'S' ? 'green' : tier.label === 'A' ? 'blue' : 'gray';
     const sub = m === 'sv'
@@ -1817,9 +1758,9 @@ function renderRank() {
     </div>`;
   };
   const catNote = {
-    sv: '4개 축(교통·네트워크 30% / 역세권 경제력 35% / 교육·주거 20% / 업무·중심성 15%)의 가중합 — 절대 순위가 아니라 균형형 관점의 등급입니다.',
+    sv: '4개 축(교통·네트워크 30% / 역세권 경제력 35% / 교육·주거 20% / 업무·중심성 15%)의 가중합 — 절대 순위가 아니라 균형형 관점의 결과입니다.',
     transit: '강남·도심·여의도 체감 이동시간과 환승·급행·배차 기준 — 균형형 평가와 다를 수 있습니다.',
-    econ: '거주민 소득·소비 수준 추정 등급(5단계) 기준 — 시세·업무·상권 미반영이라 같은 등급은 동률입니다. 정밀 소득 데이터 미확보(전 역 추정).',
+    econ: '거주민 소득·소비 수준 추정 구간(5단계) 기준 — 시세·업무·상권 미반영이라 같은 구간은 동률입니다. 정밀 소득 데이터 미확보(전 역 추정).',
     edu: '학원가 접근성과 단지 밀집도 기준 — 학군·주거 지역이 업무지역보다 높게 나올 수 있습니다.',
     biz: '업무·상업·문화 시설 기준 — "업무가 강한 역"과 "종합 부동산 가치가 높은 역"은 다릅니다.'
   }[m];
@@ -1831,7 +1772,7 @@ function renderRank() {
     const tierDesc = { S: '수도권 핵심 역세권', A: '상위 역세권', B: '중상위 역세권', C: '그 외' };
     const shown = mapState.showAll ? ['S', 'A', 'B', 'C'] : ['S', 'A'];
     body = shown.filter(t => groups[t].length).map(t => `
-      <h3 class="mini-h" style="margin-top:14px">${t} Tier <span style="font-weight:400;color:var(--muted)">— ${tierDesc[t]} · ${groups[t].length}개 역 (등급 내 순서는 서열이 아닙니다)</span></h3>
+      <h3 class="mini-h" style="margin-top:14px">${t} Tier <span style="font-weight:400;color:var(--muted)">— ${tierDesc[t]} · ${groups[t].length}개 역 (Tier 내 순서는 서열이 아닙니다)</span></h3>
       ${(mapState.showAll ? groups[t] : groups[t].slice(0, t === 'A' ? 14 : 99)).map(rowOf).join('')}
       ${!mapState.showAll && t === 'A' && groups.A.length > 14 ? `<p class="subtle">… A Tier ${groups.A.length - 14}개 역 더 (전체 보기)</p>` : ''}`).join('');
   } else {
@@ -1842,7 +1783,7 @@ function renderRank() {
     <p class="hint">실제 계산 결과로 생성되며 사전에 고정된 순위가 없습니다. ${catNote} 위 탭으로 관점을 바꾸면 지도 원 크기와 목록이 함께 바뀝니다 — 관점이 다르면 상위 역도 달라집니다.</p>
     ${body}
     <button class="btn ghost" id="rankMore" style="width:100%;margin-top:10px">${mapState.showAll ? '접기 — 핵심 Tier만 보기' : `전체 역 보기 (${ranked.length}개)`}</button>
-    <p class="subtle" style="margin-top:10px">노선 가치: ${LINEI.lines.slice(0, 5).map(l => `${esc(l.name)} ${l.golden}${l.tier ? '(' + l.tier + ')' : ''}`).join(' · ')} — 역 평균이 아닌 별도 모델이며, 점수차가 작은 노선은 같은 Tier입니다 (노선 칩을 눌러 근거 확인)</p>`;
+    <p class="subtle" style="margin-top:10px">노선 가치: ${LINEI.lines.slice(0, 5).map(l => `${esc(l.name)} ${l.golden}${l.tier ? '(' + l.tier + ')' : ''}`).join(' · ')} — 역 평균이 아닌 별도 모델이며, 값 차이가 작은 노선은 같은 Tier입니다 (노선 칩을 눌러 근거 확인)</p>`;
   $('rankCard').querySelectorAll('.rankrow').forEach(row => row.onclick = () => selectStation(row.dataset.st));
   $('rankMore').onclick = () => { mapState.showAll = !mapState.showAll; renderRank(); if (mapState.showAll === false) $('rankCard').scrollIntoView({ block: 'start' }); };
 }

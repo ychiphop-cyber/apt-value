@@ -8,7 +8,7 @@
   "search": 49,
   "trades": 49,
   "area": 49,
-  "households": 43,
+  "households": 49,
   "station": 49,
   "education": 49,
   "school": 49,
@@ -138,7 +138,7 @@
     "search": "PASS",
     "trades": "PASS",
     "area": "PASS",
-    "households": "FAIL",
+    "households": "PASS",
     "station": "PASS",
     "education": "PASS",
     "school": "PASS",
@@ -148,9 +148,7 @@
     "reason": "PASS",
     "compare": "PASS"
    },
-   "notes": [
-    "K-apt 세대수 미확인"
-   ],
+   "notes": [],
    "matched": "타워팰리스1",
    "dong": "도곡동",
    "query": "타워팰리스",
@@ -245,7 +243,7 @@
     "search": "PASS",
     "trades": "PASS",
     "area": "PASS",
-    "households": "FAIL",
+    "households": "PASS",
     "station": "PASS",
     "education": "PASS",
     "school": "PASS",
@@ -255,9 +253,7 @@
     "reason": "PASS",
     "compare": "PASS"
    },
-   "notes": [
-    "K-apt 세대수 미확인"
-   ],
+   "notes": [],
    "matched": "신현대12차",
    "dong": "압구정동",
    "query": "압구정 현대",
@@ -583,7 +579,7 @@
     "search": "PASS",
     "trades": "PASS",
     "area": "PASS",
-    "households": "FAIL",
+    "households": "PASS",
     "station": "PASS",
     "education": "PASS",
     "school": "PASS",
@@ -593,9 +589,7 @@
     "reason": "PASS",
     "compare": "PASS"
    },
-   "notes": [
-    "K-apt 세대수 미확인"
-   ],
+   "notes": [],
    "matched": "주공아파트 5단지",
    "dong": "잠실동",
    "query": "잠실주공5",
@@ -669,7 +663,7 @@
     "search": "PASS",
     "trades": "PASS",
     "area": "PASS",
-    "households": "FAIL",
+    "households": "PASS",
     "station": "PASS",
     "education": "PASS",
     "school": "PASS",
@@ -679,9 +673,7 @@
     "reason": "PASS",
     "compare": "PASS"
    },
-   "notes": [
-    "K-apt 세대수 미확인"
-   ],
+   "notes": [],
    "matched": "올림픽선수기자촌2단지",
    "dong": "방이동",
    "query": "올림픽선수기자촌",
@@ -1063,7 +1055,7 @@
     "search": "PASS",
     "trades": "PASS",
     "area": "PASS",
-    "households": "FAIL",
+    "households": "PASS",
     "station": "PASS",
     "education": "PASS",
     "school": "PASS",
@@ -1073,9 +1065,7 @@
     "reason": "PASS",
     "compare": "PASS"
    },
-   "notes": [
-    "K-apt 세대수 미확인"
-   ],
+   "notes": [],
    "matched": "마포래미안푸르지오4단지",
    "dong": "아현동",
    "query": "마포래미안푸르지오",
@@ -1345,7 +1335,7 @@
     "search": "PASS",
     "trades": "PASS",
     "area": "PASS",
-    "households": "FAIL",
+    "households": "PASS",
     "station": "PASS",
     "education": "PASS",
     "school": "PASS",
@@ -1355,9 +1345,7 @@
     "reason": "PASS",
     "compare": "PASS"
    },
-   "notes": [
-    "K-apt 세대수 미확인"
-   ],
+   "notes": [],
    "matched": "DMC파크뷰자이1단지",
    "dong": "남가좌동",
    "query": "DMC파크뷰자이",
