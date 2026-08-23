@@ -214,55 +214,213 @@ const AptEngine = (() => {
       sum += W[k] * v; wsum += W[k];
     }
     const score = wsum > 0 ? clamp(sum / wsum, 0, 100) : 50;
+
+    /* ── 최종 토대 v3: 성장 신호 분리 — g에는 사건(지하철·재건축)을 넣지 않는다 ──
+       ② 물가·소득(infl × 전가율)은 펀더멘털, ③ 지역 초과성장은 demand·scarcity·eduPref
+       신호만으로 10년 한정, ④ 공급·노후는 드래그(마이너스), 사건은 ⑤ 옵션가치로. */
+    const F3 = CFG.financialV3;
+    const infl = F3.inflation * F3.passThrough;
+    let es = 0, ew = 0;
+    for (const [k2, w2] of Object.entries(F3.excessWeights)) {
+      const v = comps[k2];
+      if (v == null) continue;
+      es += w2 * v; ew += w2;
+    }
+    const excessSignal = ew > 0 ? es / ew : 50;
+    const excessG = interp(excessSignal, F3.excessSignalCurve.map(p => [p.x, p.g]));
+    const dragSupply = interp(supplyE.combined, F3.supplyDragCurve.map(p => [p.x, p.g]));
+    const age = cx.builtYear ? (input && input.asOfYear ? input.asOfYear : new Date().getFullYear()) - cx.builtYear : 15;
+    let dragAging = interp(age, F3.agingDragCurve.map(p => [p.age, p.g]));
+    // 노후 드래그는 직선이 아니다: 재건축 단계 진입 시 땅 재평가는 ⑤에서 — 여기 드래그는 완화
+    if (option.prob > 0.05) dragAging *= F3.agingRedevRelief;
+    const drag = dragSupply + dragAging;
+    const g1Base = infl + excessG - drag;   // 1~10년차 성장률, 이후 물가(infl)로 착지
     const gPrior = CFG.financial.longTermRentGrowth[cx.regionTier] ?? CFG.financial.longTermRentGrowth['기타'];
-    const gBase = gPrior + clamp((score - 60) / 40, -1, 1) * F.gSwing;
     return {
       score: Math.round(score), comps,
-      g: { low: gBase - F.gBandDown, base: gBase, high: gBase + F.gBandUp },
+      // g 시나리오 = 첫 excessYears 구간 성장률 (2단계 — 이후는 infl로 수렴)
+      g: { low: g1Base - F.gBandDown, base: g1Base, high: g1Base + F.gBandUp },
+      growth: { infl, passThrough: F3.passThrough, excessSignal: Math.round(excessSignal), excessG, dragSupply, dragAging, drag, g1Base },
       gPrior
     };
   }
 
-  /* ═══════════ Engine B · 금융·임대 내재가치 ═══════════ */
-  function engineFinancial(cx, area, input, CFG, currentPrice, gScen) {
-    const F = CFG.financial;
+  /* ═══════════ Engine B · 금융·임대 내재가치 — 최종 토대 v3 (2단계 성장 모형) ═══════════
+     ⑴ R = 순 임대가치: 총 임대가치(전세 신규계약 × c, 또는 월세 실거래)에서 재산세·수리비·공실
+        등 소유자 부담(ownerCostRate)을 뺀다 — 보유세 변화가 여기서 직접 가격에 들어온다.
+     ⑵ c(전월세전환율)는 보증금→월세 환산 전용 — k(요구수익률)와 개념이 다르며 절대 혼용 금지.
+        금리 스트레스(rateDelta)는 k에만 반영한다 — 전환율에 다시 넣으면 이중계상(§5②).
+     ⑶ k = 국고채 프록시 + 유동성·자산위험 + 지역 + 가격 구간 조정(§5④ — 25억 초과는 사실상
+        현금매수 구간이라 기회비용이 구조적으로 낮다).
+     ⑷ 가치 = 2단계: 1~excessYears년 g1 성장 → 이후 물가(infl)로 착지. 고든 단발 나눗셈 폐기
+        (성장률 0.1%p에 답이 7% 움직이는 폭발 방지). */
+  function kPriceBandAdj(price, F3) {
+    for (const b of F3.kPriceBands) if (b.upTo == null || price <= b.upTo) return b.adj;
+    return 0;
+  }
+  /* 2단계 현재가치: CF1 = R(연말), 1~N년 g1 성장, N년 이후 gT(물가) 영구 — 폐쇄형 합산.
+     g1 = gT이면 정확히 R/(k−gT)와 일치한다(층 분해의 산술 정합 근거). */
+  function pv2Stage(R, k, g1, gT, N, minSpread) {
+    const gTerm = Math.min(gT, k - minSpread);   // 종결부 폭주 가드
+    let pv = 0;
+    for (let t = 1; t <= N; t++) pv += R * Math.pow(1 + g1, t - 1) / Math.pow(1 + k, t);
+    const cfN1 = R * Math.pow(1 + g1, N - 1) * (1 + gTerm);
+    pv += (cfN1 / (k - gTerm)) / Math.pow(1 + k, N);
+    return { v: pv, terminalGuarded: gTerm < gT - 1e-12 };
+  }
+
+  function engineFinancial(cx, area, input, CFG, currentPrice, future) {
+    const F = CFG.financial, F3 = CFG.financialV3;
     const rateDelta = input.overrides.rateDelta || 0;
     const jeonseBase = input.overrides.jeonse != null ? input.overrides.jeonse : area.jeonse;
     // FR-03 부분 분석: 전세가 없으면 금융·임대 엔진만 보류(null) — 다른 엔진은 계속 실행
     if (!(jeonseBase > 0) && !(input.useRent && area.rentExample)) return null;
     const jeonse = jeonseBase * (input.overrides.jeonseMul || 1);
-    const conv = (cx.conversionRate || F.defaultConversionRate) + rateDelta * 0.5; // 금리 상승 시 전환율도 일부 동행
-    // 연간 주거서비스 가치 R
-    let R, rSourceText;
+    // c는 환산 전용 — 금리 변화를 여기 넣으면 k와 이중계상 (§5②)
+    const conv = cx.conversionRate || F.defaultConversionRate;
+    // 총 임대가치 → 순 임대가치 R (소유자 부담 차감)
+    let Rgross, rSourceText;
     if (input.useRent && area.rentExample) {
-      R = area.rentExample.rent * 12 / 10000 + area.rentExample.deposit * conv;
+      Rgross = area.rentExample.rent * 12 / 10000 + area.rentExample.deposit * conv;
       rSourceText = `월세 ${area.rentExample.rent}만 × 12 + 보증금 ${area.rentExample.deposit}억 × 전환율 ${(conv * 100).toFixed(1)}%`;
     } else {
-      R = jeonse * conv;
-      rSourceText = `전세 ${round1(jeonse)}억 × 시장 전월세전환율 ${(conv * 100).toFixed(1)}%`;
+      Rgross = jeonse * conv;
+      rSourceText = `전세(신규계약) ${round1(jeonse)}억 × 전월세전환율 ${(conv * 100).toFixed(1)}%`;
     }
-    // 요구수익률 r (합성) — 구성값을 rParts로 공개 (FR-07)
+    const ownerCost = Rgross * F3.ownerCostRate;
+    const R = Rgross - ownerCost;
+    // 요구수익률 k — 구성값 전체 공개 (FR-07) + 가격 구간 조정 (§5④)
     const regionRisk = F.regionRiskPremium[cx.regionTier] ?? F.regionRiskPremium['기타'];
-    const r = F.altReturn + F.liquidityPremium + F.assetRiskPremium + regionRisk + rateDelta;
-    const rParts = { altReturn: F.altReturn, liquidityPremium: F.liquidityPremium, assetRiskPremium: F.assetRiskPremium, regionRiskPremium: regionRisk, rateDelta };
-    // g 시나리오: 미래가치 엔진 결과 (없으면 지역 prior 단일값)
-    const gPrior = F.longTermRentGrowth[cx.regionTier] ?? F.longTermRentGrowth['기타'];
-    const gs = gScen || { low: gPrior - 0.005, base: gPrior, high: gPrior + 0.004 };
-    const valueAt = g => {
-      if (r - g >= F.minSpread) return { v: R / (r - g), mode: 'gordon' };
-      let pv = 0;
-      for (let t = 1; t <= F.dcfYears; t++) pv += R * Math.pow(1 + g, t - 1) / Math.pow(1 + r, t);
-      return { v: pv, mode: 'dcf' };
-    };
+    const bandAdj = kPriceBandAdj(currentPrice > 0 ? currentPrice : (jeonse * 1.6), F3);
+    const r = F.altReturn + F.liquidityPremium + F.assetRiskPremium + regionRisk + bandAdj + rateDelta;
+    const rParts = { altReturn: F.altReturn, liquidityPremium: F.liquidityPremium, assetRiskPremium: F.assetRiskPremium, regionRiskPremium: regionRisk, priceBandAdj: bandAdj, rateDelta };
+    // 성장 구조 (미래엔진 v3): infl = 물가×전가율(펀더멘털), g1 = infl + 지역 초과성장 − 공급·노후 드래그
+    const G = (future && future.growth) || { infl: F3.inflation, drag: 0, excessG: 0, g1Base: F3.inflation };
+    const gs = (future && future.g) || { low: G.g1Base - 0.004, base: G.g1Base, high: G.g1Base + 0.004 };
+    const N = F3.excessYears, MS = F3.terminalMinSpread;
+    const valueAt = g1 => pv2Stage(R, r, g1, G.infl, N, MS);
     const base = valueAt(gs.base);
     const fsv = { low: valueAt(gs.low).v, base: base.v, high: valueAt(gs.high).v };
-    // 역산: 현재가 유지에 필요한 성장률
-    const impliedG = currentPrice > 0 ? r - R / currentPrice : null;
+    // 역산(§4 헤드라인): "현재가를 정당화하려면 앞으로 N년간 임대가치가 연 몇 %씩 올라야 하나"
+    // — 옵션가치 차감은 decompose에서 수행. 여기서는 P 전체 기준 값(옵션 미차감)을 우선 산출.
+    const solveG1 = target => {
+      if (!(target > 0)) return null;
+      // 2단계 구조에선 g₁이 k를 넘어도 유한(명시적 10년 합산) — 넓은 탐색 구간
+      let lo = -0.08, hi = 0.30;
+      if (pv2Stage(R, r, hi, G.infl, N, MS).v < target) return hi;   // 상한 밖 — 상한으로 포화
+      if (pv2Stage(R, r, lo, G.infl, N, MS).v > target) return lo;
+      for (let i = 0; i < 60; i++) {
+        const mid = (lo + hi) / 2;
+        if (pv2Stage(R, r, mid, G.infl, N, MS).v < target) lo = mid; else hi = mid;
+      }
+      return (lo + hi) / 2;
+    };
+    const impliedG = currentPrice > 0 ? solveG1(currentPrice) : null;
     const jeonseRatio = currentPrice > 0 ? jeonse / currentPrice : null;
     const equity = currentPrice - jeonse;
-    // 시나리오별 대입값 전체 공개 (FR-07): V = R/(r−g) 또는 유한 DCF
-    const scen = ['low', 'base', 'high'].map(k => ({ k, g: gs[k], v: valueAt(gs[k]).v, mode: valueAt(gs[k]).mode }));
-    return { R, r, rParts, g: gs.base, gScen: gs, scen, conv, mode: base.mode, value: base.v, fsv, impliedG, jeonse, jeonseRatio, equity, rSourceText };
+    const scen = ['low', 'base', 'high'].map(k2 => ({ k: k2, g: gs[k2], v: valueAt(gs[k2]).v, mode: 'two-stage' }));
+    return {
+      R, Rgross, ownerCost, ownerCostRate: F3.ownerCostRate,
+      r, rParts, g: gs.base, gScen: gs, growth: G, scen, conv,
+      mode: 'two-stage', excessYears: N, terminalGuarded: base.terminalGuarded,
+      value: base.v, fsv, impliedG, solveG1, valueAt: g1 => valueAt(g1).v,
+      jeonse, jeonseRatio, equity, rSourceText
+    };
+  }
+
+  /* ═══════════ 최종 토대 v3 §2-3 · 가격 6층 분해 ═══════════
+     P = ①정적 사용가치(R/k) + ②물가·소득 성장 + ③지역 초과성장(10년 한정)
+       + ④공급·노후 조정(마이너스) + ⑤개발 옵션(확률×상승÷시간할인) + ⑥잔여.
+     순서는 ①②③④⑤ 고정 — 나눗셈 구조라 순서를 바꾸면 층별 금액이 달라진다(§5①).
+     ⑥ 잔여는 '거품'이 아니다 — 모형이 아직 못 담은 것(조망·브랜드·유동성)과 과열이 섞여 있다. */
+  function engineDecompose(cx, fin, option, currentPrice, CFG) {
+    if (!fin || !(currentPrice > 0)) return null;
+    const F3 = CFG.financialV3, F = CFG.financial, O = CFG.option;
+    const { R, r: k, growth: G, excessYears: N } = fin;
+    const MS = F3.terminalMinSpread;
+    const safeDiv = g => R / Math.max(k - g, MS);
+    const L1 = R / k;
+    const P2 = safeDiv(G.infl);
+    const L2 = P2 - L1;
+    const P3 = pv2Stage(R, k, G.infl + G.excessG, G.infl, N, MS).v;
+    const L3 = P3 - P2;
+    const P4 = pv2Stage(R, k, G.infl + G.excessG - G.drag, G.infl, N, MS).v;   // = fin.value (기준 시나리오)
+    const L4 = P4 - P3;
+
+    // ⑤ 개발 옵션가치 — 사건별: 확률 × 예상 가치상승 ÷ (1+k)^남은년수
+    const events = [];
+    const ft = (cx.location || {}).futureTransit || '';
+    if (ft) {
+      let kind = 'optional';
+      for (const st of CFG.future.transitStages) if (new RegExp(st.re).test(ft)) { kind = st.kind; break; }
+      const ev = CFG.future.transitEvents[kind] || CFG.future.transitEvents.optional;
+      events.push({
+        id: 'transit', name: ft, kind,
+        prob: ev.prob, years: ev.years,
+        uplift: round1(ev.upliftPct * P4 * 100) / 100,
+        amt: ev.prob * ev.upliftPct * P4 / Math.pow(1 + k, ev.years)
+      });
+    }
+    if (option && option.prob > 0) {
+      const years = (O.stageYears && O.stageYears[option.stage]) ?? 6;
+      const upliftPct = option.headroom != null
+        ? O.maxOptionPremium * clamp(option.headroom / O.headroomRef, 0, 1)
+        : null;   // 용적률 데이터 없으면 금액 미반영 — 등급·시나리오만 (임의 추정 금지)
+      events.push({
+        id: 'redev', name: `정비사업 — ${option.label}`, kind: option.prob >= (O.confirmedMinProb ?? 0.7) ? 'confirmed' : 'optional',
+        prob: option.prob, years,
+        uplift: upliftPct != null ? round1(upliftPct * P4 * 100) / 100 : null,
+        amt: upliftPct != null ? option.prob * upliftPct * P4 / Math.pow(1 + k, years) : 0,
+        note: upliftPct == null ? '용적률·대지지분 데이터 부족 — 금액 미반영' : null
+      });
+    }
+    const L5 = events.reduce((s, e) => s + e.amt, 0);
+
+    const explained = L1 + L2 + L3 + L4 + L5;
+    const L6 = currentPrice - explained;
+    const pct = x => Math.round(x / currentPrice * 100);
+    const layers = [
+      { id: 'static', no: '①', label: '지금 임대가치가 설명하는 가치', amt: L1, pct: pct(L1) },
+      { id: 'inflation', no: '②', label: '물가·소득이 올릴 임대가치', amt: L2, pct: pct(L2) },
+      { id: 'local', no: '③', label: `이 지역의 추가 성장 (${N}년 한정)`, amt: L3, pct: pct(L3) },
+      { id: 'supply', no: '④', label: '입주물량·건물 노후', amt: L4, pct: pct(L4) },
+      { id: 'option', no: '⑤', label: events.length ? events.map(e => e.name).join(' · ') : '개발 옵션 (해당 없음)', amt: L5, pct: pct(L5) },
+      { id: 'residual', no: '⑥', label: '설명 안 되는 부분 (잔여)', amt: L6, pct: pct(L6) }
+    ];
+    // 역산 헤드라인(§4): 옵션가치를 뺀 가격을 정당화하는 10년 성장률 — "이 가격을 믿으려면"
+    const impliedG10 = fin.solveG1(currentPrice - L5);
+    const impliedG10All = fin.impliedG;   // 옵션 미차감(참고)
+    // §8 역산 검증: 시장이 보는 초과성장 vs 모형 신호
+    const marketExcessG = impliedG10 != null ? impliedG10 - G.infl : null;
+    const modelExcessG = G.excessG - G.drag;
+    // §5⑤ 금리 민감도: k +1%p 시 임대가치 변화율 (낮은 k−g일수록 크다 — 채권과 같은 원리)
+    const bump = pv2Stage(R, k + 0.01, G.infl + G.excessG - G.drag, G.infl, N, MS).v;
+    const rateSensitivity = P4 > 0 ? bump / P4 - 1 : null;
+    // §6 잔여 상대비교용 간이 잣대: 월세 흐름 + 물가 성장만 (①+②)/P
+    const liteResidual = clamp(1 - P2 / currentPrice, -1, 1);
+    return {
+      layers, events, explained, explainedPct: pct(explained),
+      residual: L6, residualPct: Math.round(L6 / currentPrice * 1000) / 10,
+      liteResidual: Math.round(liteResidual * 1000) / 10,
+      impliedG10, impliedG10All, marketExcessG, modelExcessG, rateSensitivity,
+      assumptions: {
+        k, kParts: fin.rParts, conv: fin.conv, infl: G.infl, passThrough: G.passThrough,
+        ownerCostRate: fin.ownerCostRate, R: round1(R * 100) / 100, Rgross: round1(fin.Rgross * 100) / 100,
+        excessYears: N, jeonseBasis: '신규계약'
+      }
+    };
+  }
+
+  /* §6 간이 잔여율 — 인근 단지 상대비교용 (같은 잣대: ①정적 + ②물가 성장만) */
+  function residualLite(price, jeonse, conv, regionTier, CFG) {
+    if (!(price > 0) || !(jeonse > 0)) return null;
+    const F = CFG.financial, F3 = CFG.financialV3;
+    const R = jeonse * (conv || F.defaultConversionRate) * (1 - F3.ownerCostRate);
+    const regionRisk = F.regionRiskPremium[regionTier] ?? F.regionRiskPremium['기타'];
+    const k = F.altReturn + F.liquidityPremium + F.assetRiskPremium + regionRisk + kPriceBandAdj(price, F3);
+    const infl = F3.inflation * F3.passThrough;
+    const P2 = R / Math.max(k - infl, F3.terminalMinSpread);
+    return Math.round(clamp(1 - P2 / price, -1, 1) * 1000) / 10;
   }
 
   /* 금융 지지력 등급 (V3 §21) — 전세 없음(fin null)이면 '분석 보류' (FR-03) */
@@ -765,7 +923,7 @@ const AptEngine = (() => {
   }
 
   /* ═══════════ 하이브리드 결합 + 범위 ═══════════ */
-  function combine(market, fin, hed, sup, opt, CFG, compQuality) {
+  function combine(market, fin, hed, sup, opt, CFG, compQuality, optionPV) {
     const FN = CFG.final, RG = CFG.range;
     const vM = market.value;
     // 히도닉 잔차: 비교거래가 대상 그 자체(동일단지 동일평형)일수록 이중반영 제거
@@ -789,7 +947,8 @@ const AptEngine = (() => {
       // 전세 없음 → 금융 결합 없이 시장 경로만 (FR-03 부분 분석)
       return finish(vMktAdj, { vFundEff: null, wm: 1, wf: 0, disagreement: 0, marketOnly: true });
     }
-    const vFundEff = fin.value * (1 + opt.premium);
+    // v3 토대: 사건(개발 옵션)은 성장률이 아니라 별도 옵션가치(확률×상승÷시간할인)로 가산
+    const vFundEff = fin.value + (optionPV || 0);
     // 모델 괴리 → fundamental 가중 축소
     const d = Math.abs(vFundEff - vM) / vM;
     const wfRaw = FN.corePair.financial * Math.max(FN.fundWeightFloor, 1 - d);
@@ -1034,10 +1193,11 @@ const AptEngine = (() => {
     if (!fin) interp2.push('전세 실거래가 없어 금융·임대 지지가치와 역산 성장률 해석은 보류했습니다. STEP 2에서 전세 시세를 입력하면 이 분석이 포함됩니다.');
     if (fin && fin.impliedG != null) {
       const gPct = (fin.impliedG * 100).toFixed(1);
+      const inflPct = (fin.growth.infl * 100).toFixed(1);
       if (fin.impliedG > CFG.financial.impliedGrowthConcernOver)
-        interp2.push(`현재 ${round1(P)}억원이 유지되려면 임대가치가 연평균 약 ${gPct}% 성장해야 합니다. 장기 평균 가정(${(fin.g * 100).toFixed(1)}%)을 크게 웃도는 수준으로, 현재 가격에는 상당한 미래 성장 기대가 이미 반영되어 있습니다.`);
+        interp2.push(`현재 ${round1(P)}억원이 유지되려면 앞으로 ${fin.excessYears}년간 임대가치가 연 ${gPct}%씩 올라야 합니다. 물가·소득이 설명하는 건 연 ${inflPct}%로, 현재 가격에는 상당한 지역 초과성장 기대가 이미 반영되어 있습니다.`);
       else if (fin.impliedG > 0)
-        interp2.push(`현재 ${round1(P)}억원을 정당화하려면 임대가치가 연평균 약 ${gPct}% 성장하면 됩니다. 장기 가정(${(fin.g * 100).toFixed(1)}%) 범위에서 무리하지 않은 수준입니다.`);
+        interp2.push(`현재 ${round1(P)}억원을 정당화하려면 앞으로 ${fin.excessYears}년간 임대가치가 연 ${gPct}%씩 오르면 됩니다. 물가·소득 기준선(연 ${inflPct}%) 부근의 무리하지 않은 수준입니다.`);
       else
         interp2.push(`현재 가격은 임대가치 성장 없이도(연 ${gPct}%) 설명되는 보수적 구간입니다.`);
     }
@@ -1084,7 +1244,7 @@ const AptEngine = (() => {
 
     const weakBits = [];
     if (fin && res.combineOut.disagreement > 0.35) weakBits.push(`임대(사용)가치가 시장가격보다 크게 낮아(괴리 ${(res.combineOut.disagreement * 100).toFixed(0)}%) 현재 가격에는 향후 기대가 상당 부분 포함되어 있습니다`);
-    else if (fin && fin.impliedG != null && fin.impliedG > CFG.financial.impliedGrowthConcernOver) weakBits.push(`현재가 유지에 연 ${(fin.impliedG * 100).toFixed(1)}%의 임대가치 성장이 필요해 기대 선반영 폭이 큽니다`);
+    else if (fin && fin.impliedG != null && fin.impliedG > CFG.financial.impliedGrowthConcernOver) weakBits.push(`현재가 유지에 향후 ${fin.excessYears}년 연 ${(fin.impliedG * 100).toFixed(1)}%의 임대가치 성장이 필요해 기대 선반영 폭이 큽니다`);
     if (support && support.gradeIdx >= 3) weakBits.push(`전세지지력이 ${support.label} 수준입니다`);
     if (sup.gradeIdx >= 3) weakBits.push(`향후 공급이 ${sup.gradeLabel} 구간입니다`);
     if (sub.product < 58) weakBits.push('구축 연식·상품성이 열위입니다');
@@ -1137,13 +1297,13 @@ const AptEngine = (() => {
     for (const c of fv.confirmed) explains.push(`${c.name} (확정·진행 중)`);
     // 이미 가격에 반영된 기대
     const reflected = [];
-    if (V && V.expectation.idx != null && V.expectation.idx >= 2 && fin) reflected.push(`미래 임대가치 성장 기대 (현재가 유지에 연 ${(fin.impliedG * 100).toFixed(1)}% 성장 필요)`);
+    if (V && V.expectation.idx != null && V.expectation.idx >= 2 && fin) reflected.push(`미래 임대가치 성장 기대 (현재가 유지에 ${fin.excessYears}년간 연 ${(fin.impliedG * 100).toFixed(1)}% 성장 필요)`);
     if (scores.attract.premium >= 0.04) reflected.push('모델 종합가치 상단을 넘는 프리미엄');
     for (const o of fv.optional) reflected.push(`${o.name} 기대 (${o.likelihood})`);
     if (sub.product != null && sub.product >= 82) reflected.push('신축급 상품성 프리미엄');
     // 추가 상승을 위해 필요한 조건
     const upside = [];
-    if (fin && fin.impliedG != null && fin.impliedG > fin.gScen.base) upside.push(`임대(전세)가치의 연 ${(fin.impliedG * 100).toFixed(1)}% 이상 성장 지속`);
+    if (fin && fin.impliedG != null && fin.impliedG > fin.gScen.base) upside.push(`임대(전세)가치의 ${fin.excessYears}년간 연 ${(fin.impliedG * 100).toFixed(1)}% 이상 성장 지속`);
     else if (fin) upside.push('전세가격의 완만한 상승 지속');
     if (sup.combined >= 0.9) upside.push('주변 공급 부담 완화');
     if (fv.optional.some(o => o.type === 'transit')) upside.push('교통 호재의 착공·개통 현실화');
@@ -1211,17 +1371,21 @@ const AptEngine = (() => {
     // 미래가치 엔진 (5축 → g 시나리오) → Engine B 금융 (시나리오 범위)
     // 전세 없음 → fin=null (금융·전세지지력만 보류, 나머지 분석은 계속 — FR-03)
     const future = engineFuture(cx, supplyE, hedonic, option, CFG, input);
-    const fin = engineFinancial(cx, area, input, CFG, currentPrice, future.g);
+    const fin = engineFinancial(cx, area, input, CFG, currentPrice, future);
     const finHeld = !fin;
     if (finHeld) gaps.push('전세 실거래 없음 — 금융·임대 지지가치 분석 보류');
     const support = jeonseSupport(fin, cx.supply, supplyE.combined, CFG);
+    // v3 토대: 가격 6층 분해 (①정적 ②물가 ③초과성장 ④공급·노후 ⑤옵션 ⑥잔여)
+    const decomp = engineDecompose(cx, fin, option, currentPrice, CFG);
+    const optionPV = decomp && !(input.neutralize && input.neutralize.has('future'))
+      ? decomp.events.reduce((s, e) => s + e.amt, 0) : 0;
 
     // 데이터 충족률 (조망 등 결측 + 수동입력 단지 감안)
     const expectedGapBase = 10;
     const fillRate = clamp(1 - gaps.length / expectedGapBase - (input.manualComplex ? 0.15 : 0), 0.5, 1);
 
     // 결합 + 범위 (attribution 모드는 잔차 감쇄 없이 속성 반영분 전액을 측정 — §25 분해 전용)
-    const combineOut = combine(market, fin, hedonic, supplyE, option, CFG, input.attribution ? 0 : market.compQuality);
+    const combineOut = combine(market, fin, hedonic, supplyE, option, CFG, input.attribution ? 0 : market.compQuality, optionPV);
     const range = valueRange(combineOut.center, market, combineOut.disagreement, fillRate, CFG);
 
     // 점수
@@ -1258,11 +1422,12 @@ const AptEngine = (() => {
       ['시장 기준가', marketRef ? `${round1(marketRef.low)}~${round1(marketRef.high)}억 (중앙 ${round1(marketRef.med)}, ${marketRef.windowDays}일창 ${marketRef.n}건, 이상치 ${marketRef.nOutlier})` : '없음 → 비교거래 폴백'],
       ['최근 실거래', marketRef ? `${marketRef.latest.date} · ${marketRef.latest.price}억 · ${marketRef.latest.floor}층${marketRef.latest.outlier ? ' [이상치]' : ''}` : '—'],
       ['현재가', `${round1(currentPrice)}억 (${input.overrides.price != null ? '사용자 입력' : '최근 실거래'}${rep && rep.anomalous ? ' · 이상 저가 가능성 — 사실 그대로 표시' : rep && rep.anomalousHigh ? ' · 이상 고가 가능성 — 사실 그대로 표시' : ''})`],
-      ['R 연간주거서비스', fin ? `${(fin.R).toFixed(3)}억 = ${fin.rSourceText}` : '전세 없음 — 보류'],
-      ['요구수익률 r', fin ? (fin.r * 100).toFixed(2) + '%' : '—'],
-      ['g 시나리오', `보수 ${(future.g.low * 100).toFixed(1)}% / 기준 ${(future.g.base * 100).toFixed(1)}% / 우호 ${(future.g.high * 100).toFixed(1)}% (미래점수 ${future.score})`],
-      ['금융지지가치', fin ? `${round1(fin.fsv.low)}~${round1(fin.fsv.high)}억 (기준 ${round1(fin.fsv.base)}, ${fin.mode})` : '전세 없음 — 분석 보류'],
-      ['역산 g*', fin && fin.impliedG != null ? (fin.impliedG * 100).toFixed(2) + '%' : '—'],
+      ['R 순 임대가치', fin ? `${(fin.R).toFixed(3)}억 = (${fin.rSourceText}) − 보유비용 ${(fin.ownerCostRate * 100).toFixed(0)}%` : '전세 없음 — 보류'],
+      ['요구수익률 k', fin ? `${(fin.r * 100).toFixed(2)}% (가격구간 조정 ${(fin.rParts.priceBandAdj * 100).toFixed(1)}%p)` : '—'],
+      ['g₁ 시나리오 (1~10년, 이후 물가 착지)', `보수 ${(future.g.low * 100).toFixed(1)}% / 기준 ${(future.g.base * 100).toFixed(1)}% / 우호 ${(future.g.high * 100).toFixed(1)}% = 물가 ${(future.growth.infl * 100).toFixed(1)} + 초과 ${(future.growth.excessG * 100).toFixed(2)} − 드래그 ${(future.growth.drag * 100).toFixed(2)}`],
+      ['금융지지가치', fin ? `${round1(fin.fsv.low)}~${round1(fin.fsv.high)}억 (기준 ${round1(fin.fsv.base)}, 2단계 ${fin.excessYears}년+물가 착지)` : '전세 없음 — 분석 보류'],
+      ['역산 g₁₀ (10년 필요성장, 옵션 제외)', decomp && decomp.impliedG10 != null ? `${(decomp.impliedG10 * 100).toFixed(2)}% (시장 내재 초과성장 ${(decomp.marketExcessG * 100).toFixed(2)}%p vs 모형 신호 ${(decomp.modelExcessG * 100).toFixed(2)}%p)` : '—'],
+      ['6층 분해', decomp ? decomp.layers.map(l => `${l.no}${round1(l.amt)}`).join(' ') + ` → 설명 ${decomp.explainedPct}% · 잔여 ${decomp.residualPct}%` : '보류'],
       ['미래 5축', Object.entries(future.comps).map(([k, v]) => `${k}:${v == null ? '제외' : Math.round(v)}`).join(' ')],
       ['히도닉 조정', Object.entries(hedonic.adj).map(([k, v]) => `${k}:${(v * 100).toFixed(1)}%`).join(' ') + ` → 총 ${(hedonic.total * 100).toFixed(1)}% (잔차 ${(combineOut.hRes * 100).toFixed(1)}%)`],
       ['수급 조정', (supplyE.adj * 100).toFixed(1) + '%'],
@@ -1275,7 +1440,7 @@ const AptEngine = (() => {
 
     attract.sentence = attractSentence(attract.score, CFG);
     const res = {
-      cx, area, input, currentPrice, repPrice: rep, market, marketRef, marketCenter, financial: fin, finHeld, support, hedonic, supplyE, option,
+      cx, area, input, currentPrice, repPrice: rep, market, marketRef, marketCenter, financial: fin, finHeld, support, hedonic, supplyE, option, decomp,
       future, futureView, structural, verdicts, transit, combineOut, range, gaps, fillRate, fulfillment, editIssues, dataStatus, trace,
       scores: { living, invest, attract },
       confidence: conf
@@ -1513,7 +1678,8 @@ const AptEngine = (() => {
     analyze, applyStress, repRecentPrice, interp, weightedMedian, weightedPercentile, monthsBetween, clamp, round1, havKm,
     josa, pickDefaultAreaKey, normNameK, liveSearchHay, liveSearchMatch, mergeLiveEntries, matchKaptInfo, buildAutoComplex,
     attractSentence, oneLinerV2, stationTier, stationReason, futureSplit, fulfillmentOf, validateUserEdits,
-    eduScoreFromComponents, eduZoneScore, matchEduZone, eduDetailOf, priceContributions
+    eduScoreFromComponents, eduZoneScore, matchEduZone, eduDetailOf, priceContributions,
+    pv2Stage, engineDecompose, residualLite
   };
 })();
 

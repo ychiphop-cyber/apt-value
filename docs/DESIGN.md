@@ -321,3 +321,17 @@ V5에서 5호선이 1위까지 오른 원인 = 같은 장점(다양한 생활권
 **가격 기여도 (§23-26)** — `priceContributions`: attribution 모드(잔차 감쇄 없이 속성 반영분 전액 측정)에서 6개 요소(교통직주/교육/상품/생활자연/수급/미래)를 각각 중립화해 전체 재계산한 차이를 억원 단위로 표시. "왜 이 가격인가" 카드(상승 top3/하락 top2) + §26 상호작용 캡션. neutralize 훅: hedonic subs→baseline, supply adj→0, option premium→0, future comps→중립.
 
 **검증** — test/v2fix.js 52건(Test A~E, §11·12·25 검증) + test/regress50.js(서울 50개 단지 12항목 체크리스트 → data/qa/regress50.json 로그, §37: 교육 누락률 0%·메인/비교 불일치 0건·이유 설명 100%). 총 374 tests.
+
+## §17. 최종 토대 v3 (v4.2.0, 2026-08-22) — 가격 6층 분해·2단계 성장·역산 헤드라인
+
+**버린 것** — 고든 단발 나눗셈(성장률 0.1%p에 답이 7% 움직이는 폭발 구조), 전환율(c)과 요구수익률(k)의 혼용(금리 스트레스를 c에 재반영하는 이중계상 제거 — rateDelta는 k에만), 사건(지하철·재건축)을 성장률 g에 넣는 것, 절대 판정.
+
+**취한 것 / 구현**
+- **순 임대가치 R**: 총 임대가치(전세 신규계약 × c, 월세 실거래 경로 유지) × (1 − ownerCostRate 10%) — 보유세·수리·공실이 ① 층에서 직접 가격을 깎는다.
+- **k**: 국고채 프록시(altReturn) + 유동성·자산·지역 프리미엄 + **가격 구간 조정**(kPriceBands: ≤15억 0 / ≤25억 −0.2%p / 초과 −0.5%p — §5④ 대출한도 구조상 상단은 현금매수 구간). rParts에 priceBandAdj 공개.
+- **2단계 성장(pv2Stage)**: 1~10년 g₁ = 물가(infl×전가율) + 지역 초과성장(excessSignalCurve: demand·scarcity·eduPref 신호만 — **사건 제외**) − 드래그(공급 supplyDragCurve + 노후 agingDragCurve, 재건축 단계 진입 시 relief 0.5) → 이후 물가로 착지(terminalMinSpread 가드). g₁=물가일 때 영구공식과 정확히 일치(층 분해 산술 근거).
+- **6층 분해(engineDecompose)**: ①R/k ②R/(k−infl)−① ③2단계(infl+excess)−② ④드래그 층(마이너스) ⑤사건별 옵션 = 확률×상승분(upliftPct×임대가치)÷(1+k)^년수 (transitEvents 표 + option.stageYears, 용적률 없으면 금액 0+사유) ⑥잔여 = P−설명분. 순서 ①→⑤ 고정(§5①). liteResidual = 1−(①+②)/P — §6 인근 상대비교 잣대(residualLite, 같은 시군구 거래 상위 N=8 중앙값).
+- **역산 헤드라인**: impliedG10 = 2단계 PV가 (P−⑤)와 같아지는 g₁ (bisection, g₁>k 허용) — "현재 X억을 정당화하려면 10년간 연 A% 성장 필요, 물가·소득은 B%". marketExcessG(시장 내재 초과성장) vs modelExcessG(모형 신호) 대조(§8 역산 검증). rateSensitivity = k+1%p 시 임대가치 변화(§5⑤ — 조건부 방어력 문구 함께).
+- **결합**: combine의 vFundEff = fin.value + Σ⑤ 옵션PV (기존 ×(1+premium) 대체). expectation 판정 = impliedG10 vs g₁ 시나리오.
+- **UI**: decompCard(6층 막대+헤드라인+잔여 상대비교+가정 공개)가 히어로 직후 메인, 속성 기여 카드는 상세(deepWrap)로 이동. 금융 아코디언 전면 2단계 문구.
+- **검증**: test/foundation.js 44건 — 층 산술 정합·재현성, c/k 분리(금리 시 conv 불변), k 가격구간 단조, 10년 한정 폭발 억제(민감도 ≪ 고든), 사건의 g 불변·⑤ 단계 차등, 노후 비선형·재건축 relief, 옵션 공식 재현, 역산 왕복·단조, 금리 취약성 방향(상급지 −26% vs 지방), 실전 잔여율 분화. 총 425 tests.

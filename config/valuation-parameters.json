@@ -619,7 +619,21 @@
       "중립",
       "낮음"
     ],
-    "confirmedMinProb": 0.7
+    "confirmedMinProb": 0.7,
+    "stageYears": {
+      "potential": 12,
+      "remodel_review": 8,
+      "recon_review": 8,
+      "safety_check": 7,
+      "zone_designated": 6,
+      "committee": 5,
+      "union": 4,
+      "biz_approval": 3,
+      "mgmt_approval": 2,
+      "moving": 1.5,
+      "construction": 1
+    },
+    "stageYearsNote": "옵션가치 = 확률 × 예상 가치상승 ÷ (1+k)^남은년수 — 단계가 이르면 확률↓·기간↑ 이중 할인"
   },
   "marketRef": {
     "note": "시장 기준가 — 최근 실거래 1건이 아니라 기간창 가중중앙값 (V3 §7~9)",
@@ -642,7 +656,7 @@
     }
   },
   "future": {
-    "note": "미래가치 5축 (V3 §24) — 결과로 장기 주거가치 성장률 g 시나리오를 산출",
+    "note": "미래가치 5축(표시용 점수) + 성장 신호 — v3 토대: g에는 사건(지하철·재건축)을 넣지 않는다. 초과성장은 demand·scarcity·eduPref 신호만으로, 사건은 옵션가치(⑤)로 분리",
     "weights": {
       "demand": 0.25,
       "scarcity": 0.25,
@@ -716,7 +730,20 @@
     ],
     "gSwing": 0.004,
     "gBandDown": 0.006,
-    "gBandUp": 0.005
+    "gBandUp": 0.005,
+    "transitEvents": {
+      "confirmed": {
+        "prob": 0.9,
+        "years": 2,
+        "upliftPct": 0.08
+      },
+      "optional": {
+        "prob": 0.35,
+        "years": 5,
+        "upliftPct": 0.06
+      }
+    },
+    "transitEventsNote": "교통 사건의 옵션가치 계수(ESTIMATED) — 착공·확정은 확률 90%/2년, 계획·추진은 35%/5년 가정. 같은 호재도 단계에 따라 값이 달라진다"
   },
   "financialGrade": {
     "note": "금융 지지력 = 금융지지가치(기준 시나리오) ÷ 현재가",
@@ -1105,5 +1132,103 @@
       ]
     },
     "invalidPenalty": 6
+  },
+  "financialV3": {
+    "note": "최종 토대 v3 — 가격 6층 분해(①정적 사용가치 ②물가·소득 ③지역 초과성장 10년 한정 ④공급·노후 ⑤개발 옵션 ⑥잔여). 전월세전환율(c)은 보증금→월세 환산 전용 — 요구수익률(k)과 개념이 다르며 절대 혼용 금지(별도 필드, §5②). 층 순서는 ①②③④⑤ 고정(§5① — 순서를 바꾸면 배분이 달라진다).",
+    "ownerCostRate": 0.1,
+    "ownerCostNote": "재산세·수리비·공실 등 소유자 부담 — 총 임대가치에서 차감해 순 임대가치 R을 만든다. 보유세 변화가 이 층에서 직접 가격에 들어온다",
+    "inflation": 0.02,
+    "passThrough": 1.0,
+    "passThroughNote": "인플레이션 전가율 — 물가만큼 월세를 실제로 올릴 수 있는가. 소득이 못 따라오면 1보다 작게",
+    "excessYears": 10,
+    "excessYearsNote": "지역 초과성장 한정 기간(§3③) — 영원한 초과성장은 논리적으로 불가능",
+    "excessWeights": {
+      "demand": 0.4,
+      "scarcity": 0.35,
+      "eduPref": 0.25
+    },
+    "excessSignalCurve": [
+      {
+        "x": 40,
+        "g": 0.0
+      },
+      {
+        "x": 55,
+        "g": 0.002
+      },
+      {
+        "x": 70,
+        "g": 0.006
+      },
+      {
+        "x": 85,
+        "g": 0.011
+      },
+      {
+        "x": 95,
+        "g": 0.015
+      }
+    ],
+    "excessSignalNote": "지역 신호(수요·희소성·교육 — 사건 제외) → 연 초과성장률. 지하철·재건축 같은 사건은 g에 넣지 않는다(⑤ 옵션가치로)",
+    "supplyDragCurve": [
+      {
+        "x": 0.6,
+        "g": 0.0
+      },
+      {
+        "x": 0.9,
+        "g": 0.001
+      },
+      {
+        "x": 1.2,
+        "g": 0.003
+      },
+      {
+        "x": 1.6,
+        "g": 0.005
+      },
+      {
+        "x": 2.2,
+        "g": 0.008
+      }
+    ],
+    "agingDragCurve": [
+      {
+        "age": 12,
+        "g": 0.0
+      },
+      {
+        "age": 20,
+        "g": 0.0015
+      },
+      {
+        "age": 28,
+        "g": 0.003
+      },
+      {
+        "age": 45,
+        "g": 0.003
+      }
+    ],
+    "agingNote": "노후화는 직선이 아니다 — 연식 구간별 드래그. 재건축 단계에 진입하면 땅 가치 재평가는 ⑤에서 계산하고 여기 드래그는 완화(agingRedevRelief)",
+    "agingRedevRelief": 0.5,
+    "kPriceBands": [
+      {
+        "upTo": 15,
+        "adj": 0.0
+      },
+      {
+        "upTo": 25,
+        "adj": -0.002
+      },
+      {
+        "upTo": null,
+        "adj": -0.005
+      }
+    ],
+    "kPriceBandNote": "§5④ 대출한도 구간(15/25억)별 실질 매수자 자금구조 — 상단 구간은 현금매수 비중이 높아 기회비용(k)이 구조적으로 낮다. 전국 단일 k는 고가 구간을 전부 고평가로 찍는다",
+    "terminalMinSpread": 0.008,
+    "residualBenchmarkN": 8,
+    "residualBenchmarkNote": "잔여율 상대비교(§6) — 같은 시군구 거래 상위 단지의 간이 잔여율(월세 흐름+물가 성장만) 중앙값과 비교. 간이 잣대로 통일해야 공정하다"
   }
 }

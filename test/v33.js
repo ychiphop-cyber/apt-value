@@ -229,7 +229,7 @@ ok(E.normNameK('광남캐스빌(247-0)') === '광남캐스빌', 'normNameK: 괄�
     for (const s of f.scen) {
       if (s.mode === 'gordon') ok(Math.abs(f.R / (f.r - s.g) - s.v) < 1e-9, `AC-07: 금융 ${s.k} = R/(r−g) 재계산`);
     }
-    const rSum = f.rParts.altReturn + f.rParts.liquidityPremium + f.rParts.assetRiskPremium + f.rParts.regionRiskPremium + f.rParts.rateDelta;
+    const rSum = f.rParts.altReturn + f.rParts.liquidityPremium + f.rParts.assetRiskPremium + f.rParts.regionRiskPremium + f.rParts.priceBandAdj + f.rParts.rateDelta;
     ok(Math.abs(rSum - f.r) < 1e-12, 'AC-07: r = 구성요소 합');
   }
   // ④ 브리지: vMktAdj = vM×(1+hRes+supAdj), center 결합 재계산

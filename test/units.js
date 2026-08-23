@@ -85,20 +85,29 @@ ok(r.explain.up.length > 0 && r.explain.down.length > 0, '상승·하락 요인 
 ok(r.explain.interpretation.length > 0, '조건부 해석 생성');
 ok(r.explain.contrib.length === 7, '기여도 7개 카테고리');
 
-/* ── 고든 가드: r-g 근접 시 DCF 전환·유한 ── */
+/* ── v3 토대: 2단계 종결부 폭주 가드 — 물가가 k에 근접해도 유한 ── */
 {
   const cfg2 = JSON.parse(JSON.stringify(CFG));
-  cfg2.financial.longTermRentGrowth['서울'] = cfg2.financial.altReturn + cfg2.financial.liquidityPremium + cfg2.financial.assetRiskPremium + 0.002 - 0.001; // g ≈ r
+  cfg2.financialV3.inflation = 0.05;   // infl ≈ k → 고든이면 폭발하는 구간
   const r2 = E.analyze(base, cfg2, HUBS, JOBS);
-  ok(r2.financial.mode === 'dcf', 'r−g < minSpread → DCF 모드');
-  ok(finite(r2.financial.value) && r2.financial.value > 0, 'DCF 값 유한·양수');
+  ok(r2.financial.mode === 'two-stage' && r2.financial.terminalGuarded, '물가 ≈ k → 종결부 가드 발동');
+  ok(finite(r2.financial.value) && r2.financial.value > 0, '가드 상태에서도 값 유한·양수');
 }
 
-/* ── 역산 g* 왕복 검증: P = R/(r−g*) ── */
+/* ── v3 토대: 역산 g₁₀ 왕복 — 2단계 PV(impliedG) = 현재가 ── */
 {
   const f = r.financial;
-  const back = f.R / (f.r - f.impliedG);
-  ok(Math.abs(back - r.currentPrice) / r.currentPrice < 1e-9, '역산 성장률 왕복 일치');
+  const back = f.valueAt(f.impliedG);
+  ok(Math.abs(back - r.currentPrice) / r.currentPrice < 1e-6, '역산 필요성장률(10년) 왕복 일치');
+  // 층 분해 산술: L1+L2+L3+L4 = 금융가치, 설명분+잔여 = 현재가
+  const d = r.decomp;
+  const L = d.layers;
+  ok(Math.abs(L[0].amt + L[1].amt + L[2].amt + L[3].amt - f.value) < 1e-9, '6층 분해: ①+②+③+④ = 임대가치(2단계)');
+  ok(Math.abs(d.explained + d.residual - r.currentPrice) < 1e-9, '6층 분해: 설명분 + 잔여 = 현재가');
+  // g₁ = 물가일 때 2단계 = 고든 일치 (층 분해의 산술 정합 근거)
+  const G = f.growth;
+  const p2a = E.pv2Stage(f.R, f.r, G.infl, G.infl, f.excessYears, CFG.financialV3.terminalMinSpread).v;
+  ok(Math.abs(p2a - f.R / (f.r - G.infl)) / p2a < 1e-9, 'g₁=물가 → 2단계 = 영구성장 공식 일치');
 }
 
 /* ── 스트레스 단조성 ── */
