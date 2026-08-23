@@ -157,7 +157,7 @@ const run = (cx, ov) => E.analyze({ complex: cx, areaKey: '84', asOfYM: '2026-08
   const lite = E.residualLite(20, 10, 0.047, '서울핵심', CFG);
   const R = 10 * 0.047 * (1 - F3.ownerCostRate);
   const k = F.altReturn + F.liquidityPremium + F.assetRiskPremium + 0 + (-0.002);
-  const expect = Math.round((1 - (R / (k - F3.inflation * F3.passThrough)) / 20) * 1000) / 10;
+  const expect = Math.round((1 - (R * (1 + F3.inflation * F3.passThrough) / (k - F3.inflation * F3.passThrough)) / 20) * 1000) / 10;   // CF₁=R×(1+g) 규약
   ok(Math.abs(lite - expect) < 0.11, `residualLite 재현 (${lite} vs ${expect})`);
   ok(E.residualLite(20, null, 0.047, '서울', CFG) === null, '전세 없음 → 간이 잔여 null (억지 산출 금지)');
 }

@@ -555,6 +555,9 @@ async function runAnalysis() {
       if (histCode) { try { await getRentHist(histCode); } catch (e) {} }
       const areaKeyForHist = state.baseInput.areaKey || (state.baseInput.complex.areas[0] || {}).key;
       state.baseInput.rentHist = histCode ? histResolve(histCode, state.baseInput.complex, areaKeyForHist) : null;
+      // 재건축 이중 경로용 인근 신축 전월세 (모든 단지 공통 — 신축은 자연히 현 상태 경로가 이긴다)
+      if (histCode && LIVE.status === 'ready' && !LIVE.shards[histCode]) { try { await getShard(histCode); } catch (e) {} }
+      state.baseInput.nearbyNew = histCode ? nearbyNewOf(histCode, state.baseInput.complex, state.baseInput.asOfYM) : null;
       state.result = AptEngine.analyze(state.baseInput, CFG, HUBS, JOBS, STN);
       $('loading').style.display = 'none';
       renderReport(state.result);
@@ -612,6 +615,19 @@ function histResolve(code, cx, areaKey, extraNames) {
     if (rec && rec.old > 0) { cxOld = rec; break; }
   }
   return { cxOld, gu: h.gu, oldQ: h.meta.oldQ, yearsBack: h.meta.yearsBack, guName: h.meta.name };
+}
+
+/* ── 인근 신축 전월세 (재건축 이중 경로용 — STEP R1 입력) ── */
+function nearbyNewOf(code, cx, asOfYM, extraSelfNames) {
+  if (!code || LIVE.status !== 'ready' || !LIVE.shards[code]) return null;
+  const region = regionOf(code);
+  if (!region) return null;
+  const selfNames = new Set([cx.name, ...(extraSelfNames || [])].filter(Boolean));
+  if (state.liveSel && state.liveSel.entry && state.liveSel.entry.name === cx.name) {
+    for (const m of (state.liveSel.entry.mergedFrom || [])) selfNames.add(m);
+  }
+  const conv = cx.conversionRate || region.conv || CFG.financial.defaultConversionRate;
+  return AptEngine.v4NearbyNew(LIVE.shards[code].complexes, selfNames, cx.dong, asOfYM, conv, CFG);
 }
 
 /* ── 인근 단지 비교 (§D) — 같은 시군구 거래 상위 단지에 같은 잣대 적용.
@@ -685,7 +701,7 @@ function v4HeadHtml(r) {
     : '';
   return `
   <div class="v4head">
-    <div class="name">${esc(cx.name)}</div>
+    <div class="name">${esc(cx.name)}${v && v.rbAdopted ? ' <span class="rbflag">재건축 기준</span>' : ''}</div>
     <div class="hsub">${esc(sub)}${cx.householdsNote ? ` <span class="subtle" style="font-size:11.5px">(${esc(cx.householdsNote)})</span>` : ''}</div>
   </div>
   <div class="pricebox">
@@ -695,9 +711,88 @@ function v4HeadHtml(r) {
   </div>`;
 }
 
+/* ── B-0. 재건축 경로 안내 카드 (채택 시 명세 앞에 삽입 — 왜 계산이 다른지 먼저 납득) ── */
+function v4RebuildPathHtml(r) {
+  const v = r.v4, rb = v.rb;
+  const oldMo = Math.round(v.Rgross / 12 * 10000);
+  return `
+  <div class="card v4card">
+    <div class="eyebrow">이 단지는 계산 방식이 다릅니다</div>
+    <h2>낡은 집의 월세로 재면 안 됩니다</h2>
+    <div class="lede">${r.cx.builtYear ? r.cx.builtYear + '년 준공' : '구축'} · ${esc(rb.stageRawLabel)} 단계.
+      이 집을 사는 사람은 <b>지금의 낡은 집에 살려고</b> 사는 게 아니라 <b>그 땅에 새 집을 지으려고</b> 삽니다.
+      그래서 두 가지를 모두 계산하고 높은 쪽을 씁니다.</div>
+    <div class="paths">
+      <div class="path"><div class="k">① 지금 상태로<br>계속 살 때</div><div class="v num">${fmtEok(v.Vrent)}</div>
+        <div class="d">${v.rent.jeonse ? '전세 ' + fmtEok(v.rent.jeonse.v) + ' 기준' : '현 임대료 기준'}<br>월 환산 ${fmtMan(oldMo)}</div></div>
+      <div class="path win"><div class="k">② 새 아파트가<br>됐을 때</div><div class="v num">${fmtEok(rb.Vrebuild)}</div>
+        <div class="d">인근 신축 임대료 기준<br>분담금·기다림 반영</div><div class="badge2">채택</div></div>
+    </div>
+    <div class="punch">낡은 집 기준으로는 ${fmtEok(v.Vrent)}, 재건축을 반영하면 <b>${fmtEok(rb.Vrebuild)}</b>입니다.<br>
+      <b>${fmtEok(v.rbDiff)} 차이</b>가 '이 땅에 새 집을 지을 수 있다'는 값입니다.</div>
+  </div>`;
+}
+
+/* ── B-재건축. 워터폴 명세 (뺄셈 구조 — 스택으로 표현 불가) ── */
+function v4SpecRebuildHtml(r) {
+  const v = r.v4, rb = v.rb;
+  const rowOf = w => {
+    if (w.sub2) return `<div class="wrow sub"><span class="wl">${esc(w.l)}</span><span class="wv num">${fmtEok(w.v)}</span></div>`;
+    if (w.total) return `<div class="wrow total"><span class="wl">${esc(w.l)}</span><span class="wv num">${fmtEok(w.v)}</span></div>`;
+    if (w.gap) return `<div class="wrow gap"><span class="wl">${esc(w.l)}${w.sub ? `<small>${esc(w.sub)}</small>` : ''}</span><span class="wv num">${v.residNone ? '없음' : fmtEok(Math.max(0, w.v)) + ' · ' + Math.max(0, v.residPct) + '%'}</span></div>`;
+    const first = w.id === 'vnew';
+    return `<div class="wrow ${w.minus ? 'minus' : ''}"><span class="wl">${esc(w.l)}${w.sub ? `<small>${esc(w.sub)}</small>` : ''}</span><span class="wv num">${first ? '' : (w.v < 0 ? '−' : '+')}${fmtEok(Math.abs(w.v))}</span></div>`;
+  };
+  const un = Math.max(0, v.resid);
+  const optAmt = v.rbDiff + v.O;
+  const tot = v.Vrent + optAmt + un || 1;
+  const segs =
+    `<span style="background:var(--l1);flex:${(v.Vrent / tot).toFixed(3)}"></span>` +
+    `<span style="background:var(--l3);flex:${(optAmt / tot).toFixed(3)}"></span>` +
+    (un > 0 ? `<span style="background:var(--l4);flex:${(un / tot).toFixed(3)}"></span>` : '');
+  const beforePct = Math.round(v.residRentOnly / v.P * 100);
+  return `
+  <div class="card v4card">
+    <div class="eyebrow">가격 명세 · 재건축 기준</div>
+    <h2>${fmtEok(v.P)}은 무엇으로 되어 있나</h2>
+    <div class="wf">${v.wf.map(rowOf).join('')}</div>
+    <div class="stack" style="height:34px">${segs}</div>
+    <div class="lgd">
+      <div><span class="s" style="background:var(--l1)"></span>지금 상태의 값 ${fmtEok(v.Vrent)}</div>
+      <div><span class="s" style="background:var(--l3)"></span>재건축${v.O > 0 ? '·호재' : ''} 값 ${fmtEok(optAmt)}</div>
+      <div><span class="s" style="background:var(--l4)"></span>설명 안 됨 ${v.residNone ? '없음' : fmtEok(un)}</div>
+    </div>
+    <div class="readout">재건축을 못 담으면 설명되지 않는 부분이 <b>${fmtEok(Math.max(0, v.residRentOnly))}(${Math.max(0, beforePct)}%)</b>이었습니다.
+      재건축을 반영해 <b>${v.residNone ? '없음' : fmtEok(un) + `(${Math.max(0, v.residPct)}%)`}</b>${v.residNone ? '이 됐습니다' : '으로 줄었습니다'}.
+      인근 신축 기준: ${rb.nearby.items.map(i => esc(i.name)).join(' · ')}${rb.nearby.scope === 'gu' ? ' <span class="subtle">(같은 동 신축 부족 — 구 전체에서 선정)</span>' : ''}</div>
+  </div>`;
+}
+
+/* ── 재건축 한계 카드 — 접지 않고 본문 노출 ── */
+function v4RebuildLimitsHtml(r) {
+  const v = r.v4, rb = v.rb;
+  const fairAtCont = c => {
+    const rr = AptEngine.v4RebuildAt(v.R, rb.RnewGross, v.k, v.g, c, rb.p, rb.y, CFG);
+    return Math.max(rr.Vold, rr.Vrebuild) + v.O;
+  };
+  const swing = Math.abs(fairAtCont(3) - fairAtCont(9));
+  return `
+  <div class="card v4card">
+    <div class="eyebrow">이 계산이 못 하는 것 — 재건축</div>
+    <div class="lede" style="margin-bottom:0">
+      <b>분담금이 가장 불확실합니다.</b> 관리처분 인가 전에는 어떤 숫자도 추정치입니다.
+      위 조정기에서 3억과 9억을 눌러보면 적정가가 <b>${fmtEok(swing)}</b> 움직입니다. 그만큼 이 값에 민감하다는 뜻입니다.<br><br>
+      <b>기간도 그렇습니다.</b> 현재 ${esc(rb.stageRawLabel)} 단계 기준 ${rb.y}년을 가정했습니다.
+      과거 지연 이력이 긴 단지는 진행 단계를 한 단계 낮춰 보는 편이 안전합니다.<br><br>
+      <b>새 평형 배정은 동일 평형 유지를 가정했습니다.</b> 대지지분에 따라 더 큰 평형을 받거나 분담금이 달라질 수 있는데,
+      조합의 관리처분 전에는 확정할 수 없어 반영하지 않았습니다.</div>
+  </div>`;
+}
+
 /* ── B. 가격 명세 (첫 화면) ── */
 function v4SpecHtml(r, bm) {
   const v = r.v4;
+  if (v.rbAdopted) return v4SpecRebuildHtml(r);
   const colors = { live: 'var(--l1)', income: 'var(--l2)', fixed: 'var(--l3)', unknown: 'var(--l4)' };
   const segs = v.layers.filter(l => l.amt > 0).map(l =>
     `<span style="background:${colors[l.id]};flex:${Math.max(0.02, l.amt / v.P).toFixed(3)}"></span>`).join('');
@@ -735,6 +830,8 @@ function v4SpecHtml(r, bm) {
     <div class="stack">${segs}</div>
     ${rows}
     <div class="readout">${readout}</div>
+    ${v.rb && v.rb.skipped ? `<p class="subtle" style="margin-top:8px">정비사업 단계(${esc(CFG.option.stageLabels[(r.cx.redev && r.cx.redev.stage) || 'none'] || '')})가 확인되지만 인근 신축 전월세 데이터가 없어 재건축 경로는 계산하지 못했습니다 — 현 상태 기준입니다.</p>` : ''}
+    ${v.rb && v.rb.computed && !v.rbAdopted ? `<p class="subtle" style="margin-top:8px">재건축 경로도 계산했지만(${fmtEok(v.rb.Vrebuild)}) 현 상태 가치(${fmtEok(v.Vrent)})가 더 높아 현 상태 기준을 채택했습니다 — 아래 조정기에서 분담금·단계를 바꿔볼 수 있습니다.</p>` : ''}
     <div class="basis">
       <div class="t">실거주가치는 이렇게 잡았습니다</div>
       ${rentRows.join('')}
@@ -814,7 +911,7 @@ function v4NearHtml(r, bm) {
 /* ── E. 적정가 ── */
 function v4FairHtml(r, bm) {
   const v = r.v4, V = CFG.v4;
-  const rowVal = g => AptEngine.v4FairAt(v.R, v.k, g, CFG, v.events, v.P).Vfair;
+  const rowVal = g => v.fairAtG(g);
   const sc = v.scen;
   const card = (s, mid) => `<div class="sc ${mid ? 'mid' : ''}"><div class="k">${esc(s.label)}</div><div class="v num">${fmtEok(s.v)}</div><div class="d">${s.desc.map(esc).join('<br>')}</div></div>`;
   const vInfl = rowVal(0.02);
@@ -839,8 +936,123 @@ function v4FairHtml(r, bm) {
   </div>`;
 }
 
+/* ── F-재건축. 직접 조정하기 (재건축 경로 계산 단지 — 기존 컨트롤 + 단계·분담금·신축수준) ── */
+function v4AdjustRebuildHtml(r) {
+  const v = r.v4, V = CFG.v4, RB = V.rebuild, F = CFG.financial, rb = v.rb;
+  const tr0 = v.events.find(e => e.id === 'transit');
+  const histOpt = v.hist ? { g: v.hist.g, label: `연 ${fmtG(v.hist.g)}` } : null;
+  const opt = (label, hint, pressed, data) =>
+    `<button class="opt" ${data} aria-pressed="${pressed}">${esc(label)}<small>${esc(hint)}</small></button>`;
+  const rateOpts = V.rateOptions.map(o => opt(o.label, o.hint, o.id === 'now', `data-k="${o.k}"`)).join('');
+  const incOpts = V.incomeOptions.map(o => {
+    if (o.id === 'hist') return histOpt ? opt(o.label, histOpt.label, false, `data-g="${histOpt.g}"`) : '';
+    return opt(o.label, o.hint, o.id === 'nat', `data-g="${o.g}"`);
+  }).join('');
+  const supOpts = V.supplyOptions.map(o => opt(o.label, o.hint, o.id === 'norm', `data-d="${o.d}"`)).join('');
+  const stgOpts = Object.entries(RB.stages).map(([id, s]) =>
+    opt(s.label, `확률 ${(s.p * 100).toFixed(0)}% · ${s.y}년`, rb.stage === id, `data-p="${s.p}" data-y="${s.y}"`)).join('');
+  const contOpts = RB.contributionOptions.map(o =>
+    opt(o.label, o.hint, Math.abs(o.v - rb.cont) < 0.51, `data-v="${o.v}"`)).join('');
+  const newOpts = RB.newLevelFactors.map(o => {
+    const j = rb.nearby.avgJeonse != null ? Math.round(rb.nearby.avgJeonse * o.f * 10) / 10 + '억' : `×${o.f}`;
+    return opt(j, o.label, o.f === 1, `data-f="${o.f}"`);
+  }).join('');
+  const trOpts = Object.entries(V.transitBuckets).map(([id, b]) =>
+    opt(b.label, b.p > 0 ? `확률 ${(b.p * 100).toFixed(0)}% · ${b.y}년` : '계획 없음', (tr0 ? tr0.bucket : 'none') === id, `data-p="${b.p}" data-y="${b.y}"`)).join('');
+  return `
+  <div class="card v4card" id="adjCard">
+    <div class="eyebrow">재건축 조건 조정하기</div>
+    <h2>분담금과 기간을 바꿔보세요</h2>
+    <div class="ctl"><div class="q">재건축 진행 단계</div>
+      <div class="hint2">이 단지는 ${esc(rb.stageRawLabel)} 상태로 확인됩니다</div>
+      <div class="opts" id="c-rbstage">${stgOpts}</div></div>
+    <div class="ctl"><div class="q">분담금을 얼마로 볼까</div>
+      <div class="hint2">관리처분 전이라 확정 금액이 없습니다 — 인근 사례 기준 추정</div>
+      <div class="opts" id="c-cont">${contOpts}</div></div>
+    <div class="ctl"><div class="q">새 아파트는 어느 수준이 될까</div>
+      <div class="hint2">인근 신축 전세 실거래 ${rb.nearby.jeonseMin != null ? `${round1s(rb.nearby.jeonseMin)}~${round1s(rb.nearby.jeonseMax)}억 · 기준 ${rb.nearby.avgJeonse}억` : '기준값'} (${rb.nearby.items.map(i => esc(i.name)).join(' · ')})</div>
+      <div class="opts" id="c-new">${newOpts}</div></div>
+    <div class="ctl"><div class="q">앞으로 금리는</div>
+      <div class="hint2">지금 ${esc(F.baseRate.label)} ${fmtPct(F.baseRate.value)} · ${esc(F.mortgageRate.label)} ${fmtPct(F.mortgageRate.value)} (${esc(F.baseRate.asOf)})</div>
+      <div class="opts" id="c-rate">${rateOpts}</div></div>
+    <div class="ctl"><div class="q">임대료를 낼 소득은 얼마나 오를까</div>
+      <div class="hint2">전국 가구소득 2024년 +3.4% · 수도권 가구소득은 비수도권보다 20% 높음</div>
+      <div class="opts" id="c-inc">${incOpts}</div></div>
+    <div class="ctl"><div class="q">주변 전월세 수급은</div>
+      <div class="hint2">멸실이 많으면 전월세가 부족해져 임대료가 더 오릅니다</div>
+      <div class="opts" id="c-sup">${supOpts}</div></div>
+    <div class="ctl"><div class="q">교통 호재는 어느 단계인가</div>
+      <div class="hint2">${tr0 ? `이 단지는 ${esc(tr0.name)} ${esc(tr0.bucketLabel)} 상태입니다` : '확인된 교통 호재가 없습니다'}</div>
+      <div class="opts" id="c-tr">${trOpts}</div></div>
+    <div class="liveout">
+      <div class="k">이 조건에서의 적정가</div>
+      <div class="v num" id="adj-v"></div>
+      <div class="lbar" id="adj-bar"></div>
+      <div class="cmp" id="adj-c"></div>
+    </div>
+    <div class="sens" id="adj-s"></div>
+    <div class="cap" style="margin-top:12px">재건축 값은 <b>확률 × 새 집 시나리오 + (1−확률) × 지금 상태 가치</b>로 계산합니다.
+      무산돼도 땅은 남으므로 0이 되지 않습니다. 새 집 시나리오 = (새 아파트 가치 − 분담금) ÷ 기다림 할인 + 그동안의 임대료.</div>
+  </div>`;
+}
+const round1s = x => Math.round(x * 10) / 10;
+function wireV4AdjustRebuild(r) {
+  const v = r.v4, V = CFG.v4, rb = v.rb;
+  const tr0 = v.events.find(e => e.id === 'transit');
+  const st = {
+    k: V.k, g: V.gBase, sup: 0,
+    p: rb.p, y: rb.y, cont: rb.cont, newF: 1,
+    trP: tr0 ? tr0.p : 0, trY: tr0 ? tr0.y : 0
+  };
+  const calc = (o) => {
+    const s = Object.assign({}, st, o || {});
+    const g2 = s.g + s.sup;
+    const rr = AptEngine.v4RebuildAt(v.R, rb.RnewGross * s.newF, s.k, g2, s.cont, s.p, s.y, CFG);
+    const Ot = s.trP > 0 ? s.trP * Math.min(V.uplift.transit, V.upliftCapPct.transit * v.P) / Math.pow(1 + s.k, s.trY) : 0;
+    return { rr, Ot, fair: Math.max(rr.Vold, rr.Vrebuild) + Ot };
+  };
+  const render = () => {
+    const c = calc();
+    const d = v.P - c.fair;
+    const resid = Math.round(d / v.P * 100);
+    $('adj-v').textContent = fmtEok(c.fair);
+    $('adj-c').innerHTML = `${v.manualPrice ? '입력 시세' : '최근 실거래'} ${fmtEok(v.P)}보다 <b>${fmtEok(Math.abs(d))} ${d > 0.049 ? '낮습니다' : d < -0.049 ? '높습니다' : '와 비슷합니다'}</b> · 설명되지 않는 비중 <b>${resid > 0 ? resid + '%' : '없음'}</b>`;
+    const inc = Math.max(0, c.rr.Vold - v.R / st.k);
+    const rbAmt = Math.max(0, c.fair - c.rr.Vold);
+    const un = Math.max(0, d);
+    const tot = (v.R / st.k) + inc + rbAmt + un || 1;
+    $('adj-bar').innerHTML =
+      `<span style="background:#8FB4DA;flex:${((v.R / st.k) / tot).toFixed(3)}"></span>` +
+      `<span style="background:#4E86BE;flex:${(inc / tot).toFixed(3)}"></span>` +
+      (rbAmt > 0 ? `<span style="background:#2E8B7A;flex:${(rbAmt / tot).toFixed(3)}"></span>` : '') +
+      (un > 0 ? `<span style="background:rgba(255,255,255,.28);flex:${(un / tot).toFixed(3)}"></span>` : '');
+    const c2 = calc({ cont: st.cont + 1 });
+    $('adj-s').innerHTML = `분담금이 <b>1억 늘면</b> 적정가가 <b>${fmtEok(Math.max(0, c.fair - c2.fair))}</b> 낮아집니다 · 지금 상태로만 보면 <b>${fmtEok(c.rr.Vold)}</b>`;
+  };
+  const group = (id, fn) => {
+    const el = $(id);
+    if (!el) return;
+    el.addEventListener('click', e => {
+      const b = e.target.closest('.opt');
+      if (!b) return;
+      el.querySelectorAll('.opt').forEach(x => x.setAttribute('aria-pressed', 'false'));
+      b.setAttribute('aria-pressed', 'true');
+      fn(b); render();
+    });
+  };
+  group('c-rbstage', b => { st.p = parseFloat(b.dataset.p); st.y = parseFloat(b.dataset.y); });
+  group('c-cont', b => { st.cont = parseFloat(b.dataset.v); });
+  group('c-new', b => { st.newF = parseFloat(b.dataset.f); });
+  group('c-rate', b => { st.k = parseFloat(b.dataset.k); });
+  group('c-inc', b => { st.g = parseFloat(b.dataset.g); });
+  group('c-sup', b => { st.sup = parseFloat(b.dataset.d); });
+  group('c-tr', b => { st.trP = parseFloat(b.dataset.p); st.trY = parseFloat(b.dataset.y); });
+  render();
+}
+
 /* ── F. 직접 조정하기 ── */
 function v4AdjustHtml(r) {
+  if (r.v4.rb && r.v4.rb.computed) return v4AdjustRebuildHtml(r);
   const v = r.v4, V = CFG.v4, F = CFG.financial;
   const tr0 = v.events.find(e => e.id === 'transit');
   const rb0 = v.events.find(e => e.id === 'redev');
@@ -889,6 +1101,7 @@ function v4AdjustHtml(r) {
   </div>`;
 }
 function wireV4Adjust(r) {
+  if (r.v4.rb && r.v4.rb.computed) return wireV4AdjustRebuild(r);
   const v = r.v4, V = CFG.v4;
   const tr0 = v.events.find(e => e.id === 'transit');
   const rb0 = v.events.find(e => e.id === 'redev');
@@ -1135,11 +1348,13 @@ function renderReport(r) {
   $('report').innerHTML = `
   <div class="v4wrap">
     ${v4HeadHtml(r)}
+    ${v && v.rbAdopted ? v4RebuildPathHtml(r) : ''}
     ${v ? v4SpecHtml(r, bm) : v4FallbackHtml(r)}
     ${v ? v4HistHtml(r) : ''}
     ${v ? v4NearHtml(r, bm) : ''}
     ${v ? v4FairHtml(r, bm) : ''}
     ${v ? v4AdjustHtml(r) : ''}
+    ${v && v.rbAdopted ? v4RebuildLimitsHtml(r) : ''}
     ${v4BeyondHtml(r)}
     ${v ? v4CollapsesHtml(r, bm) : ''}
 
@@ -1353,8 +1568,9 @@ function renderCompare() {
   const prep = state.cmpPrep, c2 = prep.cx;
   const areaKey = $('cmpArea').value || c2.areas[0].key;
   const hist2 = state.cmpCode ? histResolve(state.cmpCode, c2, areaKey, []) : null;
+  const nearby2 = state.cmpCode ? nearbyNewOf(state.cmpCode, c2, state.baseInput.asOfYM) : null;
   let r2;
-  try { r2 = AptEngine.analyze({ complex: c2, areaKey, asOfYM: state.baseInput.asOfYM, overrides: {}, rentHist: hist2 }, CFG, HUBS, JOBS, STN); }
+  try { r2 = AptEngine.analyze({ complex: c2, areaKey, asOfYM: state.baseInput.asOfYM, overrides: {}, rentHist: hist2, nearbyNew: nearby2 }, CFG, HUBS, JOBS, STN); }
   catch (e) {
     $('cmpOut').innerHTML = `<div class="warnbox">${esc(e.user ? e.message : '이 평형은 분석할 수 없습니다 — 다른 평형을 선택해 보세요.')}</div>`;
     return;

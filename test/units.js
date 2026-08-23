@@ -107,7 +107,7 @@ ok(r.explain.contrib.length === 7, '기여도 7개 카테고리');
   // g₁ = 물가일 때 2단계 = 고든 일치 (층 분해의 산술 정합 근거)
   const G = f.growth;
   const p2a = E.pv2Stage(f.R, f.r, G.infl, G.infl, f.excessYears, CFG.financialV3.terminalMinSpread).v;
-  ok(Math.abs(p2a - f.R / (f.r - G.infl)) / p2a < 1e-9, 'g₁=물가 → 2단계 = 영구성장 공식 일치');
+  ok(Math.abs(p2a - f.R * (1 + G.infl) / (f.r - G.infl)) / p2a < 1e-9, 'g₁=물가 → 2단계 = 영구성장 공식 일치 (CF₁=R×(1+g) 규약)');
 }
 
 /* ── 스트레스 단조성 ── */

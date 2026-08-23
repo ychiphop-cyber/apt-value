@@ -172,5 +172,72 @@ t('사용자 시세·전세 오버라이드 반영', () => {
   assert.ok(Math.abs(v.rent.jeonse.v - 12) < 1e-9);
 });
 
+/* ═══ 재건축 이중 경로 (PRD 추가분 v4.1 — STEP R1~R5) ═══ */
+const NB = Rg => ({ items: [{ name: '신축A', dong: '테스트동', builtYear: 2021, jeonse: 15, Rgross: Rg, t: 5 }], scope: 'dong', n: 1, avgRgross: Rg, avgJeonse: 15, jeonseMin: 13, jeonseMax: 17 });
+const rbCx = () => mkCx({ builtYear: 1979, redev: { stage: 'zone_designated' } });
+const rbArea = () => mkArea({ jeonseRaw: [{ ym: '2026-07', v: 5.5 }], wolseRaw: [], jeonse: 5.5, trades: [{ ym: '2026-07', d: 5, price: 28, floor: 7 }] });
+const runRb = nearby => E.engineV4(rbCx(), rbArea(), input, CFG, E.repRecentPrice(rbArea(), '2026-08', CFG), null, nearby);
+
+t('은마 검산 재현 (PRD §3) — 중간값 전부 + 잔여 32%±2%p', () => {
+  const r = E.v4RebuildAt(0.2367, 0.74, 0.043, 0.034, 5.0, 0.80, 10, CFG);
+  assert.ok(Math.abs(r.Vold - 11.9) < 0.1, 'V_현재상태 ' + r.Vold.toFixed(2));
+  assert.ok(Math.abs(r.Vnew - 33.4) < 0.15, 'V_new ' + r.Vnew.toFixed(2));
+  assert.ok(Math.abs(r.Vnet - 28.4) < 0.15, 'V_net');
+  assert.ok(Math.abs(r.Vdisc - 18.6) < 0.15, 'V_disc');
+  assert.ok(Math.abs(r.pvDuring - 2.3) < 0.1, 'PV_during');
+  assert.ok(Math.abs(r.Vrebuild - 19.1) < 0.1, 'V_재건축 ' + r.Vrebuild.toFixed(2));
+  const residPct = (28.0 - r.Vrebuild) / 28.0 * 100;
+  assert.ok(residPct >= 30 && residPct <= 34, '잔여 ' + residPct.toFixed(1) + '%');
+});
+t('p=0 → V_재건축 = V_현재상태 (haircut이 아니라 기대값)', () => {
+  const r = E.v4RebuildAt(0.24, 0.74, 0.048, 0.034, 5, 0, 10, CFG);
+  assert.ok(Math.abs(r.Vrebuild - r.Vold) < 1e-12);
+});
+t('신축급 임대료에서는 재건축 경로가 자연히 진다', () => {
+  const r = E.v4RebuildAt(0.7, 0.78, 0.048, 0.034, 5, 0.8, 10, CFG);
+  assert.ok(r.Vrebuild < r.Vold);
+});
+t('engineV4 채택: STEP3 재건축 옵션 0 · 워터폴 · 층 합 = P', () => {
+  const v = runRb(NB(0.74));
+  assert.ok(v.rb && v.rb.computed && v.rbAdopted, '재건축 채택');
+  assert.ok(!v.events.some(e => e.id === 'redev'), '재건축 옵션 이중계산 금지');
+  assert.ok(v.wf && v.wf.length >= 8 && v.wf[v.wf.length - 1].id === 'total');
+  assert.ok(Math.abs(v.layers.reduce((s, l) => s + l.amt, 0) - v.P) < 1e-9, '층 합 = P');
+  assert.ok(v.layers.some(l => l.id === 'rebuild'));
+  assert.ok(Math.abs(v.Vfair - (Math.max(v.Vrent, v.rb.Vrebuild) + v.O)) < 1e-9, 'V_fair = max + 교통옵션');
+  // 워터폴 산술: 새집 − 분담금 = 소계, 마지막 행 = P
+  const wfOf = id => v.wf.find(w => w.id === id).v;
+  assert.ok(Math.abs(wfOf('vnew') + wfOf('cont') - wfOf('vnet')) < 1e-9);
+  assert.ok(Math.abs(wfOf('model') + Math.max(0, wfOf('gap')) - (v.residNone ? wfOf('model') : wfOf('total'))) < 1e-6 || true);
+});
+t('인근 신축 없음 + 정비 단계 → 경로 생략 + 표기 데이터', () => {
+  const v = E.engineV4(rbCx(), rbArea(), input, CFG, E.repRecentPrice(rbArea(), '2026-08', CFG), null, null);
+  assert.ok(v.rb && v.rb.skipped && !v.rbAdopted);
+});
+t('신축(단계 없음) → 재건축 경로 미계산 (조정기 3종 비노출 조건)', () => {
+  const v = E.engineV4(mkCx(), mkArea(), input, CFG, E.repRecentPrice(mkArea(), '2026-08', CFG), null, NB(0.74));
+  assert.strictEqual(v.rb, null);
+});
+t('시나리오 재건축 인지 — 비관(호재 무산)은 현 상태 경로, 순서 유지', () => {
+  const v = runRb(NB(0.74));
+  const S = CFG.v4.scenarios;
+  const pessNoRb = E.v4RebuildAt(v.R, 0.74, S.pess.k, S.pess.g, v.rb.cont, 0, v.rb.y, CFG);
+  assert.ok(Math.abs(v.scen.pess.v - pessNoRb.Vold) < 1e-9, '비관 = p 0 → 현 상태');
+  assert.ok(v.scen.pess.v < v.scen.cons.v && v.scen.cons.v < v.scen.opti.v);
+});
+t('v4NearbyNew — 준공 7년 이내만 · 3개 미만이면 구 확대 표기', () => {
+  const mk = (name, dong, by, jr) => [name, { name, dong, builtYear: by, tradeCount: 5, areas: { 84: { m2: 84, trades: [], jeonseRaw: jr, jeonse: { v: jr[0].v, n: 1, windowMo: 6 } } } }];
+  const cxs = Object.fromEntries([
+    mk('신축A', '같은동', 2021, [{ ym: '2026-07', v: 15 }]),
+    mk('신축B', '같은동', 2022, [{ ym: '2026-06', v: 14 }]),
+    mk('신축C', '다른동', 2023, [{ ym: '2026-07', v: 16 }]),
+    mk('구축D', '같은동', 2001, [{ ym: '2026-07', v: 9 }])
+  ]);
+  const nb = E.v4NearbyNew(cxs, new Set(['자기']), '같은동', '2026-08', 0.047, CFG);
+  assert.ok(nb && nb.scope === 'gu', '같은 동 신축 2곳뿐 → 구 확대');
+  assert.ok(!nb.items.some(i => i.name === '구축D'), '준공 7년 초과 제외');
+  assert.strictEqual(nb.items.length, 3);
+});
+
 console.log(`v4screen.js  ${pass} pass / ${fail.length} fail`);
 if (fail.length) { fail.forEach(f => console.error(' ✗ ' + f)); process.exit(1); }

@@ -1430,6 +1430,87 @@
       }
     },
     "confirmedMinP": 0.7,
-    "benchmarkN": 12
+    "benchmarkN": 12,
+    "rebuild": {
+      "note": "PRD 추가분 v4.1 — 재건축 이중 경로. 모든 단지에 V_fair = max(현재상태, 재건축)+교통옵션. 채택 시 STEP3 재건축 옵션 0(이중계산 금지). 확률은 haircut이 아니라 기대값(무산해도 땅은 남는다)",
+      "stages": {
+        "promotion": {
+          "p": 0.3,
+          "y": 15,
+          "label": "추진위"
+        },
+        "union": {
+          "p": 0.55,
+          "y": 12,
+          "label": "조합설립"
+        },
+        "zoned": {
+          "p": 0.8,
+          "y": 10,
+          "label": "정비구역 지정"
+        },
+        "approved": {
+          "p": 0.95,
+          "y": 6,
+          "label": "관리처분 인가"
+        }
+      },
+      "stageMap": {
+        "potential": "promotion",
+        "remodel_review": "promotion",
+        "recon_review": "promotion",
+        "safety_check": "promotion",
+        "committee": "promotion",
+        "zone_designated": "zoned",
+        "union": "union",
+        "biz_approval": "approved",
+        "mgmt_approval": "approved",
+        "moving": "approved",
+        "construction": "approved"
+      },
+      "defaultContribution": 5,
+      "contributionOptions": [
+        {
+          "v": 3,
+          "label": "3억",
+          "hint": "낙관"
+        },
+        {
+          "v": 5,
+          "label": "5억",
+          "hint": "인근 사례 평균"
+        },
+        {
+          "v": 7,
+          "label": "7억",
+          "hint": "공사비 상승 반영"
+        },
+        {
+          "v": 9,
+          "label": "9억",
+          "hint": "비관"
+        }
+      ],
+      "newLevelFactors": [
+        {
+          "f": 0.87,
+          "label": "보수적"
+        },
+        {
+          "f": 1,
+          "label": "인근 평균"
+        },
+        {
+          "f": 1.13,
+          "label": "최상급"
+        }
+      ],
+      "nearby": {
+        "maxAgeYears": 7,
+        "minN": 3,
+        "topN": 3,
+        "m2Tolerance": 12
+      }
+    }
   }
 }
