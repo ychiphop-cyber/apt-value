@@ -1234,8 +1234,7 @@
   "v4": {
     "note": "결과화면 개편 v4 (PRD 2026-08-23) — STEP 1~7 계수. 화면·조정기·시나리오가 전부 이 값만 쓴다",
     "costRate": 0.1,
-    "k": 0.048,
-    "kNote": "요구수익률 기본값 — 국고10년 프록시 + 위험프리미엄 (조정기에서 금리 선택으로 변경)",
+    "kNote": "가격대별 요구수익률 — 단일 k는 고가 구간을 전부 잔여만 큰 것으로 만든다. 화면에 근거 공개",
     "gBase": 0.034,
     "gBaseNote": "기준 성장률 — 전국 가구소득 증가율 2024 (가계금융복지조사). 구 단위 분리는 다음 작업",
     "gTerm": 0.02,
@@ -1249,50 +1248,6 @@
     "rentWindowExtMo": 12,
     "jeonseAvgN": 3,
     "wolseAvgN": 2,
-    "uplift": {
-      "redev": 5,
-      "transit": 1.5
-    },
-    "upliftCapPct": {
-      "redev": 0.35,
-      "transit": 0.12
-    },
-    "upliftNote": "예상 상승분 기본 상수(억). 저가 단지 왜곡 방지 캡 = 가격 대비 비율",
-    "redevBuckets": {
-      "none": {
-        "p": 0,
-        "y": 0,
-        "label": "해당 없음"
-      },
-      "early": {
-        "p": 0.2,
-        "y": 12,
-        "label": "초기 논의"
-      },
-      "zoned": {
-        "p": 0.55,
-        "y": 8,
-        "label": "정비구역 지정"
-      },
-      "approved": {
-        "p": 0.85,
-        "y": 5,
-        "label": "사업시행인가"
-      }
-    },
-    "redevStageMap": {
-      "potential": "early",
-      "remodel_review": "early",
-      "recon_review": "early",
-      "safety_check": "early",
-      "zone_designated": "zoned",
-      "committee": "zoned",
-      "union": "zoned",
-      "biz_approval": "approved",
-      "mgmt_approval": "approved",
-      "moving": "approved",
-      "construction": "approved"
-    },
     "transitBuckets": {
       "none": {
         "p": 0,
@@ -1320,25 +1275,25 @@
         "id": "down",
         "label": "내린다",
         "hint": "기준 2.0%",
-        "k": 0.043
+        "kDelta": -0.005
       },
       {
         "id": "now",
         "label": "지금 수준",
         "hint": "기준 2.5%",
-        "k": 0.048
+        "kDelta": 0
       },
       {
         "id": "up1",
         "label": "1%p 오른다",
         "hint": "기준 3.5%",
-        "k": 0.058
+        "kDelta": 0.01
       },
       {
         "id": "up2",
         "label": "2%p 오른다",
         "hint": "2022년급",
-        "k": 0.068
+        "kDelta": 0.02
       }
     ],
     "incomeOptions": [
@@ -1350,21 +1305,22 @@
       },
       {
         "id": "nat",
-        "label": "전국 소득 수준",
+        "label": "전국 소득",
         "hint": "연 3.4%",
         "g": 0.034
       },
       {
-        "id": "seoul",
-        "label": "서울 프리미엄",
-        "hint": "연 4.0%",
-        "g": 0.04
-      },
-      {
         "id": "hist",
-        "label": "이 단지 과거 실적",
+        "label": "이 단지 실적",
         "hint": "10년 실적",
         "g": null
+      },
+      {
+        "id": "histPlus",
+        "label": "실적 초과",
+        "hint": "+0.9%p",
+        "g": "histPlus",
+        "add": 0.009
       }
     ],
     "supplyOptions": [
@@ -1396,7 +1352,7 @@
     "scenarios": {
       "pess": {
         "label": "비관적",
-        "k": 0.068,
+        "kDelta": 0.02,
         "g": 0.02,
         "events": "none",
         "desc": [
@@ -1407,7 +1363,7 @@
       },
       "cons": {
         "label": "보수적",
-        "k": 0.053,
+        "kDelta": 0.005,
         "g": 0.034,
         "events": "confirmed",
         "desc": [
@@ -1418,21 +1374,70 @@
       },
       "opti": {
         "label": "낙관적",
-        "k": 0.045,
+        "kDelta": -0.003,
         "g": "hist",
+        "gAdd": 0.007,
         "gFallback": 0.046,
         "events": "all",
         "desc": [
           "금리 소폭 인하",
-          "과거 실적 유지",
+          "실적 유지",
           "공급 부족 지속"
         ]
       }
     },
     "confirmedMinP": 0.7,
     "benchmarkN": 12,
-    "rebuild": {
-      "note": "PRD 추가분 v4.1 — 재건축 이중 경로. 모든 단지에 V_fair = max(현재상태, 재건축)+교통옵션. 채택 시 STEP3 재건축 옵션 0(이중계산 금지). 확률은 haircut이 아니라 기대값(무산해도 땅은 남는다)",
+    "kBands": [
+      {
+        "upTo": 15,
+        "k": 0.05,
+        "why": "대출 한도 6억 — 주담대 의존"
+      },
+      {
+        "upTo": 25,
+        "k": 0.048,
+        "why": "대출 한도 4억"
+      },
+      {
+        "upTo": null,
+        "k": 0.043,
+        "why": "대출 한도 2억 — 사실상 현금 매수, 기회비용이 예금금리"
+      }
+    ],
+    "gs": {
+      "fallbackNational": 0.034,
+      "excessBands": [
+        0.01,
+        0.025
+      ],
+      "excessNote": "초과폭 = 실적 − 소득. ≤1%p 정상 / 1~2.5 소득보다 빠름 / >2.5 경고"
+    },
+    "mode": {
+      "gateA": {
+        "ageMin": 25
+      },
+      "gateB": {
+        "farNoStation": 200,
+        "farStation": 250,
+        "stationWalkMax": 10
+      },
+      "gateC": {
+        "rebuildMin": 1.2,
+        "mixedMin": 1
+      },
+      "jeonseDevLow": 0.7
+    },
+    "rebuild5": {
+      "rDep": 0.03,
+      "rDepLabel": "예금금리 (대안 수익률)",
+      "gTarget": 0.034,
+      "gTargetNote": "신축 가격 상승 가정 — 상한. 하한은 0% (범위 제시)",
+      "irrRange": [
+        -0.2,
+        0.4
+      ],
+      "irrIters": 80,
       "stages": {
         "promotion": {
           "p": 0.3,
@@ -1449,6 +1454,11 @@
           "y": 10,
           "label": "정비구역 지정"
         },
+        "sisul": {
+          "p": 0.95,
+          "y": 7,
+          "label": "사업시행인가"
+        },
         "approved": {
           "p": 0.95,
           "y": 6,
@@ -1463,56 +1473,68 @@
         "committee": "promotion",
         "zone_designated": "zoned",
         "union": "union",
-        "biz_approval": "approved",
+        "biz_approval": "sisul",
         "mgmt_approval": "approved",
         "moving": "approved",
         "construction": "approved"
       },
       "defaultContribution": 5,
-      "contributionOptions": [
+      "impliedTargets": [
+        0.03,
+        0.05,
+        0.07
+      ],
+      "delayYears": 5
+    },
+    "match": {
+      "builtMaxYears": 7,
+      "hhTol": 0.4,
+      "walkTol": 3,
+      "schoolTolInit": 0,
+      "relax": [
         {
-          "v": 3,
-          "label": "3억",
-          "hint": "낙관"
+          "id": "built",
+          "builtMaxYears": 10,
+          "label": "준공 10년 이내로 완화"
         },
         {
-          "v": 5,
-          "label": "5억",
-          "hint": "인근 사례 평균"
+          "id": "hh",
+          "hhTol": 0.6,
+          "label": "세대수 ±60%로 완화"
         },
         {
-          "v": 7,
-          "label": "7억",
-          "hint": "공사비 상승 반영"
+          "id": "school",
+          "schoolTol": 1,
+          "label": "학군 ±1등급으로 완화"
         },
         {
-          "v": 9,
-          "label": "9억",
-          "hint": "비관"
+          "id": "walk",
+          "walkTol": 5,
+          "label": "도보 ±5분으로 완화"
         }
       ],
-      "newLevelFactors": [
-        {
-          "f": 0.87,
-          "label": "보수적"
-        },
-        {
-          "f": 1,
-          "label": "인근 평균"
-        },
-        {
-          "f": 1.13,
-          "label": "최상급"
-        }
-      ],
-      "nearby": {
-        "maxAgeYears": 12,
-        "minN": 3,
-        "topN": 3,
-        "m2Tolerance": 12,
-        "minHouseholds": 300
-      },
-      "nearbyNote": "신축·준신축(12년 이내) — v4.2 예시(래미안대치팰리스 11년차)와 정합. 세대수 300 미만 확인 시 나홀로 제외(미확인은 유지)"
+      "minMatches": 3,
+      "lineGrades": {
+        "1": [
+          "2호선",
+          "3호선",
+          "9호선",
+          "신분당선"
+        ],
+        "2": [
+          "5호선",
+          "7호선",
+          "수인분당선",
+          "분당선",
+          "8호선"
+        ]
+      }
+    },
+    "uplift": {
+      "transit": 1.5
+    },
+    "upliftCapPct": {
+      "transit": 0.12
     }
   }
 }

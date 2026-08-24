@@ -56,14 +56,15 @@ t('k − g_term < 0.5%p → 클램프, 값 폭발 없음', () => {
 });
 
 /* ── STEP 3 옵션 ── */
-t('옵션 = 확률 × 상승분(캡) ÷ (1+k)^년', () => {
+t('옵션은 교통만 — 재건축은 이벤트로 넣지 않는다 (§4-2 STEP 4)', () => {
   const cx = mkCx({ location: { futureTransit: '9호선 연장 (공사 중·확정)' }, redev: { stage: 'union' } });
   const v = run(cx, mkArea());
-  assert.strictEqual(v.events.length, 2);
-  const tr = v.events.find(e => e.id === 'transit');
+  assert.strictEqual(v.events.length, 1, '교통 이벤트만');
+  const tr = v.events[0];
+  assert.strictEqual(tr.id, 'transit');
   assert.strictEqual(tr.bucket, 'constr');
-  assert.ok(Math.abs(tr.amt - 0.85 * Math.min(V.uplift.transit, V.upliftCapPct.transit * v.P) / Math.pow(1 + V.k, 2)) < 1e-9);
-  assert.strictEqual(v.events.find(e => e.id === 'redev').bucket, 'zoned');
+  assert.ok(Math.abs(tr.amt - 0.85 * Math.min(V.uplift.transit, V.upliftCapPct.transit * v.P) / Math.pow(1 + v.k, 2)) < 1e-9);
+  assert.ok(!v.events.some(e => e.id === 'redev'), '재건축 옵션가치 이벤트 없음');
 });
 t('교통 단계 매핑 — 계획·미확정·착공·임박', () => {
   assert.strictEqual(E.v4TransitBucket('GTX-C (계획 단계·미확정)'), 'plan');
@@ -110,11 +111,11 @@ t('단지 실측 없으면 구 지수 폴백 + 출처 구분', () => {
 });
 
 /* ── 시나리오 ── */
-t('비관 < 보수 < 낙관 · 보수는 확정 호재만', () => {
+t('비관 < 보수 < 낙관 (델타 k) · 보수는 확정 호재만', () => {
   const cx = mkCx({ location: { futureTransit: 'GTX (계획 단계·미확정)' } });
   const v = run(cx, mkArea(), { cxOld: null, gu: { gHist: 0.046 }, oldQ: '2016-Q3', yearsBack: 10 });
   assert.ok(v.scen.pess.v < v.scen.cons.v && v.scen.cons.v < v.scen.opti.v);
-  const consNoOpt = E.v4FairAt(v.R, V.scenarios.cons.k, V.scenarios.cons.g, CFG, [], v.P).Vrent;
+  const consNoOpt = E.v4FairAt(v.R, v.band.k + V.scenarios.cons.kDelta, V.scenarios.cons.g, CFG, [], v.P).Vrent;
   assert.ok(Math.abs(v.scen.cons.v - consNoOpt) < 1e-9, '계획 단계(30%)는 보수에서 제외되어야 함');
 });
 
@@ -175,102 +176,140 @@ t('사용자 시세·전세 오버라이드 반영', () => {
   assert.ok(Math.abs(v.rent.jeonse.v - 12) < 1e-9);
 });
 
-/* ═══ 재건축 이중 경로 (PRD 추가분 v4.1 — STEP R1~R5) ═══ */
-const NB = Rg => ({ items: [{ name: '신축A', dong: '테스트동', builtYear: 2021, jeonse: 15, Rgross: Rg, t: 5 }], scope: 'dong', n: 1, avgRgross: Rg, avgJeonse: 15, jeonseMin: 13, jeonseMax: 17 });
-const rbCx = () => mkCx({ builtYear: 1979, redev: { stage: 'zone_designated' } });
-const rbArea = () => mkArea({ jeonseRaw: [{ ym: '2026-07', v: 5.5 }], wolseRaw: [], jeonse: 5.5, trades: [{ ym: '2026-07', d: 5, price: 28, floor: 7 }] });
-const runRb = nearby => E.engineV4(rbCx(), rbArea(), input, CFG, E.repRecentPrice(rbArea(), '2026-08', CFG), null, nearby);
+/* ═══ v5 통합 — 모드 판별 · 가격대별 k · 생활권 g_s · 시세차익 경로 (§9 수용 기준) ═══ */
+t('가격대별 k — 15억 이하 5.0 / 15~25 4.8 / 25 초과 4.3', () => {
+  assert.strictEqual(E.v5KBand(12, CFG).k, 0.050);
+  assert.strictEqual(E.v5KBand(20, CFG).k, 0.048);
+  assert.strictEqual(E.v5KBand(38, CFG).k, 0.043);
+});
+t('g_s = 생활권 실적, 폴백은 전국 소득 + 표기 · 초과폭 경고', () => {
+  const a = E.v5Gs({ g: 0.046, src: 'self' }, CFG);
+  assert.ok(a.g === 0.046 && a.src === 'self' && a.warn === 1, '1~2.5%p → 1단계');
+  const b = E.v5Gs({ g: 0.075, src: 'gu', guName: '강동구' }, CFG);
+  assert.ok(b.warn === 2, '>2.5%p → 경고');
+  const c = E.v5Gs(null, CFG);
+  assert.ok(c.g === 0.034 && c.src === 'national' && /전국/.test(c.label), '폴백 표기');
+});
+t('노선 등급 — 1급(3호선)·2급(5호선)·3급(그 외)·복수는 최고', () => {
+  assert.strictEqual(E.v5LineGrade(['3호선'], CFG), 1);
+  assert.strictEqual(E.v5LineGrade(['5호선'], CFG), 2);
+  assert.strictEqual(E.v5LineGrade(['경춘선'], CFG), 3);
+  assert.strictEqual(E.v5LineGrade(['5호선', '9호선'], CFG), 1);
+});
+const NB_ITEMS = [
+  { n: '강남신축A', gn: '서울 강남구', d: '대치동', y: 2023, hh: 5000, min: 5, lg: 1, sg: 1, deal: { price: 42, ym: '2026-07' }, Rg: 0.7 },
+  { n: '역먼신축', gn: '서울 강남구', d: '개포동', y: 2023, hh: 6700, min: 15, lg: 1, sg: 1, deal: { price: 35.6, ym: '2026-06' }, Rg: 0.7 },
+  { n: '소형신축', gn: '서울 강남구', d: '대치동', y: 2022, hh: 800, min: 5, lg: 1, sg: 1, deal: { price: 30, ym: '2026-07' }, Rg: 0.6 },
+  { n: '이급노선', gn: '서울 강동구', d: '고덕동', y: 2019, hh: 5000, min: 5, lg: 2, sg: 2, deal: { price: 25, ym: '2026-07' }, Rg: 0.5 },
+  { n: '구축큰것', gn: '서울 송파구', d: '잠실동', y: 2008, hh: 5600, min: 5, lg: 1, sg: 1, deal: { price: 30, ym: '2026-07' }, Rg: 0.6 }
+];
+t('§R1 매칭 — 조건 충족·탈락 사유·범위', () => {
+  const m = E.v5Match(NB_ITEMS, { asOfYear: 2026, postHH: 5850, walk: 5, lineGrade: 1, schoolGrade: 1, selfNames: new Set(['자기']) }, CFG);
+  assert.ok(m.matches.some(x => x.n === '강남신축A'));
+  assert.ok(!m.matches.some(x => x.n === '이급노선'), '노선 등급 다르면 탈락');
+  assert.ok(m.near.some(x => x.it.n === '역먼신축' && /역 접근/.test(x.why)), '탈락 사유 기록');
+  assert.ok(m.range && m.range.hi === 42);
+});
+t('§R1 완화 체인 — 3개 미달 시 순서대로, 완화 목록 기록', () => {
+  const items = NB_ITEMS.filter(x => x.n !== '강남신축A')
+    .concat([{ n: '완화신축', gn: '서울 서초구', d: '반포동', y: 2017, hh: 5000, min: 5, lg: 1, sg: 1, deal: { price: 40, ym: '2026-07' }, Rg: 0.7 }]);
+  const m = E.v5Match(items, { asOfYear: 2026, postHH: 5850, walk: 5, lineGrade: 1, schoolGrade: 1, selfNames: new Set() }, CFG);
+  assert.ok(m.relaxed.length > 0 && /준공/.test(m.relaxed[0]), '준공 완화가 첫 단계');
+  assert.ok(m.matches.some(x => x.n === '완화신축'), '완화 후 매칭');
+});
+t('은마 검산 (§R9 실측) — P_break 39.31 · 내재 39.3/44.5/50.3 · 지연 45.6', () => {
+  const rb = E.v5Rebuild(38.1, 0.3638, 0.034, 6.0, 7, 0.95, 18.3, CFG, { lo: 35.6, hi: 37.0, mid: 36.3 });
+  assert.ok(Math.abs(rb.rentFV - 3.18) < 0.05, '임대료_FV ' + rb.rentFV.toFixed(2));
+  assert.ok(Math.abs(rb.depositAlt - 46.86) < 0.05, '예금 대안');
+  assert.ok(Math.abs(rb.Pbreak - 39.31) < 0.1, 'P_break ' + rb.Pbreak.toFixed(2));
+  assert.ok(Math.abs(rb.PbreakDelay - 45.6) < 0.2, '지연 손익분기 ' + rb.PbreakDelay.toFixed(2));
+  const [i3, i5, i7] = rb.implied.map(x => x.P);
+  assert.ok(Math.abs(i3 - 39.3) < 0.3 && Math.abs(i5 - 44.5) < 0.3 && Math.abs(i7 - 50.3) < 0.3, '내재 신축가 표');
+});
+t('내재 연수익률 — 하한 < 상한 · 확률 미적용 · 해 없으면 산출 불가', () => {
+  const rb = E.v5Rebuild(38.1, 0.3638, 0.034, 6.0, 7, 0.95, 18.3, CFG, { lo: 35.6, hi: 37.0, mid: 36.3 });
+  assert.ok(rb.irr.lo != null && rb.irr.hi != null && rb.irr.lo < rb.irr.hi, '하한 < 상한');
+  const rbLowP = E.v5Rebuild(38.1, 0.3638, 0.034, 6.0, 7, 0.30, 18.3, CFG, { lo: 35.6, hi: 37.0, mid: 36.3 });
+  assert.ok(Math.abs(rbLowP.irr.lo - rb.irr.lo) < 1e-12 && Math.abs(rbLowP.irr.hi - rb.irr.hi) < 1e-12, '확률은 수익률에 곱하지 않는다');
+  const none = E.v5Rebuild(38.1, 0.3638, 0.034, 6.0, 7, 0.95, 18.3, CFG, { lo: 0.01, hi: 0.01, mid: 0.01 });
+  assert.strictEqual(none.irr.hi, null, '해 없으면 null');
+});
+t('민감도 — 신축 가격 정체(g_target=0)가 가장 큰 변동', () => {
+  const rb = E.v5Rebuild(38.1, 0.3638, 0.034, 6.0, 7, 0.95, 18.3, CFG, { lo: 35.6, hi: 37.0, mid: 36.3 });
+  const ds = rb.sens.filter(x => x.id !== 'base').map(x => Math.abs(x.d));
+  assert.ok(Math.abs(rb.sens.find(x => x.id === 'gzero').d) === Math.max(...ds));
+});
+t('§R7 세 값 산출 · p=0 기대값 = 임대료 가치 · 무산 폴백', () => {
+  const rb = E.v5Rebuild(38.1, 0.3638, 0.034, 6.0, 7, 0.95, 18.3, CFG, { lo: 35.6, hi: 37.0, mid: 36.3 });
+  assert.ok(rb.triple && isFinite(rb.triple.alt) && isFinite(rb.triple.flat) && isFinite(rb.triple.rise));
+  assert.strictEqual(rb.VrentFail, 18.3);
+  const p0 = E.v5Rebuild(38.1, 0.3638, 0.034, 6.0, 7, 0, 18.3, CFG, { lo: 35.6, hi: 37.0, mid: 36.3 });
+  assert.ok(Math.abs(p0.expectPV - 18.3) < 1e-9);
+});
+t('요구수익률(k)이 시세차익 계산에 쓰이지 않음 — 코드 검증', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../src/engine.js'), 'utf8');
+  const m = src.match(/function v5Rebuild\(([^)]*)\)/);
+  assert.ok(m, 'v5Rebuild 존재');
+  assert.ok(!/\bk\b/.test(m[1]), 'v5Rebuild 인자에 k 없음: ' + m[1]);
+});
+t('종합 점수·가중치가 매칭 코드에 없음 (문자열 검증)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../src/engine.js'), 'utf8');
+  const fn = src.slice(src.indexOf('function v5Match'), src.indexOf('function v5Rebuild'));
+  assert.ok(!/score|weight/i.test(fn), '매칭은 조건 필터만');
+});
+/* ── 게이트 검산 (§3·§9) ── */
+const rbCx5 = o => mkCx(Object.assign({
+  builtYear: 1979, far: 204, redev: { stage: 'biz_approval', doneYear: 2033 }, postHouseholds: 5850, contributionEst: 6.0,
+  stationLink: { primary: { st: '대치', min: 5, status: 'MANUAL' } }
+}, o));
+const rbArea5 = () => mkArea({ jeonseRaw: [{ ym: '2026-07', v: 8.6 }], wolseRaw: [], jeonse: 8.6, trades: [{ ym: '2026-07', d: 5, price: 38.1, floor: 7 }] });
+const RANGE = { matches: [], near: [], relaxed: [], n: 1, range: { lo: 35.6, hi: 37.0, mid: 36.3 }, cond: {} };
+t('게이트: 신축(2019·단계 없음) → income · 신축 경로 미계산', () => {
+  const v = E.engineV4(mkCx(), mkArea(), input, CFG, E.repRecentPrice(mkArea(), '2026-08', CFG), null, null, RANGE);
+  assert.strictEqual(v.mode, 'income');
+  assert.strictEqual(v.rb5, null);
+  assert.ok(!v.gates.A.pass);
+});
+t('게이트 B: 준공 2000·용적 280%·비역세권 → 탈락, income', () => {
+  const cx = mkCx({ builtYear: 2000, far: 280, redev: { stage: 'none' }, stationLink: { primary: { st: 'X', min: 15, status: 'MANUAL' } } });
+  const v = E.engineV4(cx, mkArea(), input, CFG, E.repRecentPrice(mkArea(), '2026-08', CFG), null, null, RANGE);
+  assert.ok(v.gates.A.pass && !v.gates.B.pass);
+  assert.strictEqual(v.mode, 'income');
+});
+t('은마 실측 → rebuild · 배수 1.9±0.2 · P_break 재현', () => {
+  const v = E.engineV4(rbCx5(), rbArea5(), input, CFG, E.repRecentPrice(rbArea5(), '2026-08', CFG), null, null, RANGE);
+  assert.strictEqual(v.mode, 'rebuild', 'mode=' + v.mode + ' multiple=' + (v.gates.multiple && v.gates.multiple.toFixed(2)));
+  assert.ok(v.gates.multiple >= 1.7 && v.gates.multiple <= 2.1, '배수 ' + v.gates.multiple.toFixed(2));
+  assert.ok(!v.events.some(e => e.id === 'redev'), '재건축 옵션 없음');
+  assert.ok(v.rb5 && v.rb5.y === 7 && Math.abs(v.rb5.Pbreak - 39.3) < 0.6, 'P_break ' + v.rb5.Pbreak.toFixed(1));
+});
+t('혼합 밴드 — 배수 1.0~1.2 → mixed', () => {
+  const v = E.engineV4(rbCx5(), rbArea5(), input, CFG, E.repRecentPrice(rbArea5(), '2026-08', CFG), null, null,
+    { range: { lo: 20, hi: 21.5, mid: 20.7 } });
+  assert.ok(v.gates.multiple > 1.0 && v.gates.multiple < 1.2, '배수 ' + v.gates.multiple.toFixed(2));
+  assert.strictEqual(v.mode, 'mixed');
+});
+t('매칭 없음 + 정비 단계 → income + noMatch 표기', () => {
+  const v = E.engineV4(rbCx5(), rbArea5(), input, CFG, E.repRecentPrice(rbArea5(), '2026-08', CFG), null, null, null);
+  assert.strictEqual(v.mode, 'income');
+  assert.ok(v.gates.noMatch);
+});
+t('전세가율 편차 상충 플래그 — dev<0.7 & income', () => {
+  const cx = mkCx({ builtYear: 1995, far: 280, redev: { stage: 'none' }, stationLink: { primary: { st: 'X', min: 15, status: 'MANUAL' } } });
+  const area = mkArea({ jeonseRaw: [{ ym: '2026-07', v: 4 }], wolseRaw: [], jeonse: 4, trades: [{ ym: '2026-07', d: 5, price: 20, floor: 5 }] });
+  const inp = Object.assign({}, input, { guJeonseMed: 0.5 });
+  const v = E.engineV4(cx, area, inp, CFG, E.repRecentPrice(area, '2026-08', CFG), null, null, null);
+  assert.ok(v.gates.dev < 0.7 && v.gates.conflict, '상충 표기 데이터');
+});
+t('수익형 조정기 — 재건축 컨트롤 없음 · IRR 용어 0건 (ui.js)', () => {
+  const ui = fs.readFileSync(path.join(__dirname, '../src/ui.js'), 'utf8');
+  assert.ok(!ui.includes('c-rb"'), '재건축 단계 컨트롤 제거');
+  assert.strictEqual((ui.match(/IRR/g) || []).length, 0, 'IRR 용어 금지');
+});
 
-t('은마 검산 재현 (PRD §3) — 중간값 전부 + 잔여 32%±2%p', () => {
-  const r = E.v4RebuildAt(0.2367, 0.74, 0.043, 0.034, 5.0, 0.80, 10, CFG);
-  assert.ok(Math.abs(r.Vold - 11.9) < 0.1, 'V_현재상태 ' + r.Vold.toFixed(2));
-  assert.ok(Math.abs(r.Vnew - 33.4) < 0.15, 'V_new ' + r.Vnew.toFixed(2));
-  assert.ok(Math.abs(r.Vnet - 28.4) < 0.15, 'V_net');
-  assert.ok(Math.abs(r.Vdisc - 18.6) < 0.15, 'V_disc');
-  assert.ok(Math.abs(r.pvDuring - 2.3) < 0.1, 'PV_during');
-  assert.ok(Math.abs(r.Vrebuild - 19.1) < 0.1, 'V_재건축 ' + r.Vrebuild.toFixed(2));
-  const residPct = (28.0 - r.Vrebuild) / 28.0 * 100;
-  assert.ok(residPct >= 30 && residPct <= 34, '잔여 ' + residPct.toFixed(1) + '%');
-});
-t('p=0 → V_재건축 = V_현재상태 (haircut이 아니라 기대값)', () => {
-  const r = E.v4RebuildAt(0.24, 0.74, 0.048, 0.034, 5, 0, 10, CFG);
-  assert.ok(Math.abs(r.Vrebuild - r.Vold) < 1e-12);
-});
-t('신축급 임대료에서는 재건축 경로가 자연히 진다', () => {
-  const r = E.v4RebuildAt(0.7, 0.78, 0.048, 0.034, 5, 0.8, 10, CFG);
-  assert.ok(r.Vrebuild < r.Vold);
-});
-t('engineV4 채택: STEP3 재건축 옵션 0 · 워터폴 · 층 합 = P', () => {
-  const v = runRb(NB(0.74));
-  assert.ok(v.rb && v.rb.computed && v.rbAdopted, '재건축 채택');
-  assert.ok(!v.events.some(e => e.id === 'redev'), '재건축 옵션 이중계산 금지');
-  assert.ok(v.wf && v.wf.length >= 8 && v.wf[v.wf.length - 1].id === 'total');
-  assert.ok(Math.abs(v.layers.reduce((s, l) => s + l.amt, 0) - v.P) < 1e-9, '층 합 = P');
-  assert.ok(v.layers.some(l => l.id === 'rebuild'));
-  assert.ok(Math.abs(v.Vfair - (Math.max(v.Vrent, v.rb.Vrebuild) + v.O)) < 1e-9, 'V_fair = max + 교통옵션');
-  // 워터폴 산술: 새집 − 분담금 = 소계, 마지막 행 = P
-  const wfOf = id => v.wf.find(w => w.id === id).v;
-  assert.ok(Math.abs(wfOf('vnew') + wfOf('cont') - wfOf('vnet')) < 1e-9);
-  assert.ok(Math.abs(wfOf('model') + Math.max(0, wfOf('gap')) - (v.residNone ? wfOf('model') : wfOf('total'))) < 1e-6 || true);
-});
-t('인근 신축 없음 + 정비 단계 → 경로 생략 + 표기 데이터', () => {
-  const v = E.engineV4(rbCx(), rbArea(), input, CFG, E.repRecentPrice(rbArea(), '2026-08', CFG), null, null);
-  assert.ok(v.rb && v.rb.skipped && !v.rbAdopted);
-});
-t('신축(단계 없음) → 재건축 경로 미계산 (조정기 3종 비노출 조건)', () => {
-  const v = E.engineV4(mkCx(), mkArea(), input, CFG, E.repRecentPrice(mkArea(), '2026-08', CFG), null, NB(0.74));
-  assert.strictEqual(v.rb, null);
-});
-t('시나리오 재건축 인지 — 비관(호재 무산)은 현 상태 경로, 순서 유지', () => {
-  const v = runRb(NB(0.74));
-  const S = CFG.v4.scenarios;
-  const pessNoRb = E.v4RebuildAt(v.R, 0.74, S.pess.k, S.pess.g, v.rb.cont, 0, v.rb.y, CFG);
-  assert.ok(Math.abs(v.scen.pess.v - pessNoRb.Vold) < 1e-9, '비관 = p 0 → 현 상태');
-  assert.ok(v.scen.pess.v < v.scen.cons.v && v.scen.cons.v < v.scen.opti.v);
-});
-t('v4NearbyNew — 준공 7년 이내만 · 3개 미만이면 구 확대 표기', () => {
-  const mk = (name, dong, by, jr) => [name, { name, dong, builtYear: by, tradeCount: 5, areas: { 84: { m2: 84, trades: [], jeonseRaw: jr, jeonse: { v: jr[0].v, n: 1, windowMo: 6 } } } }];
-  const cxs = Object.fromEntries([
-    mk('신축A', '같은동', 2021, [{ ym: '2026-07', v: 15 }]),
-    mk('신축B', '같은동', 2022, [{ ym: '2026-06', v: 14 }]),
-    mk('신축C', '다른동', 2023, [{ ym: '2026-07', v: 16 }]),
-    mk('구축D', '같은동', 2001, [{ ym: '2026-07', v: 9 }])
-  ]);
-  const nb = E.v4NearbyNew(cxs, new Set(['자기']), '같은동', '2026-08', 0.047, CFG);
-  assert.ok(nb && nb.scope === 'gu', '같은 동 신축 2곳뿐 → 구 확대');
-  assert.ok(!nb.items.some(i => i.name === '구축D'), '준공 7년 초과 제외');
-  assert.strictEqual(nb.items.length, 3);
-});
-
-/* ═══ 두 기준 병행 (PRD 추가분 v4.2 — STEP N1~N5) ═══ */
-t('은마 상대 검산 (§N4) — 잔여_상대 15%·물려받은 17%p (±2%p)', () => {
-  // 절대: v4.1 검산 그대로 → 잔여 8.9억(32%) / 상대: 같은 함수에 V_new 자리만 신축 실거래 42억
-  const abs = E.v4RebuildAt(0.2367, 0.74, 0.043, 0.034, 5.0, 0.80, 10, CFG);
-  const rr = E.v4RebuildAt(0.2367, 0.74, 0.043, 0.034, 5.0, 0.80, 10, CFG, 42.0);
-  const residAbs = (28.0 - abs.Vrebuild) / 28.0 * 100;
-  const residRel = (28.0 - rr.Vrebuild) / 28.0 * 100;
-  assert.ok(Math.abs(rr.Vrebuild - 23.7) < 0.35, 'V_rel ' + rr.Vrebuild.toFixed(2) + ' (PRD 23.7)');
-  assert.ok(residRel >= 13 && residRel <= 17, '잔여_상대 ' + residRel.toFixed(1) + '% (15±2)');
-  assert.ok((residAbs - residRel) >= 15 && (residAbs - residRel) <= 19, '물려받은 몫 ' + (residAbs - residRel).toFixed(1) + '%p (17±2)');
-});
-t('engineV4 재건축 채택 → rel(신축 실거래 기준) + refResid 항상 산출', () => {
-  const nb = NB(0.74);
-  nb.avgDeal = 42; nb.dealN = 1;
-  const v = runRb(nb);
-  assert.ok(v.rel && v.rel.type === 'newbuild');
-  assert.ok(isFinite(v.rel.refResid), '기준점 자체 검증(잔여율_ref) 산출');
-  assert.ok(Math.abs(v.rel.inherited - (v.resid - v.rel.residRel)) < 1e-9, '물려받은 = 잔여_절대 − 잔여_상대');
-  assert.ok(Math.abs(v.rel.ratioActual - v.P / 42) < 1e-9 && Math.abs(v.rel.ratioTheo - v.rel.Vrel / 42) < 1e-9);
-});
-t('기준점 잔여율 > 40% → 경고 플래그', () => {
-  const nb = NB(0.5);          // 신축 임대가치 낮음 + 실거래 42 → refResid 큼
-  nb.avgDeal = 42; nb.dealN = 1;
-  const v = runRb(nb);
-  assert.ok(v.rel.refResid > 0.4 && v.rel.refWarn === true);
-});
 t('일반 경로 — V_rel = P_ref × (R / R_ref), 보정계수 없음', () => {
   const flag = { selfIsFlagship: false, scope: 'dong', item: { name: '대장', dong: '테스트동', builtYear: 2020, m2: 84, deal: { price: 30, ym: '2026-07' }, perM2: 30 / 84, jeonse: 14, Rgross: 0.7 } };
-  const v = E.engineV4(mkCx(), mkArea(), input, CFG, E.repRecentPrice(mkArea(), '2026-08', CFG), null, null, flag);
+  const v = E.engineV4(mkCx(), mkArea(), input, CFG, E.repRecentPrice(mkArea(), '2026-08', CFG), null, flag, null);
   assert.ok(v.rel && v.rel.type === 'flagship');
   const Rref = 0.7 * (1 - CFG.v4.costRate);
   assert.ok(Math.abs(v.rel.Vrel - 30 * (v.R / Rref)) < 1e-12, '단순 비례 정확');
@@ -279,11 +318,11 @@ t('일반 경로 — V_rel = P_ref × (R / R_ref), 보정계수 없음', () => {
 t('고유 프리미엄 음수 → 기준 대비 저평가 플래그 (음수 % 노출 금지 데이터)', () => {
   // 대장 임대료가 자기보다 조금만 높고 시세는 훨씬 높음 → V_rel > P
   const flag = { selfIsFlagship: false, scope: 'dong', item: { name: '대장', dong: '테스트동', builtYear: 2020, m2: 84, deal: { price: 60, ym: '2026-07' }, perM2: 60 / 84, jeonse: 12, Rgross: 0.6 } };
-  const v = E.engineV4(mkCx(), mkArea(), input, CFG, E.repRecentPrice(mkArea(), '2026-08', CFG), null, null, flag);
+  const v = E.engineV4(mkCx(), mkArea(), input, CFG, E.repRecentPrice(mkArea(), '2026-08', CFG), null, flag, null);
   assert.ok(v.rel.residRel < 0 && v.rel.ownLow === true);
 });
 t('자기 자신이 대장 → ② 생략 (type self)', () => {
-  const v = E.engineV4(mkCx(), mkArea(), input, CFG, E.repRecentPrice(mkArea(), '2026-08', CFG), null, null, { selfIsFlagship: true, scope: 'dong' });
+  const v = E.engineV4(mkCx(), mkArea(), input, CFG, E.repRecentPrice(mkArea(), '2026-08', CFG), null, { selfIsFlagship: true, scope: 'dong' }, null);
   assert.ok(v.rel && v.rel.type === 'self' && v.rel.Vrel == null);
 });
 t('v4Flagship — 준공 10년·6개월 실거래·㎡당 최고 · 자기 대장 감지', () => {
