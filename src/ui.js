@@ -5,7 +5,7 @@
    단지 소스 3종: ① 상세 프로필 샘플(DATA) ② 실거래 자동수집(data/live/*)
                  ③ 직접 입력
    ═══════════════════════════════════════════════════════════════════ */
-const APP_VERSION = '6.0.0';
+const APP_VERSION = '6.1.0';
 if (typeof ANCH !== 'undefined') HUBS.anchors = ANCH;   // Anchor Academy Index (§6) — 엔진에서 참조
 const DEBUG_MODE = /[?&]debug=true/.test(location.search);
 const $ = id => document.getElementById(id);
@@ -16,6 +16,16 @@ const fmtEokW = x => x == null || !isFinite(x) ? '—' : `${(Math.round(x * 10) 
 const fmtPct = (x, d = 1) => x == null || !isFinite(x) ? '—' : `${(x * 100).toFixed(d)}%`;
 const signPct = x => x == null || !isFinite(x) ? '—' : `${x >= 0 ? '+' : ''}${(x * 100).toFixed(1)}%`;
 const fmtRaw = (x, d = 3) => x == null || !isFinite(x) ? '—' : Number(x).toFixed(d);   // 반올림 전 값 표시 (FR-06)
+/* v6.1 입력 확인용 읽기 — "36.95" → "36억 9,500만원" (표시 전용, 계산에 쓰지 않는다) */
+function eokText(v) {
+  const n = Number(v);
+  if (!(n > 0)) return '';
+  const man = Math.round(n * 10000);
+  const e = Math.floor(man / 10000), m = man % 10000;
+  if (e && m) return `${e.toLocaleString()}억 ${m.toLocaleString()}만원`;
+  if (e) return `${e.toLocaleString()}억원`;
+  return `${m.toLocaleString()}만원`;
+}
 
 /* ── 테마 ── */
 (function initTheme() {
@@ -90,6 +100,7 @@ function step2Valid() {
 function nav() {
   const prev = $('btnPrev'), next = $('btnNext'), msg = $('navMsg');
   prev.style.visibility = state.step === 1 ? 'hidden' : 'visible';
+  prev.textContent = state.step === 3 ? '조건 수정' : '이전';
   msg.style.display = 'none';
   if (state.step === 1) {
     next.textContent = '다음';
@@ -108,6 +119,7 @@ function nav() {
 function go(n) {
   state.step = n;
   $('step1').hidden = n !== 1; $('step2').hidden = n !== 2; $('step3').hidden = n !== 3;
+  $('secnav').hidden = !(n === 3 && state.result);
   renderStepper();
   if (n === 2) renderStep2();
   nav();
@@ -127,7 +139,7 @@ function resetAll() {
   state.areaKey = null;
   state.ovPrice = null; state.ovJeonse = null; state.ovConv = null;
   state.result = null; state.baseInput = null; state.stress = new Set();
-  $('q').value = ''; $('manualCard').hidden = true; $('report').innerHTML = '';
+  $('q').value = ''; $('manualCard').hidden = true; $('report').innerHTML = ''; $('secnav').hidden = true;
   renderAptList(''); go(1);
 }
 
@@ -143,10 +155,10 @@ function selectionValid() {
 function matchTokens(q, hay) { return q.split(/\s+/).every(t => hay.includes(t)); }
 
 function liveStatusHtml() {
-  if (LIVE.status === 'loading') return `<div class="notebox">실거래 자동수집 데이터 확인 중…</div>`;
+  if (LIVE.status === 'loading') return `실거래 데이터를 불러오는 중…`;
   if (LIVE.status === 'ready') {
     const m = LIVE.index.meta;
-    return `<div class="notebox">🔄 <b>실거래 자동수집 연결됨</b> — ${m.regions}개 시군구 · ${LIVE.index.complexes.length.toLocaleString()}개 단지 (국토교통부 실거래가, ${esc(m.updatedAt)} 기준). 검색하면 자동수집 단지가 함께 검색됩니다.</div>`;
+    return `수도권 <b>${LIVE.index.complexes.length.toLocaleString()}개 단지</b> 검색 가능 · 국토교통부 실거래가 ${esc(m.updatedAt)} 기준`;
   }
   return `<div class="notebox"><b>실거래 자동수집 대기 중</b> — 공공데이터포털(국토교통부 실거래가 API) 키를 연결하면
     수도권 40개 시군구의 <b>모든 아파트 단지</b>가 자동 등재되고 매일 갱신됩니다.
@@ -198,7 +210,12 @@ function renderAptList(q) {
       <span class="l1">${esc(e.gn)} ${esc(e.d)} · ${e.y ? e.y + '년' : '연식 미상'} · 최근 2년 매매 ${e.t}건</span>
       <span class="tagrow"><span class="tg">실거래 자동</span>${inGroup.has(e.id) ? '<span class="tg">동 구간 분리 등재</span>' : ''}<span class="tg">${e.a.map(a => a + '㎡').join(' · ')}</span></span>
     </button>`).join('');
-  $('aptList').innerHTML = liveStatusHtml() + sampleCards + groupCards + liveCards + `
+  $('liveStat').innerHTML = liveStatusHtml();
+  const nHit = sample.length + groupMatches.length + liveMatches.length;
+  const listHead = !q
+    ? `<div class="listh full"><span>예시로 바로 보기</span><small>상세 프로필 ${sample.length}곳</small></div>`
+    : nHit ? `<div class="listh full"><span>검색 결과 ${nHit.toLocaleString()}곳</span><small>눌러서 선택</small></div>` : '';
+  $('aptList').innerHTML = listHead + sampleCards + groupCards + liveCards + `
     <button class="apt dashed full" data-id="__manual__">
       <b>＋ 직접 입력</b>
       <span class="l1">검색에 없는 아파트를 핵심 정보만으로 진단합니다 (미입력 항목은 기본값 사용으로 표기됩니다)</span>
@@ -236,6 +253,13 @@ function renderAptList(q) {
   });
 }
 $('q').addEventListener('input', () => renderAptList($('q').value.trim()));
+/* v6.1 빠른 선택 — 자주 찾는 단지·동네. 검색 경로와 완전히 같은 처리(별도 로직 없음) */
+const QUICK_Q = ['은마', '헬리오시티', '고덕그라시움', '래미안대치팰리스', '잠실엘스', '목동', '분당', '판교'];
+$('qChips').innerHTML = QUICK_Q.map(n => `<button type="button" class="qchip" data-q="${esc(n)}">${esc(n)}</button>`).join('');
+$('qChips').querySelectorAll('.qchip').forEach(b => b.onclick = () => {
+  $('q').value = b.dataset.q; renderAptList(b.dataset.q);
+  $('aptList').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
 
 async function selectLive(id) {
   const e = LIVE.index.complexes.find(x => x.id === id);
@@ -432,17 +456,19 @@ function renderStep2() {
   const jm = area.jeonseMeta;
   $('areaCard').innerHTML = `
     <h2>평형과 가격을 확인해 주세요</h2>
-    <p class="hint">자동입력 값은 수정할 수 있습니다. 수정한 값은 결과에 그대로 반영됩니다.</p>
+    <p class="hint">자동으로 채운 값이에요. 보고 계신 시세와 다르면 숫자를 고치세요 — 고친 값이 그대로 계산에 들어갑니다.</p>
     <div class="seg" id="areaSeg">${cx.areas.map(a => `<button data-k="${a.key}" aria-pressed="${a.key === state.areaKey}" aria-label="${esc(a.label)}${isLive ? `, 최근 매매 ${a.trades.length}건` : ''}">${esc(a.label)}${isLive ? ` · ${a.trades.length}건` : ''}</button>`).join('')}</div>
     <div class="grid2" style="margin-top:16px">
       <div>
         <label class="mini">현재 시장가격 ${state.ovPrice != null ? '<span class="stat est">수정됨</span>' : (latest ? '<span class="stat ok">자동입력</span>' : '<span class="stat chk" style="color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent)">입력 필요</span>')}
           <span class="inline-num"><input type="number" id="inPrice" step="0.1" min="0" value="${priceVal}" aria-label="현재 시장가격, 억원 단위"><em>억원</em></span></label>
+        <div class="echo" id="echoPrice">${eokText(priceVal)}</div>
         ${latest ? `<div class="srcline">최근 실거래 ${latest.ym}${latest.d ? '-' + String(latest.d).padStart(2, '0') : ''} · ${fmtEok(latest.price)}${latest.floor ? ` (${latest.floor}층)` : ''}${(latest.o || (rep && rep.anomalous)) ? ' <span class="stat est">이상 저가 가능성</span>' : rep && rep.anomalousHigh ? ' <span class="stat est">이상 고가 가능성</span>' : ''} — ${(isLive || cx.liveLinked) ? '국토교통부 실거래가 API' : esc(S.trades.src)}, ${(isLive || cx.liveLinked) ? esc(liveAsOf()) : esc(S.trades.asOf)} 기준${rep && (rep.anomalous || rep.anomalousHigh) ? `<br>모델 판단: 이 거래는 최근 3개월 또래 거래(중앙값 <b>${rep.peerMed}억</b>)와 차이가 커 이상 ${rep.anomalous ? '저가' : '고가'} 가능성이 있습니다. <b>실거래는 사실 그대로 표시</b>합니다 — 지금 보시는 호가가 다르면 직접 수정하세요.` : ''}</div>` : '<div class="srcline">이 평형은 최근 매매 실거래가 없습니다 — 시세를 직접 입력하세요.</div>'}
       </div>
       <div>
         <label class="mini">전세 시세 ${state.ovJeonse != null ? '<span class="stat est">수정됨</span>' : (area.jeonse ? '<span class="stat ok">자동입력</span>' : '<span class="stat est">미입력 — 금융 분석만 보류</span>')}
           <span class="inline-num"><input type="number" id="inJeonse" step="0.1" min="0" value="${jeonseVal}" aria-label="전세 시세, 억원 단위"><em>억원</em></span></label>
+        <div class="echo" id="echoJeonse">${eokText(jeonseVal)}</div>
         <div class="srcline">${jm ? `전월세 실거래 ${jm.n}건 중앙값 (최근 ${jm.windowMo}개월, 신규계약 — 갱신·해제 제외)` : isLive ? '전세 실거래 없음 — 입력하지 않으면 금융·임대 분석만 보류하고 나머지를 분석합니다' : `${esc(S.jeonse.src)}, ${esc(S.jeonse.asOf)} 기준`}</div>
       </div>
     </div>`;
@@ -452,11 +478,13 @@ function renderStep2() {
   $('inPrice').addEventListener('input', () => {
     const n = Number($('inPrice').value);
     state.ovPrice = (rep && Math.abs(n - rep.price) < 1e-9) ? null : (n > 0 ? n : null);
+    $('echoPrice').textContent = eokText(n);
     nav();
   });
   $('inJeonse').addEventListener('input', () => {
     const n = Number($('inJeonse').value);
     state.ovJeonse = (area.jeonse && Math.abs(n - area.jeonse) < 1e-9) ? null : (n > 0 ? n : null);
+    $('echoJeonse').textContent = eokText(n);
     nav();
   });
 
@@ -1606,6 +1634,7 @@ function renderReport(r) {
     <div class="tblwrap"><table><tbody>${r.trace.map(([k, val]) => `<tr><td style="white-space:nowrap">${esc(k)}</td><td style="text-align:left;white-space:normal">${esc(String(val))}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
   </div>`;
 
+  buildSecNav();
   if (v && mode !== 'rebuild') wireV4Adjust(r);
   if (v && mode === 'mixed') {
     const bi = $('mx-btn-inc'), br2 = $('mx-btn-reb');
@@ -1614,7 +1643,7 @@ function renderReport(r) {
         bi.setAttribute('aria-pressed', inc); br2.setAttribute('aria-pressed', !inc);
         $('mx-inc').hidden = !inc; $('mx-reb').hidden = inc;
       };
-      bi.onclick = () => sel(true); br2.onclick = () => sel(false);
+      bi.onclick = () => { sel(true); buildSecNav(); }; br2.onclick = () => { sel(false); buildSecNav(); };
     }
   }
   const bs = $('btn-stn');
@@ -1846,6 +1875,64 @@ function renderCompare() {
     <div class="op"><div class="ot">비교 해석</div><p>${sentence}</p></div>`;
 }
 
+
+/* ═══ v6.1 결과 구역 이동 — 렌더된 카드에서 자동으로 칩을 만든다 (카드 문구가 곧 라벨, 별도 상태 없음) ═══ */
+const NAV_LABEL = [
+  [/^가격 명세/, '명세'], [/^지난 10년 실적/, '10년 실적'], [/단지 중$/, '인근 비교'], [/^적정가/, '적정가'],
+  [/^두 개의 자로/, '두 기준'], [/^직접 조정/, '조정'], [/^계산 밖의 가치/, '계산 밖'], [/^판별/, '판별'],
+  [/^두 성격이 겹칩니다/, '혼합'], [/^1단계/, '거래 구조'], [/^3단계/, '비교군'], [/^5단계/, '내재 기대'],
+  [/^전제가 깨지면/, '전제'], [/^이 계산이 못 하는 것/, '한계'], [/^비교$/, '비교'], [/^공유$/, '저장']
+];
+const HERO_LABEL = [[/2단계/, '손익분기'], [/4단계/, '남는 돈']];
+function navLabelOf(el) {
+  if (el.classList.contains('pricebox')) return '가격';
+  if (el.tagName === 'DETAILS') return '더 알아보기';
+  if (el.classList.contains('hero')) {
+    const q = (el.querySelector('.q') || {}).textContent || '';
+    for (const [re, l] of HERO_LABEL) if (re.test(q)) return l;
+    return null;
+  }
+  const eb = el.querySelector(':scope > .eyebrow');
+  const t = eb ? eb.textContent.trim() : '';
+  for (const [re, l] of NAV_LABEL) if (re.test(t)) return l;
+  return t ? t.slice(0, 6) : null;
+}
+let secObs = null;
+function buildSecNav() {
+  const nav = $('secnav');
+  if (secObs) { secObs.disconnect(); secObs = null; }
+  const els = [...document.querySelectorAll('#report .pricebox, #report .card.v4card, #report .hero, #report details.v4acc')]
+    .filter(el => !el.closest('[hidden]'));
+  const items = [];
+  let detailsDone = false;
+  els.forEach((el, i) => {
+    const label = navLabelOf(el);
+    if (!label) return;
+    if (el.tagName === 'DETAILS') { if (detailsDone) return; detailsDone = true; }
+    el.id = el.id || `rsec-${i}`;
+    el.classList.add('rsec');
+    items.push({ id: el.id, label });
+  });
+  nav.innerHTML = items.map(x => `<button type="button" data-to="${x.id}">${esc(x.label)}</button>`).join('');
+  nav.hidden = !items.length || state.step !== 3;
+  nav.querySelectorAll('button').forEach(b => b.onclick = () => {
+    const t = $(b.dataset.to);
+    if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  if (!('IntersectionObserver' in window) || !items.length) return;
+  secObs = new IntersectionObserver(entries => {
+    const vis = entries.filter(e => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+    if (!vis.length) return;
+    const id = vis[0].target.id;
+    nav.querySelectorAll('button').forEach(b => {
+      const cur = b.dataset.to === id;
+      b.setAttribute('aria-current', cur ? 'true' : 'false');
+      if (cur) b.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+    });
+  }, { rootMargin: '-120px 0px -60% 0px', threshold: 0 });
+  items.forEach(x => { const t = $(x.id); if (t) secObs.observe(t); });
+}
+
 /* ═══════════════ 역 가치 지도 (Station Intelligence 시각화) ═══════════════ */
 const mapState = { built: false, mode: 'sv', line: null, sel: null, showAll: false };
 
@@ -1866,7 +1953,7 @@ function svRadius(v) {
 function openMap(focusStation) {
   document.querySelectorAll('.step').forEach(s => s.dataset.wasHidden = s.hidden ? '1' : '0');
   $('step1').hidden = $('step2').hidden = $('step3').hidden = true;
-  $('stepper').style.display = 'none'; $('bottnav').style.display = 'none';
+  $('stickyTop').style.display = 'none'; $('bottnav').style.display = 'none';
   $('mapView').hidden = false;
   if (!mapState.built) buildMap();
   // 컨테이너가 숨김 상태에서 초기화됐을 때 크기·뷰 복구 (Leaflet invalidateSize)
@@ -1879,7 +1966,7 @@ function openMap(focusStation) {
 }
 function closeMap() {
   $('mapView').hidden = true;
-  $('stepper').style.display = ''; $('bottnav').style.display = '';
+  $('stickyTop').style.display = ''; $('bottnav').style.display = '';
   document.querySelectorAll('.step').forEach(s => { s.hidden = s.dataset.wasHidden !== '0'; });
   window.scrollTo({ top: 0 });
 }
